@@ -1,9 +1,15 @@
+import { type FormEvent, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { useRef, type FormEvent } from "react";
 
 export function APITester() {
   const responseInputRef = useRef<HTMLTextAreaElement>(null);
@@ -20,9 +26,13 @@ export function APITester() {
       const res = await fetch(url, { method });
 
       const data = await res.json();
-      responseInputRef.current!.value = JSON.stringify(data, null, 2);
+      if (responseInputRef.current) {
+        responseInputRef.current.value = JSON.stringify(data, null, 2);
+      }
     } catch (error) {
-      responseInputRef.current!.value = String(error);
+      if (responseInputRef.current) {
+        responseInputRef.current.value = String(error);
+      }
     }
   };
 
@@ -44,7 +54,13 @@ export function APITester() {
         <Label htmlFor="endpoint" className="sr-only">
           Endpoint
         </Label>
-        <Input id="endpoint" type="text" name="endpoint" defaultValue="/api/hello" placeholder="/api/hello" />
+        <Input
+          id="endpoint"
+          type="text"
+          name="endpoint"
+          defaultValue="/api/hello"
+          placeholder="/api/hello"
+        />
         <Button type="submit" variant="secondary">
           Send
         </Button>

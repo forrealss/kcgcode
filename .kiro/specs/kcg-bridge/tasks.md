@@ -8,153 +8,153 @@ Seluruh 30 Correctness Properties pada `design.md` diimplementasikan sebagai pro
 
 ## Tasks
 
-- [ ] 1. Setup tipe domain & protokol WebSocket bersama
-  - [ ] 1.1 Buat `src/server/types.ts` dan `src/server/ws-protocol.ts`
+- [x] 1. Setup tipe domain & protokol WebSocket bersama
+  - [x] 1.1 Buat `src/server/types.ts` dan `src/server/ws-protocol.ts`
     - Definisikan tipe `Project`, `Session`, `AgentType`, `SessionStatus`, `OutputChunk`, `InteractivePrompt`, `PromptResponse` sesuai `design.md` bagian Data Models
     - Definisikan tipe pesan WebSocket Client->Server (`attach`, `input`, `prompt_response`, `resize`) dan Server->Client (`history`, `output`, `prompt`, `prompt_resolved`, `session_status`, `error`) sesuai tabel protokol di `design.md`
     - _Requirements: 1.1, 4.4, 5.1, 6.1, 6.2_
 
-- [ ] 2. Implementasi Config_File & validasi Sandbox_Root saat startup
-  - [ ] 2.1 Buat `src/server/config.ts`
+- [x] 2. Implementasi Config_File & validasi Sandbox_Root saat startup
+  - [x] 2.1 Buat `src/server/config.ts`
     - Baca `kcg-bridge.config.json` (path dapat dioverride via `KCG_CONFIG_PATH`), resolve `sandboxRoot` dengan `fs.realpath`
     - Exit proses dengan kode error dan log jelas apabila `sandboxRoot` tidak diatur atau direktori tidak ditemukan
     - _Requirements: 10.1_
 
-  - [ ]* 2.2 Tulis unit test `config.ts`
+  - [x]* 2.2 Tulis unit test `config.ts`
     - Kasus: field `sandboxRoot` hilang, direktori tidak ditemukan, dan konfigurasi valid
     - _Requirements: 10.1_
 
-- [ ] 3. Implementasi skema & koneksi Session_Store
-  - [ ] 3.1 Buat `src/server/db.ts` — koneksi `bun:sqlite`, `PRAGMA journal_mode = WAL`, dan migrasi `CREATE TABLE IF NOT EXISTS` untuk `projects`, `sessions`, `session_status_history`, `output_stream`, `prompts` sesuai skema di `design.md`
+- [x] 3. Implementasi skema & koneksi Session_Store
+  - [x] 3.1 Buat `src/server/db.ts` — koneksi `bun:sqlite`, `PRAGMA journal_mode = WAL`, dan migrasi `CREATE TABLE IF NOT EXISTS` untuk `projects`, `sessions`, `session_status_history`, `output_stream`, `prompts` sesuai skema di `design.md`
     - _Requirements: 3.1, 3.3_
 
-- [ ] 4. Implementasi fungsi Session_Store untuk Output_Stream & riwayat status (append-only)
-  - [ ] 4.1 Tambahkan ke `db.ts`: fungsi insert-only `insertOutputChunk`/`getOutputChunks` (terurut `seq`) dan `insertStatusHistory`/`getStatusHistory`, mengembalikan tipe hasil `{ ok, error }` tanpa pernah `UPDATE`/`DELETE` baris yang sudah ada, serta indikasi "tidak ditemukan" saat `sessionId` tidak ada
+- [x] 4. Implementasi fungsi Session_Store untuk Output_Stream & riwayat status (append-only)
+  - [x] 4.1 Tambahkan ke `db.ts`: fungsi insert-only `insertOutputChunk`/`getOutputChunks` (terurut `seq`) dan `insertStatusHistory`/`getStatusHistory`, mengembalikan tipe hasil `{ ok, error }` tanpa pernah `UPDATE`/`DELETE` baris yang sudah ada, serta indikasi "tidak ditemukan" saat `sessionId` tidak ada
     - _Requirements: 3.1, 3.3, 3.5_
 
-  - [ ]* 4.2 Tulis property test round-trip Output_Stream & query tidak ditemukan
+  - [x]* 4.2 Tulis property test round-trip Output_Stream & query tidak ditemukan
     - **Property 8: Round-trip penyimpanan Output_Stream** — **Validates: Requirements 3.1, 3.4**
     - **Property 10: Query terhadap Session tidak ditemukan** — **Validates: Requirements 3.5**
 
-  - [ ]* 4.3 Tulis property test riwayat status append-only
+  - [x]* 4.3 Tulis property test riwayat status append-only
     - **Property 9: Riwayat status bersifat append-only** — **Validates: Requirements 3.3**
 
-  - [ ]* 4.4 Tulis integration test kegagalan tulis storage & persistensi setelah restart
+  - [x]* 4.4 Tulis integration test kegagalan tulis storage & persistensi setelah restart
     - Simulasikan kegagalan tulis (mis. disk penuh/mock exception) dan pastikan data lama tidak terhapus; buka ulang koneksi `bun:sqlite` pada file yang sama dan pastikan data sebelumnya tetap terbaca identik
     - _Requirements: 3.2, 3.6_
 
-- [ ] 5. Implementasi fungsi Session_Store untuk entitas Session, Project, Prompt
-  - [ ] 5.1 Tambahkan ke `db.ts`: fungsi CRUD `sessions` (insert, update status, get, list), `projects` (insert, get by name/path, list), `prompts` (insert, get, list pending, update status)
+- [x] 5. Implementasi fungsi Session_Store untuk entitas Session, Project, Prompt
+  - [x] 5.1 Tambahkan ke `db.ts`: fungsi CRUD `sessions` (insert, update status, get, list), `projects` (insert, get by name/path, list), `prompts` (insert, get, list pending, update status)
     - _Requirements: 1.5, 1.7, 6.4, 6.5, 6.6, 10.4, 10.5, 10.6, 10.8_
 
-- [ ] 6. Checkpoint - Ensure all tests pass, ask the user if questions arise.
+- [x] 6. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 7. Implementasi validator Sandbox_Root
-  - [ ] 7.1 Buat `src/server/sandbox.ts` — fungsi `resolveWithinSandbox(sandboxRoot, userPath)`: tolak segmen `..` sebelum resolusi, `fs.realpath` mengikuti symlink, verifikasi hasil berada di dalam `sandboxRoot`, dan validasi karakter terlarang OS untuk nama direktori
+- [x] 7. Implementasi validator Sandbox_Root
+  - [x] 7.1 Buat `src/server/sandbox.ts` — fungsi `resolveWithinSandbox(sandboxRoot, userPath)`: tolak segmen `..` sebelum resolusi, `fs.realpath` mengikuti symlink, verifikasi hasil berada di dalam `sandboxRoot`, dan validasi karakter terlarang OS untuk nama direktori
     - _Requirements: 10.2, 10.3, 10.7_
 
-  - [ ]* 7.2 Tulis property test validasi sandbox
+  - [x]* 7.2 Tulis property test validasi sandbox
     - **Property 27: Folder_Browser mengembalikan persis sub-direktori dalam sandbox** — **Validates: Requirements 10.2**
     - **Property 28: Path di luar Sandbox_Root selalu ditolak** — **Validates: Requirements 10.3, 10.7**
 
-- [ ] 8. Implementasi Project_Manager & Folder_Browser
-  - [ ] 8.1 Buat `src/server/project-manager.ts` — `listDirectory`, `createProject`, `listProjects`, seluruhnya memakai `sandbox.ts` untuk validasi path sebelum operasi filesystem apa pun dan `db.ts` untuk persistensi
+- [x] 8. Implementasi Project_Manager & Folder_Browser
+  - [x] 8.1 Buat `src/server/project-manager.ts` — `listDirectory`, `createProject`, `listProjects`, seluruhnya memakai `sandbox.ts` untuk validasi path sebelum operasi filesystem apa pun dan `db.ts` untuk persistensi
     - _Requirements: 10.2, 10.4, 10.5, 10.6, 10.8_
 
-  - [ ]* 8.2 Tulis property test pembuatan Project
+  - [x]* 8.2 Tulis property test pembuatan Project
     - **Property 29: Pembuatan Project unik berhasil round-trip** — **Validates: Requirements 10.4**
     - **Property 30: Nama atau path Project duplikat selalu ditolak** — **Validates: Requirements 10.5, 10.6**
 
-  - [ ]* 8.3 Tulis unit test edge case path & nama Project
+  - [x]* 8.3 Tulis unit test edge case path & nama Project
     - Kasus: path mengandung `"../etc"`, path absolut di luar sandbox, nama direktori dengan karakter unicode, nama dengan karakter terlarang OS
     - _Requirements: 10.3, 10.7_
 
-- [ ] 9. Implementasi wrapper PTY_Process
-  - [ ] 9.1 Buat `src/server/pty-process.ts` — `spawnPty(cmd, cwd)` memakai `new Bun.Terminal({...})` dipasangkan ke `Bun.spawn(cmd, { cwd, terminal })`, mengembalikan `PtyHandle` dengan `write`, `resize`, `kill(signal)`, `onData`, `onExit(code, expected)`
+- [x] 9. Implementasi wrapper PTY_Process
+  - [x] 9.1 Buat `src/server/pty-process.ts` — `spawnPty(cmd, cwd)` memakai `new Bun.Terminal({...})` dipasangkan ke `Bun.spawn(cmd, { cwd, terminal })`, mengembalikan `PtyHandle` dengan `write`, `resize`, `kill(signal)`, `onData`, `onExit(code, expected)`
     - _Requirements: 1.2_
 
-  - [ ]* 9.2 Tulis unit test wrapper `pty-process.ts`
+  - [x]* 9.2 Tulis unit test wrapper `pty-process.ts`
     - Verifikasi `write`/`resize` diteruskan ke terminal mock, `onData` dipanggil saat data masuk, `onExit` membedakan `expected` true/false
     - _Requirements: 1.2_
 
-- [ ] 10. Checkpoint - Ensure all tests pass, ask the user if questions arise.
+- [x] 10. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 11. Implementasi Session_Manager — pembuatan & daftar Session
-  - [ ] 11.1 Buat `src/server/session-manager.ts` — `createSession(req)`: validasi `agentType` didukung, `Project` ada di store, direktori kerja Project ada di filesystem; jalankan `spawnPty`; simpan `Session` baru berstatus `"running"` hanya jika seluruh validasi dan spawn berhasil
+- [x] 11. Implementasi Session_Manager — pembuatan & daftar Session
+  - [x] 11.1 Buat `src/server/session-manager.ts` — `createSession(req)`: validasi `agentType` didukung, `Project` ada di store, direktori kerja Project ada di filesystem; jalankan `spawnPty`; simpan `Session` baru berstatus `"running"` hanya jika seluruh validasi dan spawn berhasil
     - _Requirements: 1.1, 1.2, 1.3, 10.9, 10.10, 10.11_
 
-  - [ ]* 11.2 Tulis property test pembuatan Session
+  - [x]* 11.2 Tulis property test pembuatan Session
     - **Property 1: Pembuatan Session valid** — **Validates: Requirements 1.1, 1.2, 10.9**
     - **Property 2: Pembuatan Session dengan kondisi tidak valid selalu ditolak** — **Validates: Requirements 1.3, 10.10, 10.11**
 
-  - [ ]* 11.3 Tulis unit test kegagalan spawn PTY_Process
+  - [x]* 11.3 Tulis unit test kegagalan spawn PTY_Process
     - Simulasikan `spawnPty` melempar error/proses langsung exit; pastikan Session ditandai `"crashed"` dengan pesan error dan tidak pernah tercatat `"running"` di Session_Store
     - _Requirements: 1.4_
 
-  - [ ] 11.4 Tambahkan `listSessions()` ke `session-manager.ts` dan pastikan `project-manager.ts` mengekspos `listProjects()` yang konsisten dipakai bersama
+  - [x] 11.4 Tambahkan `listSessions()` ke `session-manager.ts` dan pastikan `project-manager.ts` mengekspos `listProjects()` yang konsisten dipakai bersama
     - _Requirements: 1.5, 10.8_
 
-  - [ ]* 11.5 Tulis property test kelengkapan daftar
+  - [x]* 11.5 Tulis property test kelengkapan daftar
     - **Property 3: Daftar entitas selalu lengkap** — **Validates: Requirements 1.5, 10.8**
 
-- [ ] 12. Implementasi Session_Manager — lifecycle (stop, exit, rekonsiliasi, shutdown)
-  - [ ] 12.1 Tambahkan `stopSession(sessionId)` ke `session-manager.ts` — validasi Session ada & berstatus `"running"`, kirim `SIGTERM`, jadwalkan `setTimeout` 5 detik yang memanggil `kill("SIGKILL")` bila proses belum keluar, ubah status menjadi `"stopped"` setelah `PtyHandle` keluar
+- [x] 12. Implementasi Session_Manager — lifecycle (stop, exit, rekonsiliasi, shutdown)
+  - [x] 12.1 Tambahkan `stopSession(sessionId)` ke `session-manager.ts` — validasi Session ada & berstatus `"running"`, kirim `SIGTERM`, jadwalkan `setTimeout` 5 detik yang memanggil `kill("SIGKILL")` bila proses belum keluar, ubah status menjadi `"stopped"` setelah `PtyHandle` keluar
     - _Requirements: 1.6, 1.7_
 
-  - [ ]* 12.2 Tulis property test penghentian Session tidak valid
+  - [x]* 12.2 Tulis property test penghentian Session tidak valid
     - **Property 4: Penghentian Session tidak valid selalu ditolak** — **Validates: Requirements 1.7**
 
-  - [ ]* 12.3 Tulis unit test timing force-kill
+  - [x]* 12.3 Tulis unit test timing force-kill
     - Gunakan fake timer untuk memverifikasi `kill("SIGKILL")` hanya dipanggil setelah 5 detik sejak `SIGTERM` apabila proses belum keluar, dan tidak dipanggil bila proses keluar lebih awal
     - _Requirements: 1.6_
 
-  - [ ] 12.4 Tambahkan handler `onExit` ke `session-manager.ts` — ubah status Session menjadi `"crashed"` dengan timestamp saat `PtyHandle` keluar dengan kode bukan nol tanpa didahului `stopSession`
+  - [x] 12.4 Tambahkan handler `onExit` ke `session-manager.ts` — ubah status Session menjadi `"crashed"` dengan timestamp saat `PtyHandle` keluar dengan kode bukan nol tanpa didahului `stopSession`
     - _Requirements: 1.8_
 
-  - [ ]* 12.5 Tulis property test exit tak terduga
+  - [x]* 12.5 Tulis property test exit tak terduga
     - **Property 5: Exit tak terduga menghasilkan status crashed** — **Validates: Requirements 1.8**
 
-  - [ ] 12.6 Tambahkan `reconcileOnStartup()` ke `session-manager.ts` — tandai seluruh Session berstatus `"running"` di store yang tidak memiliki `PtyHandle` aktif di memori sebagai `"crashed"` dengan timestamp, dipanggil sekali sebelum server menerima koneksi
+  - [x] 12.6 Tambahkan `reconcileOnStartup()` ke `session-manager.ts` — tandai seluruh Session berstatus `"running"` di store yang tidak memiliki `PtyHandle` aktif di memori sebagai `"crashed"` dengan timestamp, dipanggil sekali sebelum server menerima koneksi
     - _Requirements: 2.4_
 
-  - [ ]* 12.7 Tulis property test rekonsiliasi startup
+  - [x]* 12.7 Tulis property test rekonsiliasi startup
     - **Property 7: Rekonsiliasi startup menandai Session tanpa proses sebagai crashed** — **Validates: Requirements 2.4**
 
-  - [ ] 12.8 Tambahkan handler shutdown ke `session-manager.ts` — pada `process.on("SIGINT"/"SIGTERM")`, simpan status terakhir seluruh Session `"running"` ke `session_status_history` dibatasi anggaran waktu 5 detik memakai `Promise.race`
+  - [x] 12.8 Tambahkan handler shutdown ke `session-manager.ts` — pada `process.on("SIGINT"/"SIGTERM")`, simpan status terakhir seluruh Session `"running"` ke `session_status_history` dibatasi anggaran waktu 5 detik memakai `Promise.race`
     - _Requirements: 2.3_
 
-  - [ ]* 12.9 Tulis integration test persistensi proses & shutdown
+  - [x]* 12.9 Tulis integration test persistensi proses & shutdown
     - Skenario: `PtyHandle` tetap hidup dan status tetap `"running"` selama tidak ada Client terhubung; shutdown menyimpan status seluruh Session `"running"` dalam anggaran waktu 5 detik
     - _Requirements: 2.1, 2.3_
 
-- [ ] 13. Checkpoint - Ensure all tests pass, ask the user if questions arise.
+- [x] 13. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 14. Implementasi Session_Manager — input bebas & Interactive_Prompt
-  - [ ] 14.1 Tambahkan `sendFreeTextInput(sessionId, text)` ke `session-manager.ts` — validasi panjang 1-10.000 karakter dan bukan seluruhnya whitespace, validasi Session berstatus `"running"`, teruskan teks + `"\n"` ke `PtyHandle`
+- [x] 14. Implementasi Session_Manager — input bebas & Interactive_Prompt
+  - [x] 14.1 Tambahkan `sendFreeTextInput(sessionId, text)` ke `session-manager.ts` — validasi panjang 1-10.000 karakter dan bukan seluruhnya whitespace, validasi Session berstatus `"running"`, teruskan teks + `"\n"` ke `PtyHandle`
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-  - [ ]* 14.2 Tulis property test input bebas
+  - [x]* 14.2 Tulis property test input bebas
     - **Property 21: Free-text valid diteruskan utuh dengan newline** — **Validates: Requirements 7.1**
     - **Property 22: Free-text kosong atau melebihi batas selalu ditolak** — **Validates: Requirements 7.2, 7.3**
     - **Property 23: Free-text pada Session tidak aktif selalu ditolak** — **Validates: Requirements 7.4**
     - **Property 24: Free-text tidak mengubah status Interactive_Prompt** — **Validates: Requirements 7.5**
 
-  - [ ] 14.3 Tambahkan `resolvePrompt(sessionId, promptId, response)` ke `session-manager.ts` — validasi prompt ada & `"pending"`, validasi opsi menu bila relevan; untuk `"approve"`/`"deny"`/opsi menu teruskan sebagai `write` ke `PtyHandle` dan tandai `"resolved"`; untuk `"cancel"` tandai `"resolved"` tanpa `write`
+  - [x] 14.3 Tambahkan `resolvePrompt(sessionId, promptId, response)` ke `session-manager.ts` — validasi prompt ada & `"pending"`, validasi opsi menu bila relevan; untuk `"approve"`/`"deny"`/opsi menu teruskan sebagai `write` ke `PtyHandle` dan tandai `"resolved"`; untuk `"cancel"` tandai `"resolved"` tanpa `write`
     - _Requirements: 6.3, 6.4, 6.5, 6.6, 6.7_
 
-  - [ ]* 14.4 Tulis property test resolusi Interactive_Prompt
+  - [x]* 14.4 Tulis property test resolusi Interactive_Prompt
     - **Property 18: Respon valid diteruskan dan menandai prompt resolved** — **Validates: Requirements 6.3, 6.4**
     - **Property 19: Respon tidak valid selalu ditolak tanpa efek samping** — **Validates: Requirements 6.5, 6.6**
     - **Property 20: Respon Cancel tidak meneruskan input** — **Validates: Requirements 6.7**
 
-- [ ] 15. Implementasi Prompt_Detector
-  - [ ] 15.1 Buat `src/server/prompt-detector.ts` — `detectPrompt(bufferedText)`: kenali pola konfirmasi y/n, izin eksekusi command/edit file (tipe `"confirmation"`), dan pola menu bernomor (tipe `"menu"` dengan `options: string[]`)
+- [x] 15. Implementasi Prompt_Detector
+  - [x] 15.1 Buat `src/server/prompt-detector.ts` — `detectPrompt(bufferedText)`: kenali pola konfirmasi y/n, izin eksekusi command/edit file (tipe `"confirmation"`), dan pola menu bernomor (tipe `"menu"` dengan `options: string[]`)
     - _Requirements: 6.1, 6.2_
 
-  - [ ]* 15.2 Tulis property test deteksi prompt
+  - [x]* 15.2 Tulis property test deteksi prompt
     - **Property 17: Deteksi pola Interactive_Prompt** — **Validates: Requirements 6.1, 6.2**
 
-- [ ] 16. Checkpoint - Ensure all tests pass, ask the user if questions arise.
+- [x] 16. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 17. Implementasi WebSocket_Gateway
   - [ ] 17.1 Buat `src/server/websocket-gateway.ts` — registry koneksi `Map<ws, { sessionId, lastSeqSent }>`; alur `attach`: validasi `sessionId` ada (jika tidak, kirim `error` lalu `close()`), kirim `history` terurut `seq`, set `lastSeqSent`, kirim `prompt` untuk seluruh prompt `"pending"`

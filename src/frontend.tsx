@@ -9,7 +9,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 
-const elem = document.getElementById("root")!;
+const elem = document.getElementById("root");
+if (!elem) {
+  throw new Error("Elemen #root tidak ditemukan di index.html");
+}
 const app = (
   <StrictMode>
     <App />
@@ -17,4 +20,7 @@ const app = (
 );
 
 // https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data
-(import.meta.hot.data.root ??= createRoot(elem)).render(app);
+if (!import.meta.hot.data.root) {
+  import.meta.hot.data.root = createRoot(elem);
+}
+import.meta.hot.data.root.render(app);
