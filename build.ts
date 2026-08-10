@@ -1,4 +1,4 @@
-import { rm } from "node:fs/promises";
+import { cp, rm } from "node:fs/promises";
 import path from "node:path";
 import tailwind from "bun-plugin-tailwind";
 
@@ -18,6 +18,10 @@ const result = await Bun.build({
     "process.env.NODE_ENV": JSON.stringify("production"),
   },
 });
+
+// Salin asset PWA (manifest, service worker, logo) ke output build agar
+// deploy statis tetap menyertakan prasyarat instalasi PWA (Requirement 8.1).
+await cp(path.join(process.cwd(), "public"), outdir, { recursive: true });
 
 for (const output of result.outputs) {
   console.log(

@@ -1,41 +1,33 @@
-import { serve } from "bun";
+/**
+ * KCG Bridge — entry server utama (task 20).
+ *
+ * Wiring `Bun.serve` diimplementasikan di `src/server/app.ts`
+ * (`createKcgServer`) agar dapat diuji secara e2e (task 20.2). File ini:
+ * - menyuntikkan shell SPA (`index.html`) ke rute tak dikenal,
+ * - memulai server,
+ * - mendaftarkan handler shutdown SIGINT/SIGTERM yang menyimpan status
+ *   Session `running` dalam anggaran 5 detik sebelum berhenti (Req 2.3).
+ */
 import index from "./index.html";
+import { createKcgServer } from "./server/app";
 
-const server = serve({
-  routes: {
-    // Serve index.html for all unmatched routes.
-    "/*": index,
+if (import.meta.main) {
+  const app = createKcgServer({ spa: index });
+  console.log(`🚀 KCG Bridge berjalan di ${app.server.url}`);
 
-    "/api/hello": {
-      async GET() {
-        return Response.json({
-          message: "Hello, world!",
-          method: "GET",
-        });
-      },
-      async PUT() {
-        return Response.json({
-          message: "Hello, world!",
-          method: "PUT",
-        });
-      },
-    },
+  let shuttingDown = false;
+  async function shutdown(signal: string): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`\n${signal} diterima — menyimpan status Session lalu menghentikan server...`);
+    try {
+      await app.close();
+    } catch (err) {
+      console.error("Error saat shutdown:", err);
+    }
+    process.exit(0);
+  }
 
-    "/api/hello/:name": async (req) => {
-      const name = req.params.name;
-      return Response.json({
-        message: `Hello, ${name}!`,
-      });
-    },
-  },
-
-  development: process.env.NODE_ENV !== "production" && {
-    // Enable browser hot reloading in development
-    hmr: true,
-
-    // Echo console logs from the browser to the server
-    console: true,
-  },
-});
-
-console.log(`🚀 Server running at ${server.url}`);
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+}

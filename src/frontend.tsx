@@ -24,3 +24,20 @@ if (!import.meta.hot.data.root) {
   import.meta.hot.data.root = createRoot(elem);
 }
 import.meta.hot.data.root.render(app);
+
+// PWA_Shell (Requirement 8.1): registrasi service worker & inject link manifest
+// hanya pada production agar asset statis di-cache untuk instalasi PWA tanpa
+// merusak HMR saat dev. Manifest di-inject runtime agar URL tetap `/manifest.json`
+// (tidak di-rewrite bundler menjadi hashed asset), disajikan route server.
+if (import.meta.env.PROD && typeof document !== "undefined") {
+  const manifestLink = document.createElement("link");
+  manifestLink.rel = "manifest";
+  manifestLink.href = "/manifest.json";
+  document.head.appendChild(manifestLink);
+
+  if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Gagal registrasi SW tidak menghalangi aplikasi.
+    });
+  }
+}

@@ -192,40 +192,40 @@ Seluruh 30 Correctness Properties pada `design.md` diimplementasikan sebagai pro
 
 - [x] 19. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 20. Wiring server utama
-  - [ ] 20.1 Perbarui `src/index.ts` — `Bun.serve({ hostname, port, routes, websocket })`: routes HTTP `/api/projects` (GET/POST), `/api/fs` (GET, Folder_Browser), `/api/sessions` (GET/POST/DELETE), pasang `auth.ts` di setiap route dan `upgrade` WS, panggil `reconcileOnStartup()` sebelum `Bun.serve` menerima koneksi, daftarkan handler shutdown
+- [x] 20. Wiring server utama
+  - [x] 20.1 Perbarui `src/index.ts` — `Bun.serve({ hostname, port, routes, websocket })`: routes HTTP `/api/projects` (GET/POST), `/api/fs` (GET, Folder_Browser), `/api/sessions` (GET/POST/DELETE), pasang `auth.ts` di setiap route dan `upgrade` WS, panggil `reconcileOnStartup()` sebelum `Bun.serve` menerima koneksi, daftarkan handler shutdown
     - _Requirements: 1.1, 1.5, 1.6, 1.7, 4.1, 9.1, 9.2, 10.1, 10.2, 10.4, 10.8_
 
-  - [ ]* 20.2 Tulis integration test end-to-end alur utama
+  - [x]* 20.2 Tulis integration test end-to-end alur utama
     - Skenario dengan `PtyHandle` mock: buat Project -> buat Session -> `attach` via WebSocket -> terima `output` -> respon `Interactive_Prompt` -> `stopSession`
     - _Requirements: 1.1, 4.1, 5.1, 6.3_
 
-- [ ] 21. Implementasi PWA_Shell
-  - [ ] 21.1 Buat `public/manifest.json` — `name`, `short_name`, `start_url`, `display: "standalone"`, `icons` (berbasis `logo.svg` + varian PNG)
+- [x] 21. Implementasi PWA_Shell
+  - [x] 21.1 Buat `public/manifest.json` — `name`, `short_name`, `start_url`, `display: "standalone"`, `icons` (berbasis `logo.svg` + varian PNG)
     - _Requirements: 8.1_
 
-  - [ ] 21.2 Buat `public/sw.js` — strategi cache-first untuk asset statis, network-only untuk `/api/*` dan koneksi WebSocket
+  - [x] 21.2 Buat `public/sw.js` — strategi cache-first untuk asset statis, network-only untuk `/api/*` dan koneksi WebSocket
     - _Requirements: 8.1_
 
-  - [ ] 21.3 Perbarui `src/frontend.tsx` (registrasi `navigator.serviceWorker?.register("/sw.js")`) dan `src/index.html` (`<link rel="manifest">`, meta `theme-color`)
+  - [x] 21.3 Perbarui `src/frontend.tsx` (registrasi `navigator.serviceWorker?.register("/sw.js")`) dan `src/index.html` (`<link rel="manifest">`, meta `theme-color`)
     - _Requirements: 8.1_
 
-  - [ ]* 21.4 Tulis unit test validitas `manifest.json`
+  - [x]* 21.4 Tulis unit test validitas `manifest.json`
     - Verifikasi field wajib (`name`, `short_name`, `start_url`, `display`, `icons`) ada dan bernilai valid
     - _Requirements: 8.1_
 
-- [ ] 22. Implementasi hooks frontend
-  - [ ] 22.1 Buat `src/hooks/use-theme.ts` — baca/tulis preferensi ke `localStorage["kcg-theme"]`, terapkan class `dark` di `<html>` saat mount berdasarkan nilai tersimpan, sediakan fungsi toggle
+- [x] 22. Implementasi hooks frontend
+  - [x] 22.1 Buat `src/hooks/use-theme.ts` — baca/tulis preferensi ke `localStorage["kcg-theme"]`, terapkan class `dark` di `<html>` saat mount berdasarkan nilai tersimpan, sediakan fungsi toggle
     - _Requirements: 8.2, 8.6_
 
-  - [ ]* 22.2 Tulis unit test persistensi tema
+  - [x]* 22.2 Tulis unit test persistensi tema
     - Kasus: toggle mengubah tema saat ini (8.2); mount ulang dengan preferensi tersimpan menerapkan dark mode otomatis (8.6)
     - _Requirements: 8.2, 8.6_
 
-  - [ ] 22.3 Buat `src/hooks/use-websocket.ts` — kelola koneksi `attach`/reconnect, dan handle pesan masuk `history`, `output`, `prompt`, `prompt_resolved`, `session_status`, `error` sesuai `ws-protocol.ts`
+  - [x] 22.3 Buat `src/hooks/use-websocket.ts` — kelola koneksi `attach`/reconnect, dan handle pesan masuk `history`, `output`, `prompt`, `prompt_resolved`, `session_status`, `error` sesuai `ws-protocol.ts`
     - _Requirements: 4.1, 4.2, 5.1_
 
-- [ ] 23. Checkpoint - Ensure all tests pass, ask the user if questions arise.
+- [x] 23. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 24. Implementasi komponen frontend
   - [ ] 24.1 Buat `src/components/theme-toggle.tsx` — kontrol toggle dark mode memakai `use-theme.ts`

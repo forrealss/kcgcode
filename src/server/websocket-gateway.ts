@@ -231,7 +231,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
 // ---------------------------------------------------------------------------
 
 /** Adaptor ServerWebSocket Bun ke `Subscriber` (untuk wiring di `index.ts`). */
-export function bunWsSubscriber(ws: ServerWebSocket): Subscriber {
+export function bunWsSubscriber<T>(ws: ServerWebSocket<T>): Subscriber {
   return {
     send(msg: ServerMessage) {
       ws.send(JSON.stringify(msg));
