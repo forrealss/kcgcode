@@ -227,37 +227,37 @@ Seluruh 30 Correctness Properties pada `design.md` diimplementasikan sebagai pro
 
 - [x] 23. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 24. Implementasi komponen frontend
-  - [ ] 24.1 Buat `src/components/theme-toggle.tsx` — kontrol toggle dark mode memakai `use-theme.ts`
+- [x] 24. Implementasi komponen frontend
+  - [x] 24.1 Buat `src/components/theme-toggle.tsx` — kontrol toggle dark mode memakai `use-theme.ts`
     - _Requirements: 8.2_
 
-  - [ ] 24.2 Buat `src/components/folder-browser.tsx` — panggil `GET /api/fs?path=...`, tampilkan breadcrumb + daftar sub-direktori, tombol "Pilih" mengisi path Project baru
+  - [x] 24.2 Buat `src/components/folder-browser.tsx` — panggil `GET /api/fs?path=...`, tampilkan breadcrumb + daftar sub-direktori, tombol "Pilih" mengisi path Project baru
     - _Requirements: 10.2, 10.3_
 
-  - [ ] 24.3 Buat `src/components/project-list.tsx` — `GET/POST /api/projects`, form nama + integrasi `folder-browser.tsx`
+  - [x] 24.3 Buat `src/components/project-list.tsx` — `GET/POST /api/projects`, form nama + integrasi `folder-browser.tsx`
     - _Requirements: 10.4, 10.5, 10.6, 10.7, 10.8_
 
-  - [ ] 24.4 Buat `src/components/session-list.tsx` — `GET/POST /api/sessions`, pilih Project & tipe CLI_Agent
+  - [x] 24.4 Buat `src/components/session-list.tsx` — `GET/POST /api/sessions`, pilih Project & tipe CLI_Agent
     - _Requirements: 1.1, 1.3, 1.5, 10.9, 10.10_
 
-  - [ ] 24.5 Buat `src/components/prompt-card.tsx` — tombol "Approve"/"Deny"/"Cancel" untuk tipe `"confirmation"`, daftar opsi untuk tipe `"menu"`; klik "Cancel" memanggil handler yang sama dengan "Deny"
+  - [x] 24.5 Buat `src/components/prompt-card.tsx` — tombol "Approve"/"Deny"/"Cancel" untuk tipe `"confirmation"`, daftar opsi untuk tipe `"menu"`; klik "Cancel" memanggil handler yang sama dengan "Deny"
     - _Requirements: 8.4, 8.5_
 
-  - [ ]* 24.6 Tulis unit test `prompt-card.tsx`
+  - [x]* 24.6 Tulis unit test `prompt-card.tsx`
     - Verifikasi tombol Approve/Deny/Cancel tampil untuk tipe `"confirmation"` (8.4) dan klik "Cancel" memicu handler Deny yang sama sesuai mekanisme Requirement 6 (8.5)
     - _Requirements: 8.4, 8.5_
 
-  - [ ] 24.7 Buat `src/components/session-view.tsx` — konsumen `use-websocket.ts`, render Output_Stream sebagai daftar pesan dengan collapsible thinking block per pesan (state `Record<messageId, boolean>`, default `true`/expanded), render `prompt-card.tsx` untuk Interactive_Prompt aktif, input field bebas
+  - [x] 24.7 Buat `src/components/session-view.tsx` — konsumen `use-websocket.ts`, render Output_Stream sebagai daftar pesan dengan collapsible thinking block per pesan (state `Record<messageId, boolean>`, default `true`/expanded), render `prompt-card.tsx` untuk Interactive_Prompt aktif, input field bebas
     - _Requirements: 5.1, 5.2, 6.1, 6.2, 7.1, 8.3_
 
-  - [ ]* 24.8 Tulis property test toggle collapsible
+  - [x]* 24.8 Tulis property test toggle collapsible
     - **Property 25: Toggle collapsible thinking independen antar pesan** — **Validates: Requirements 8.3**
 
-- [ ] 25. Wiring shell aplikasi
-  - [ ] 25.1 Perbarui `src/App.tsx` — navigasi Project list -> Session list per Project -> Session view, integrasikan `use-theme.ts` dan seluruh komponen frontend
+- [x] 25. Wiring shell aplikasi
+  - [x] 25.1 Perbarui `src/App.tsx` — navigasi Project list -> Session list per Project -> Session view, integrasikan `use-theme.ts` dan seluruh komponen frontend
     - _Requirements: 1.1, 1.5, 8.2, 8.6, 10.8, 10.9_
 
-- [ ] 26. Checkpoint akhir - Ensure all tests pass, ask the user if questions arise.
+- [x] 26. Checkpoint akhir - Ensure all tests pass, ask the user if questions arise.
 
 ## Notes
 
