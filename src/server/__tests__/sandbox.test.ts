@@ -8,9 +8,9 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
-import { openSessionStore } from "./db";
-import { createProjectManager } from "./project-manager";
-import { resolveWithinSandbox } from "./sandbox";
+import { openSessionStore } from "../db";
+import { createProjectManager } from "../project-manager";
+import { resolveWithinSandbox } from "../sandbox";
 
 let root: string;
 let outsideDir: string;

@@ -5,8 +5,8 @@
  * Requirement 1.2.
  */
 import { expect, test } from "bun:test";
-import type { ProcessLike, TerminalLike } from "./pty-process";
-import { createPtyHandle } from "./pty-process";
+import type { ProcessLike, TerminalLike } from "../pty-process";
+import { createPtyHandle } from "../pty-process";
 
 interface MockBundle {
   terminal: TerminalLike;

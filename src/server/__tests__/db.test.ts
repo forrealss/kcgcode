@@ -10,8 +10,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
-import { openSessionStore } from "./db";
-import type { Session, SessionStatus } from "./types";
+import { openSessionStore } from "../db";
+import type { Session, SessionStatus } from "../types";
 
 function makeSession(id = "s1", status: SessionStatus = "running"): Session {
   return {

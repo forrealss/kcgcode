@@ -4,7 +4,7 @@
  */
 import { expect, test } from "bun:test";
 import fc from "fast-check";
-import { detectPrompt } from "./prompt-detector";
+import { detectPrompt } from "../prompt-detector";
 
 // Feature: kcg-bridge, Property 17: Deteksi pola Interactive_Prompt
 test("Property 17: pola konfirmasi -> draft confirmation (di posisi teks mana pun)", () => {

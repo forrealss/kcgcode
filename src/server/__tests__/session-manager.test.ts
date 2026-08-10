@@ -23,16 +23,16 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
-import type { SessionStore } from "./db";
-import { openSessionStore } from "./db";
-import type { PtyHandle } from "./pty-process";
+import type { SessionStore } from "../db";
+import { openSessionStore } from "../db";
+import type { PtyHandle } from "../pty-process";
 import {
   type CreateSessionRequest,
   createSessionManager,
   type SessionManager,
   type SpawnPtyFn,
-} from "./session-manager";
-import type { AgentType, Project, Session, SessionStatus } from "./types";
+} from "../session-manager";
+import type { AgentType, Project, Session, SessionStatus } from "../types";
 
 // ---------------------------------------------------------------------------
 // Mock PtyHandle + harness

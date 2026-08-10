@@ -156,41 +156,41 @@ Seluruh 30 Correctness Properties pada `design.md` diimplementasikan sebagai pro
 
 - [x] 16. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 17. Implementasi WebSocket_Gateway
-  - [ ] 17.1 Buat `src/server/websocket-gateway.ts` — registry koneksi `Map<ws, { sessionId, lastSeqSent }>`; alur `attach`: validasi `sessionId` ada (jika tidak, kirim `error` lalu `close()`), kirim `history` terurut `seq`, set `lastSeqSent`, kirim `prompt` untuk seluruh prompt `"pending"`
+- [x] 17. Implementasi WebSocket_Gateway
+  - [x] 17.1 Buat `src/server/websocket-gateway.ts` — registry koneksi `Map<ws, { sessionId, lastSeqSent }>`; alur `attach`: validasi `sessionId` ada (jika tidak, kirim `error` lalu `close()`), kirim `history` terurut `seq`, set `lastSeqSent`, kirim `prompt` untuk seluruh prompt `"pending"`
     - _Requirements: 4.1, 4.3, 4.4_
 
-  - [ ]* 17.2 Tulis property test reattach
+  - [x]* 17.2 Tulis property test reattach
     - **Property 11: Reattach mengirim riwayat sesuai urutan sebelum data baru** — **Validates: Requirements 4.1**
     - **Property 13: Reattach ke Session tidak ditemukan menghasilkan error** — **Validates: Requirements 4.3**
     - **Property 14: Reattach mengirim seluruh prompt belum resolved** — **Validates: Requirements 4.4**
 
-  - [ ] 17.3 Tambahkan `broadcast(sessionId, chunk)` ke `websocket-gateway.ts` — iterasi subscriber `sessionId`, kirim hanya `chunk.seq > lastSeqSent`, update `lastSeqSent`, tangkap error `ws.send` per-subscriber (hapus subscriber gagal) tanpa menghentikan iterasi ke subscriber lain
+  - [x] 17.3 Tambahkan `broadcast(sessionId, chunk)` ke `websocket-gateway.ts` — iterasi subscriber `sessionId`, kirim hanya `chunk.seq > lastSeqSent`, update `lastSeqSent`, tangkap error `ws.send` per-subscriber (hapus subscriber gagal) tanpa menghentikan iterasi ke subscriber lain
     - _Requirements: 4.2, 5.1, 5.2, 5.3_
 
-  - [ ]* 17.4 Tulis property test broadcast
+  - [x]* 17.4 Tulis property test broadcast
     - **Property 12: Tidak ada duplikasi atau chunk terlewat setelah reattach** — **Validates: Requirements 4.2**
     - **Property 15: Broadcast konsisten ke banyak Client** — **Validates: Requirements 5.1, 5.2**
     - **Property 16: Kegagalan satu Client tidak memengaruhi Client lain** — **Validates: Requirements 5.3**
 
-  - [ ] 17.5 Tambahkan wiring pesan `input`, `prompt_response`, `resize` di `websocket-gateway.ts` ke `session-manager.ts`, serta kirim notifikasi `session_status` dan `prompt_resolved` ke Client terkait
+  - [x] 17.5 Tambahkan wiring pesan `input`, `prompt_response`, `resize` di `websocket-gateway.ts` ke `session-manager.ts`, serta kirim notifikasi `session_status` dan `prompt_resolved` ke Client terkait
     - _Requirements: 6.3, 7.1_
 
-  - [ ]* 17.6 Tulis property test status Session terhadap disconnect
+  - [x]* 17.6 Tulis property test status Session terhadap disconnect
     - **Property 6: Status Session tidak terpengaruh disconnect WebSocket** — **Validates: Requirements 2.2**
 
-- [ ] 18. Implementasi middleware otentikasi
-  - [ ] 18.1 Buat `src/server/auth.ts` — default `hostname` loopback via `process.env.KCG_HOST`; bila `KCG_AUTH_ENABLED === "true"`, validasi header `Authorization: Bearer <token>` (HTTP) atau `?token=` (upgrade WS) terhadap `KCG_AUTH_TOKEN`, tolak dengan HTTP 401 / WS close code 4401 bila tidak cocok
+- [x] 18. Implementasi middleware otentikasi
+  - [x] 18.1 Buat `src/server/auth.ts` — default `hostname` loopback via `process.env.KCG_HOST`; bila `KCG_AUTH_ENABLED === "true"`, validasi header `Authorization: Bearer <token>` (HTTP) atau `?token=` (upgrade WS) terhadap `KCG_AUTH_TOKEN`, tolak dengan HTTP 401 / WS close code 4401 bila tidak cocok
     - _Requirements: 9.1, 9.2, 9.3_
 
-  - [ ]* 18.2 Tulis property test otentikasi
+  - [x]* 18.2 Tulis property test otentikasi
     - **Property 26: Otentikasi konsisten terhadap kredensial** — **Validates: Requirements 9.2, 9.3**
 
-  - [ ]* 18.3 Tulis unit test default bind jaringan
+  - [x]* 18.3 Tulis unit test default bind jaringan
     - Kasus: `KCG_HOST` tidak diatur menghasilkan default loopback; `KCG_AUTH_ENABLED` tidak diatur berarti request diterima tanpa kredensial
     - _Requirements: 9.1_
 
-- [ ] 19. Checkpoint - Ensure all tests pass, ask the user if questions arise.
+- [x] 19. Checkpoint - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 20. Wiring server utama
   - [ ] 20.1 Perbarui `src/index.ts` — `Bun.serve({ hostname, port, routes, websocket })`: routes HTTP `/api/projects` (GET/POST), `/api/fs` (GET, Folder_Browser), `/api/sessions` (GET/POST/DELETE), pasang `auth.ts` di setiap route dan `upgrade` WS, panggil `reconcileOnStartup()` sebelum `Bun.serve` menerima koneksi, daftarkan handler shutdown

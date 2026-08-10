@@ -9,8 +9,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
-import { openSessionStore } from "./db";
-import { createProjectManager } from "./project-manager";
+import { openSessionStore } from "../db";
+import { createProjectManager } from "../project-manager";
 
 let root: string;
 

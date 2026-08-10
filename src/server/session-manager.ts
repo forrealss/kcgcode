@@ -25,7 +25,14 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import type { SessionStore } from "./db";
 import { type PtyHandle, spawnPty } from "./pty-process";
-import type { AgentType, OutputChunk, PromptResponse, Result, Session } from "./types";
+import type {
+  AgentType,
+  OutputChunk,
+  PromptResponse,
+  Result,
+  Session,
+  SessionStatus,
+} from "./types";
 
 export const MAX_FREE_TEXT_LENGTH = 10000;
 export const FORCE_KILL_MS = 5000;
@@ -59,6 +66,8 @@ export interface SessionManagerOptions {
   clearTimeoutFn?: (handle: unknown) => void;
   /** Hook Output_Stream baru — disambungkan ke WebSocket_Gateway (task 17). */
   onOutput?: (chunk: OutputChunk) => void;
+  /** Hook perubahan status Session — disambungkan ke WebSocket_Gateway (task 17.5). */
+  onStatusChange?: (sessionId: string, status: SessionStatus) => void;
 }
 
 export interface SessionManager {
@@ -68,6 +77,8 @@ export interface SessionManager {
   stopSession(sessionId: string): SimpleResult;
   sendFreeTextInput(sessionId: string, text: string): SimpleResult;
   resolvePrompt(sessionId: string, promptId: string, response: PromptResponse): SimpleResult;
+  /** Resize PTY sesuai viewport (protokol `resize`, task 17.5). */
+  resizeSession(sessionId: string, cols: number, rows: number): SimpleResult;
   reconcileOnStartup(): void;
   shutdown(): Promise<void>;
 }
@@ -87,6 +98,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     opts.clearTimeoutFn ??
     ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const onOutput = opts.onOutput;
+  const onStatusChange = opts.onStatusChange;
 
   /** PtyHandle aktif per Session (di memori proses server). */
   const handles = new Map<string, PtyHandle>();
@@ -114,15 +126,24 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * `running` tidak pernah kehilangan prosesnya tanpa perubahan status
    * (konsistensi status vs keberadaan proses).
    */
+  /**
+   * Perbarui status Session di store dan beri tahu gateway (task 17.5).
+   * Status berubah hanya bila update di store berhasil.
+   */
+  function updateStatus(sessionId: string, status: SessionStatus, changedAt: number): void {
+    const res = store.updateSessionStatus(sessionId, status, changedAt);
+    if (res.ok) onStatusChange?.(sessionId, status);
+  }
+
   function onPtyExit(sessionId: string, code: number | null, expected: boolean): void {
     clearForceKill(sessionId);
     handles.delete(sessionId);
     const cur = store.getSession(sessionId);
     if (!cur.ok || cur.data.status !== "running") return;
     if (expected || code === 0) {
-      store.updateSessionStatus(sessionId, "stopped", now());
+      updateStatus(sessionId, "stopped", now());
     } else {
-      store.updateSessionStatus(sessionId, "crashed", now());
+      updateStatus(sessionId, "crashed", now());
     }
   }
 
@@ -164,6 +185,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const crashed: Session = { ...session, status: "crashed", updatedAt: now() };
       store.insertSession(crashed);
       store.insertStatusHistory(sessionId, "crashed", now());
+      onStatusChange?.(sessionId, "crashed");
       return { ok: false, error: `PROCESS_SPAWN_FAILED: ${(e as Error).message}` };
     }
     handles.set(sessionId, handle);
@@ -196,6 +218,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const crashed: Session = { ...session, status: "crashed", updatedAt: now() };
       store.insertSession(crashed);
       store.insertStatusHistory(sessionId, "crashed", now());
+      onStatusChange?.(sessionId, "crashed");
       handles.delete(sessionId);
       return {
         ok: false,
@@ -288,11 +311,28 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     return { ok: true };
   }
 
+  /**
+   * Resize PTY sesuai ukuran viewport Client (protokol `resize`).
+   * Ukuran harus bilangan bulat positif; hanya valid untuk Session `running`.
+   */
+  function resizeSession(sessionId: string, cols: number, rows: number): SimpleResult {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    if (cur.data.status !== "running") return { ok: false, error: "SESSION_NOT_RUNNING" };
+    const handle = handles.get(sessionId);
+    if (!handle) return { ok: false, error: "SESSION_NOT_RUNNING" };
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) {
+      return { ok: false, error: "INVALID_SIZE" };
+    }
+    handle.resize(cols, rows);
+    return { ok: true };
+  }
+
   /** Requirement 2.4: seluruh Session `running` tanpa proses -> `crashed`. */
   function reconcileOnStartup(): void {
     for (const s of store.listSessions()) {
       if (s.status === "running") {
-        store.updateSessionStatus(s.id, "crashed", now());
+        updateStatus(s.id, "crashed", now());
       }
     }
   }
@@ -327,6 +367,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     stopSession,
     sendFreeTextInput,
     resolvePrompt,
+    resizeSession,
     reconcileOnStartup,
     shutdown,
   };
