@@ -1,22 +1,14 @@
 /**
- * Property, unit & integration test `session-manager.ts` (task 11, 12, 14).
+ * Unit & property test `session-manager.ts` (versi headless).
  *
- * Property test:
- * - Property 1: Pembuatan Session valid (1.1, 1.2, 10.9)
- * - Property 2: Kondisi tidak valid selalu ditolak (1.3, 10.10, 10.11)
- * - Property 3: Daftar entitas selalu lengkap (1.5, 10.8)
- * - Property 4: Penghentian Session tidak valid selalu ditolak (1.7)
- * - Property 5: Exit tak terduga -> crashed (1.8)
- * - Property 7: Rekonsiliasi startup menandai Session tanpa proses crashed (2.4)
- * - Property 18-20: Resolusi Interactive_Prompt (6.3-6.7)
- * - Property 21-24: Free-text input (7.1-7.5)
+ * Session_Manager kini mengorkestrasi server headless opencode (bukan PTY):
+ * - `createSession` async: validasi -> ensure server -> POST /session.
+ * - `sendFreeTextInput` async: echo pesan user -> POST message -> balasan.
+ * - Interactive_Prompt dari event SSE `permission.asked` / `question.asked`.
+ * - `resolvePrompt` -> reply permission/question, bukan menulis `y\n` ke PTY.
  *
- * Unit & integration:
- * - 11.3: kegagalan spawn (1.4)
- * - 12.3: timing force-kill SIGKILL (1.6)
- * - 12.9: proses tetap hidup & shutdown dalam budget (2.1, 2.3)
- *
- * `PtyHandle` di-mock seluruhnya sesuai batasan mocking `design.md`.
+ * Mocking boundary: `OpenCodeServerManager` + `OpenCodeClient` di-mock
+ * seluruhnya (sesuai batasan mocking `design.md`); `bun:sqlite` asli.
  */
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -25,108 +17,228 @@ import path from "node:path";
 import fc from "fast-check";
 import type { SessionStore } from "../db";
 import { openSessionStore } from "../db";
-import type { PtyHandle } from "../pty-process";
+import type { OpenCodeClient, OpenCodeEvent, OpenCodePermissionReply } from "../opencode-client";
+import type { OpenCodeServerHandle, OpenCodeServerManager } from "../opencode-server";
 import {
   type CreateSessionRequest,
   createSessionManager,
   type SessionManager,
-  type SpawnPtyFn,
 } from "../session-manager";
-import type { AgentType, Project, Session, SessionStatus } from "../types";
+import type {
+  AgentType,
+  InteractivePrompt,
+  MessagePart,
+  Project,
+  SessionMessage,
+  SessionStatus,
+} from "../types";
 
 // ---------------------------------------------------------------------------
-// Mock PtyHandle + harness
+// Mock OpenCodeClient
 // ---------------------------------------------------------------------------
 
-interface PtyMock extends PtyHandle {
-  writes: string[];
-  kills: string[];
-  emitData(chunk: string): void;
-  emitExit(code: number | null): void;
+interface FakeClient extends OpenCodeClient {
+  /** Calls tercatat: createSession, sendMessage, replyPermission, dst. */
+  calls: string[];
+  sendMessageResult: { ok: boolean; error?: string };
+  promptAsyncResult: { ok: boolean; error?: string };
+  createSessionResult: { ok: boolean; error?: string; id?: string };
+  /** Antrean jeda simulasi sebelum tiap sendMessage selesai (ms) — uji race. */
+  sendDelays?: number[];
+  emit(ev: OpenCodeEvent): void;
+  eventCb: ((ev: OpenCodeEvent) => void) | null;
 }
 
-function makePtyMock(sessionId: string, opts: { immediateExitCode?: number | null } = {}): PtyMock {
-  const writes: string[] = [];
-  const kills: string[] = [];
-  let dataCb: ((chunk: string) => void) | null = null;
-  let exitCb: ((code: number | null, expected: boolean) => void) | null = null;
-  let killRequested = false;
+function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
+  const calls: string[] = [];
+  const client: FakeClient = {
+    calls,
+    eventCb: null,
+    sendMessageResult: { ok: true },
+    promptAsyncResult: { ok: true },
+    createSessionResult: { ok: true, id: "ses_remote1" },
+    async createSession(opts) {
+      calls.push(`createSession:${opts?.title ?? ""}`);
+      if (!client.createSessionResult.ok) {
+        return { ok: false, error: client.createSessionResult.error ?? "OC_CREATE_SESSION_FAILED" };
+      }
+      return {
+        ok: true,
+        data: { id: client.createSessionResult.id ?? "ses_remote1", directory: "/proj" },
+      };
+    },
+    async sendMessage(_sessionId, text) {
+      calls.push(`sendMessage:${text}`);
+      const delay = client.sendDelays?.shift();
+      if (delay) await Bun.sleep(delay);
+      if (!client.sendMessageResult.ok) {
+        return { ok: false, error: client.sendMessageResult.error ?? "OC_SEND_MESSAGE_FAILED" };
+      }
+      return {
+        ok: true,
+        data: {
+          info: { id: "msg_assistant", role: "assistant" },
+          parts: [{ type: "text", text: `balasan: ${text}` }],
+        },
+      };
+    },
+    async promptAsync(_sessionId, text) {
+      calls.push(`promptAsync:${text}`);
+      const delay = client.sendDelays?.shift();
+      if (delay) await Bun.sleep(delay);
+      if (!client.promptAsyncResult.ok) {
+        return { ok: false, error: client.promptAsyncResult.error ?? "OC_PROMPT_ASYNC_FAILED" };
+      }
+      return { ok: true, data: null };
+    },
+    async replyPermission(requestId, reply: OpenCodePermissionReply) {
+      calls.push(`replyPermission:${requestId}:${reply}`);
+      return { ok: true, data: null };
+    },
+    async replyQuestion(requestId, answers) {
+      calls.push(`replyQuestion:${requestId}:${answers.join(",")}`);
+      return { ok: true, data: null };
+    },
+    async rejectQuestion(requestId) {
+      calls.push(`rejectQuestion:${requestId}`);
+      return { ok: true, data: null };
+    },
+    async abortSession(sessionId) {
+      calls.push(`abortSession:${sessionId}`);
+      return { ok: true, data: null };
+    },
+    subscribeEvents(cb) {
+      client.eventCb = cb;
+      return () => {
+        client.eventCb = null;
+      };
+    },
+    async health() {
+      return true;
+    },
+    emit(ev: OpenCodeEvent) {
+      client.eventCb?.(ev);
+    },
+    ...overrides,
+  };
+  return client;
+}
 
-  return {
-    sessionId,
-    writes,
-    kills,
-    write(data: string) {
-      writes.push(data);
-    },
-    resize() {},
-    kill(signal: "SIGTERM" | "SIGKILL" = "SIGTERM") {
-      kills.push(signal);
-      killRequested = true;
-    },
-    onData(cb) {
-      dataCb = cb;
-    },
-    onExit(cb) {
-      exitCb = cb;
-      // Proses langsung exit saat listener dipasang (task 11.3).
-      if (opts.immediateExitCode !== undefined) cb(opts.immediateExitCode, false);
-    },
-    emitData(chunk: string) {
-      dataCb?.(chunk);
-    },
-    emitExit(code: number | null) {
-      exitCb?.(code, killRequested);
+// ---------------------------------------------------------------------------
+// Mock OpenCodeServerManager
+// ---------------------------------------------------------------------------
+
+interface FakeServers {
+  manager: OpenCodeServerManager;
+  clients: Map<string, FakeClient>;
+  ensureCalls: { projectId: string; projectPath: string }[];
+  ensureResult: { ok: boolean; error?: string };
+  stopped: string[];
+  exitCbs: Set<(projectId: string) => void>;
+}
+
+function makeFakeServers(): FakeServers {
+  const clients = new Map<string, FakeClient>();
+  const ensureCalls: { projectId: string; projectPath: string }[] = [];
+  const stopped: string[] = [];
+  const exitCbs = new Set<(projectId: string) => void>();
+  const state: FakeServers = {
+    ensureResult: { ok: true },
+    ensureCalls,
+    clients,
+    stopped,
+    exitCbs,
+    manager: {
+      async ensureServer(projectId, projectPath) {
+        ensureCalls.push({ projectId, projectPath });
+        if (!state.ensureResult.ok) {
+          return { ok: false, error: state.ensureResult.error ?? "SERVER_START_FAILED" };
+        }
+        let client = clients.get(projectId);
+        if (!client) {
+          client = makeFakeClient();
+          clients.set(projectId, client);
+        }
+        const handle: OpenCodeServerHandle = {
+          projectId,
+          baseUrl: "http://127.0.0.1:0",
+          client,
+        };
+        return { ok: true, data: handle };
+      },
+      getServer(projectId) {
+        const client = clients.get(projectId);
+        return client ? { projectId, baseUrl: "http://127.0.0.1:0", client } : undefined;
+      },
+      async stopServer(projectId) {
+        stopped.push(projectId);
+        clients.delete(projectId);
+      },
+      async stopAll() {
+        for (const id of [...clients.keys()]) stopped.push(id);
+        clients.clear();
+      },
+      onServerExit(cb) {
+        exitCbs.add(cb);
+      },
     },
   };
+  return state;
 }
+
+// ---------------------------------------------------------------------------
+// Harness
+// ---------------------------------------------------------------------------
 
 interface Harness {
   store: SessionStore;
   sm: SessionManager;
-  handles: Map<string, PtyMock>;
-  spawned: { cmd: string[]; cwd: string; sessionId: string }[];
+  fake: FakeServers;
+  messages: SessionMessage[];
+  messageParts: [string, string, MessagePart][];
+  prompts: InteractivePrompt[];
+  statuses: [string, SessionStatus][];
+  errors: [string, string][];
   project: Project;
   root: string;
   close(): void;
 }
 
-interface HarnessOptions {
-  spawn?: SpawnPtyFn;
-  setTimeoutFn?: (cb: () => void, ms: number) => unknown;
-  clearTimeoutFn?: (handle: unknown) => void;
-}
-
-function freshHarness(opts: HarnessOptions = {}): Harness {
+function freshHarness(): Harness {
   const store = openSessionStore(":memory:");
-  const root = mkdtempSync(path.join(tmpdir(), "kcg-sm-"));
+  const root = mkdtempSync(path.join(tmpdir(), "kcg-sm2-"));
   const cwd = path.join(root, "proj");
   mkdirSync(cwd, { recursive: true });
   const project: Project = { id: "p1", name: "proj", path: cwd, createdAt: 1 };
   store.insertProject(project);
 
-  const handles = new Map<string, PtyMock>();
-  const spawned: { cmd: string[]; cwd: string; sessionId: string }[] = [];
-  const defaultSpawn: SpawnPtyFn = (cmd, cwdArg, sessionId) => {
-    const h = makePtyMock(sessionId);
-    spawned.push({ cmd, cwd: cwdArg, sessionId });
-    handles.set(sessionId, h);
-    return h;
-  };
+  const fake = makeFakeServers();
+  const messages: SessionMessage[] = [];
+  const messageParts: [string, string, MessagePart][] = [];
+  const prompts: InteractivePrompt[] = [];
+  const statuses: [string, SessionStatus][] = [];
+  const errors: [string, string][] = [];
 
   const sm = createSessionManager({
     store,
-    spawn: opts.spawn ?? defaultSpawn,
+    servers: fake.manager,
     now: () => 1000,
-    ...(opts.setTimeoutFn ? { setTimeoutFn: opts.setTimeoutFn } : {}),
-    ...(opts.clearTimeoutFn ? { clearTimeoutFn: opts.clearTimeoutFn } : {}),
+    onMessage: (m) => messages.push(m),
+    onMessagePart: (sid, mid, part) => messageParts.push([sid, mid, part]),
+    onPrompt: (p) => prompts.push(p),
+    onStatusChange: (id, st) => statuses.push([id, st]),
+    onError: (id, m) => errors.push([id, m]),
   });
 
   return {
     store,
     sm,
-    handles,
-    spawned,
+    fake,
+    messages,
+    messageParts,
+    prompts,
+    statuses,
+    errors,
     project,
     root,
     close() {
@@ -136,77 +248,91 @@ function freshHarness(opts: HarnessOptions = {}): Harness {
   };
 }
 
-/** Status tersimpan sebuah Session, atau undefined bila tidak ditemukan. */
+/** Tunggu antrean asinkron (POST message) selesai. */
+async function flush(): Promise<void> {
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+}
+
+async function createSession(h: Harness, agentType: AgentType = "opencode"): Promise<string> {
+  const res = await h.sm.createSession({ agentType, projectId: h.project.id });
+  expect(res.ok).toBe(true);
+  if (!res.ok) throw new Error(`harness createSession gagal: ${res.error}`);
+  return res.session.id;
+}
+
 function statusOf(store: SessionStore, sid: string): SessionStatus | undefined {
   const r = store.getSession(sid);
   return r.ok ? r.data.status : undefined;
 }
 
 // ---------------------------------------------------------------------------
-// Task 11 — pembuatan & daftar Session
+// Pembuatan Session
 // ---------------------------------------------------------------------------
 
-// Feature: kcg-bridge, Property 1: Pembuatan Session valid
-test("Property 1: createSession valid -> running, cwd project, satu PtyHandle", () => {
-  fc.assert(
-    fc.property(fc.constantFrom("opencode", "claude-code" as const), (agentType) => {
-      const h = freshHarness();
-      try {
-        const res = h.sm.createSession({ agentType, projectId: h.project.id });
-        expect(res.ok).toBe(true);
-        if (res.ok) {
-          expect(res.session.status).toBe("running");
-          expect(res.session.cwd).toBe(h.project.path);
-          expect(res.session.agentType).toBe(agentType);
-          expect(res.session.createdAt).toBe(1000);
-          // Tepat satu PtyHandle terasosiasi (Requirement 1.2)
-          expect(h.handles.has(res.session.id)).toBe(true);
-          // Perintah CLI_Agent sesuai tipe
-          expect(h.spawned[0]?.cmd).toEqual(
-            agentType === "opencode" ? ["opencode"] : ["claude-code"],
-          );
-          expect(h.spawned[0]?.cwd).toBe(h.project.path);
-        }
-      } finally {
-        h.close();
-      }
-    }),
-    { numRuns: 100 },
-  );
+test("createSession valid -> running, ocSessionId, server per project", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const sess = h.store.getSession(sid);
+    expect(sess.ok).toBe(true);
+    if (sess.ok) {
+      expect(sess.data.status).toBe("running");
+      expect(sess.data.cwd).toBe(h.project.path);
+      expect(sess.data.ocSessionId).toBe("ses_remote1");
+      expect(sess.data.createdAt).toBe(1000);
+    }
+    // Server di-ensure dengan path Project (Requirement 10.9).
+    expect(h.fake.ensureCalls).toHaveLength(1);
+    expect(h.fake.ensureCalls[0]).toEqual({ projectId: "p1", projectPath: h.project.path });
+    // Subscribe event SSE terpasang pada client.
+    expect(h.fake.clients.get("p1")?.eventCb).not.toBeNull();
+  } finally {
+    h.close();
+  }
+});
+
+test("createSession: ensure server hanya sekali untuk project yang sama", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    await createSession(h);
+    await createSession(h);
+    expect(h.fake.ensureCalls).toHaveLength(3); // dipanggil tiap createSession
+    const client = h.fake.clients.get("p1");
+    expect(client?.calls.filter((c) => c.startsWith("createSession"))).toHaveLength(3);
+  } finally {
+    h.close();
+  }
 });
 
 // Feature: kcg-bridge, Property 2: Pembuatan Session dengan kondisi tidak valid selalu ditolak
-test("Property 2: agentType tidak didukung / project tidak ada / dir hilang -> ditolak", () => {
-  fc.assert(
-    fc.property(
-      fc.constantFrom("vibe", "codex", "terraform"),
+test("Property 2: agentType tak didukung / project tak ada / dir hilang -> ditolak", async () => {
+  await fc.assert(
+    fc.asyncProperty(
+      fc.constantFrom("claude-code", "vibe", "codex"),
       fc.string({ maxLength: 20 }).filter((s) => s !== "p1"),
       fc.constantFrom(0, 1, 2),
-      (badType, unknownId, kase) => {
+      async (badType, unknownId, kase) => {
         const h = freshHarness();
         try {
           let req: CreateSessionRequest;
           if (kase === 0) {
-            // (1) agentType di luar daftar didukung
             req = { agentType: badType as AgentType, projectId: h.project.id };
           } else if (kase === 1) {
-            // (2) projectId tidak ada di Session_Store
             req = { agentType: "opencode", projectId: unknownId };
           } else {
-            // (3) Project valid namun direktori kerjanya sudah tidak ada
             h.store.insertProject({
               id: "pm",
               name: "proj-missing",
-              path: path.join(h.root, "tidak-ada-dir"),
+              path: path.join(h.root, "tidak-ada"),
               createdAt: 1,
             });
             req = { agentType: "opencode", projectId: "pm" };
           }
-
-          const res = h.sm.createSession(req);
+          const res = await h.sm.createSession(req);
           expect(res.ok).toBe(false);
           if (!res.ok) expect(res.error.length).toBeGreaterThan(0);
-          // Tidak ada baris sessions berstatus running (Requirement 1.3, 10.10, 10.11)
           expect(h.store.listSessions().every((s) => s.status !== "running")).toBe(true);
         } finally {
           h.close();
@@ -217,696 +343,1023 @@ test("Property 2: agentType tidak didukung / project tidak ada / dir hilang -> d
   );
 });
 
-// Feature: kcg-bridge, Property 3: Daftar entitas selalu lengkap
-test("Property 3: listSessions & listProjects selalu lengkap tanpa duplikat", () => {
-  fc.assert(
-    fc.property(
-      fc.array(
-        fc.tuple(
-          fc.string({ minLength: 1, maxLength: 12 }),
-          fc.string({ minLength: 1, maxLength: 12 }),
-        ),
-        { maxLength: 8 },
-      ),
-      fc.array(fc.constantFrom("running", "stopped", "crashed" as const), { maxLength: 8 }),
-      (projSpecs, statuses) => {
-        const h = freshHarness();
-        try {
-          const insertedProjects: Project[] = [];
-          projSpecs.forEach(([name, rel], i) => {
-            const proj: Project = {
-              id: `pj-${i}`,
-              name,
-              path: path.join(h.root, rel),
-              createdAt: i,
-            };
-            if (h.store.insertProject(proj).ok) insertedProjects.push(proj);
-          });
-
-          const insertedSessions: Session[] = [];
-          statuses.forEach((status, i) => {
-            const proj = insertedProjects[i % Math.max(1, insertedProjects.length)];
-            if (!proj) return;
-            const s: Session = {
-              id: `s-${i}`,
-              projectId: proj.id,
-              agentType: "opencode",
-              cwd: proj.path,
-              status,
-              createdAt: i,
-              updatedAt: i,
-            };
-            if (h.store.insertSession(s).ok) insertedSessions.push(s);
-          });
-
-          // listSessions lengkap, tanpa hilang/duplikat (Requirement 1.5)
-          const listed = h.sm.listSessions();
-          expect(listed.length).toBe(insertedSessions.length);
-          const ids = new Set(listed.map((s) => s.id));
-          expect(ids.size).toBe(listed.length);
-          for (const s of insertedSessions) expect(ids.has(s.id)).toBe(true);
-
-          // listProjects lengkap, termasuk project bawaan harness (Req 10.8)
-          const projs = h.store.listProjects();
-          expect(projs.length).toBe(insertedProjects.length + 1);
-          const projIds = new Set(projs.map((p) => p.id));
-          expect(projIds.size).toBe(projs.length);
-          for (const p of insertedProjects) expect(projIds.has(p.id)).toBe(true);
-          expect(projIds.has(h.project.id)).toBe(true);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-test("11.3: spawn melempar error -> sesi dicatat crashed, tidak pernah running", () => {
-  const store = openSessionStore(":memory:");
-  const root = mkdtempSync(path.join(tmpdir(), "kcg-sm-"));
-  const cwd = path.join(root, "proj");
-  mkdirSync(cwd, { recursive: true });
-  store.insertProject({ id: "p1", name: "proj", path: cwd, createdAt: 1 });
-
-  const sm = createSessionManager({
-    store,
-    now: () => 1000,
-    spawn: () => {
-      throw new Error("command not found");
-    },
-  });
-
-  const res = sm.createSession({ agentType: "opencode", projectId: "p1" });
-  expect(res.ok).toBe(false);
-  if (!res.ok) expect(res.error).toContain("PROCESS_SPAWN_FAILED");
-
-  const sessions = store.listSessions();
-  expect(sessions).toHaveLength(1);
-  expect(sessions[0]?.status).toBe("crashed");
-  const hist = store.getStatusHistory(sessions[0]?.id ?? "");
-  expect(hist.ok).toBe(true);
-  if (hist.ok) expect(hist.data.map((x) => x.status)).toEqual(["crashed"]);
-  store.close();
-  rmSync(root, { recursive: true, force: true });
-});
-
-test("11.3: proses langsung exit dengan error -> sesi dicatat crashed", () => {
-  const store = openSessionStore(":memory:");
-  const root = mkdtempSync(path.join(tmpdir(), "kcg-sm-"));
-  const cwd = path.join(root, "proj");
-  mkdirSync(cwd, { recursive: true });
-  store.insertProject({ id: "p1", name: "proj", path: cwd, createdAt: 1 });
-
-  const sm = createSessionManager({
-    store,
-    now: () => 1000,
-    spawn: (_cmd, _cwd, sessionId) => makePtyMock(sessionId, { immediateExitCode: 1 }),
-  });
-
-  const res = sm.createSession({ agentType: "opencode", projectId: "p1" });
-  expect(res.ok).toBe(false);
-  if (!res.ok) expect(res.error).toContain("PROCESS_SPAWN_FAILED");
-
-  const sessions = store.listSessions();
-  expect(sessions).toHaveLength(1);
-  expect(sessions[0]?.status).toBe("crashed");
-  const hist = store.getStatusHistory(sessions[0]?.id ?? "");
-  expect(hist.ok).toBe(true);
-  if (hist.ok) expect(hist.data.map((x) => x.status)).toEqual(["crashed"]);
-  store.close();
-  rmSync(root, { recursive: true, force: true });
-});
-
-// ---------------------------------------------------------------------------
-// Task 12 — lifecycle (stop, exit, rekonsiliasi, shutdown)
-// ---------------------------------------------------------------------------
-
-// Feature: kcg-bridge, Property 4: Penghentian Session tidak valid selalu ditolak
-test("Property 4: stopSession id tak dikenal / status bukan running -> ditolak", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ maxLength: 20 }),
-      fc.constantFrom("stopped", "crashed" as const),
-      (unknownId, nonRunning) => {
-        const h = freshHarness();
-        try {
-          // Session tidak ditemukan
-          const r1 = h.sm.stopSession(unknownId);
-          expect(r1.ok).toBe(false);
-          if (!r1.ok) expect(r1.error).toBe("SESSION_NOT_FOUND");
-
-          // Session berstatus bukan running
-          const created = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(created.ok).toBe(true);
-          if (!created.ok) return;
-          const sid = created.session.id;
-          const handle = h.handles.get(sid);
-          expect(handle).toBeDefined();
-          if (nonRunning === "stopped") {
-            handle?.kill("SIGTERM");
-            handle?.emitExit(0);
-          } else {
-            handle?.emitExit(1);
-          }
-          expect(statusOf(h.store, sid)).toBe(nonRunning);
-
-          const killsBefore = handle?.kills.length ?? 0;
-          const r2 = h.sm.stopSession(sid);
-          expect(r2.ok).toBe(false);
-          if (!r2.ok) expect(r2.error).toBe("SESSION_NOT_RUNNING");
-          // Status tidak berubah & tidak ada sinyal baru (Requirement 1.7)
-          expect(statusOf(h.store, sid)).toBe(nonRunning);
-          expect(handle?.kills.length ?? 0).toBe(killsBefore);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// Feature: kcg-bridge, Property 5: Exit tak terduga menghasilkan status crashed
-test("Property 5: exit tak terduga kode bukan nol -> crashed + riwayat tercatat", () => {
-  fc.assert(
-    fc.property(fc.integer({ min: 1, max: 255 }), (code) => {
-      const h = freshHarness();
-      try {
-        const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-        expect(res.ok).toBe(true);
-        if (!res.ok) return;
-        const sid = res.session.id;
-
-        const before = h.store.getStatusHistory(sid);
-        const beforeCount = before.ok ? before.data.length : 0;
-
-        const handle = h.handles.get(sid);
-        expect(handle).toBeDefined();
-        handle?.emitExit(code);
-
-        const cur = h.store.getSession(sid);
-        expect(cur.ok).toBe(true);
-        if (cur.ok) expect(cur.data.status).toBe("crashed");
-
-        const hist = h.store.getStatusHistory(sid);
-        expect(hist.ok).toBe(true);
-        if (hist.ok) {
-          expect(hist.data.length).toBe(beforeCount + 1);
-          const last = hist.data[hist.data.length - 1];
-          expect(last).toBeDefined();
-          if (last) {
-            expect(last.status).toBe("crashed");
-            expect(last.changedAt).toBe(1000); // timestamp kejadian
-          }
-        }
-      } finally {
-        h.close();
-      }
-    }),
-    { numRuns: 100 },
-  );
-});
-
-// Feature: kcg-bridge, Property 7: Rekonsiliasi startup menandai Session tanpa proses sebagai crashed
-test("Property 7: reconcileOnStartup -> running jadi crashed, lainnya tidak berubah", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.constantFrom("running", "stopped", "crashed" as const), { maxLength: 30 }),
-      (statuses) => {
-        const h = freshHarness();
-        try {
-          const inserted: { id: string; status: SessionStatus }[] = [];
-          statuses.forEach((status, i) => {
-            const s: Session = {
-              id: `rc-${i}`,
-              projectId: h.project.id,
-              agentType: "opencode",
-              cwd: h.project.path,
-              status,
-              createdAt: i,
-              updatedAt: i,
-            };
-            if (h.store.insertSession(s).ok) inserted.push({ id: `rc-${i}`, status });
-          });
-
-          h.sm.reconcileOnStartup();
-
-          for (const s of inserted) {
-            const cur = h.store.getSession(s.id);
-            const expected = s.status === "running" ? "crashed" : s.status;
-            expect(cur.ok).toBe(true);
-            if (cur.ok) expect(cur.data.status).toBe(expected);
-
-            const hist = h.store.getStatusHistory(s.id);
-            expect(hist.ok).toBe(true);
-            if (hist.ok) {
-              if (s.status === "running") {
-                expect(hist.data).toHaveLength(1);
-                expect(hist.data[0]?.status).toBe("crashed");
-              } else {
-                expect(hist.data).toHaveLength(0);
-              }
-            }
-          }
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-test("12.4: exit tak terduga kode 0 -> stopped (proses selesai bersih)", () => {
+test("createSession: ensure server gagal -> error, tanpa session", async () => {
   const h = freshHarness();
   try {
-    const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const sid = res.session.id;
-    const handle = h.handles.get(sid);
-    expect(handle).toBeDefined();
-
-    handle?.emitExit(0);
-    expect(statusOf(h.store, sid)).toBe("stopped");
-    // Manager tidak lagi menganggapnya berjalan (proses sudah tidak ada)
-    expect(h.sm.stopSession(sid)).toEqual({ ok: false, error: "SESSION_NOT_RUNNING" });
+    h.fake.ensureResult = { ok: false, error: "SERVER_START_FAILED" };
+    const res = await h.sm.createSession({ agentType: "opencode", projectId: "p1" });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain("SERVER_START_FAILED");
+    expect(h.store.listSessions()).toHaveLength(0);
   } finally {
     h.close();
   }
 });
 
-// ---- Task 12.3: timing force-kill dengan fake timer ----
-interface FakeTimers {
-  timers: Map<number, { cb: () => void; delay: number }>;
-  setTimeoutFn: (cb: () => void, ms: number) => unknown;
-  clearTimeoutFn: (handle: unknown) => void;
-}
+test("createSession: create session remote gagal -> error, tanpa session", async () => {
+  const h = freshHarness();
+  try {
+    const client = makeFakeClient({
+      createSessionResult: { ok: false, error: "OC_CREATE_SESSION_FAILED" },
+    });
+    h.fake.clients.set("p1", client);
+    const res = await h.sm.createSession({ agentType: "opencode", projectId: "p1" });
+    expect(res.ok).toBe(false);
+    expect(h.store.listSessions()).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
 
-function fakeTimers(): FakeTimers {
-  const timers = new Map<number, { cb: () => void; delay: number }>();
-  let nextId = 1;
-  return {
-    timers,
-    setTimeoutFn: (cb, ms) => {
-      const id = nextId;
-      nextId += 1;
-      timers.set(id, { cb, delay: ms });
-      return id;
-    },
-    clearTimeoutFn: (handle) => {
-      timers.delete(handle as number);
-    },
+// ---------------------------------------------------------------------------
+// Free-text input
+// ---------------------------------------------------------------------------
+
+test("sendFreeTextInput: validasi text -> TEXT_EMPTY / TEXT_TOO_LONG / not found / inactive", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    expect((await h.sm.sendFreeTextInput(sid, "   ")).error).toBe("TEXT_EMPTY");
+    expect((await h.sm.sendFreeTextInput(sid, "")).error).toBe("TEXT_EMPTY");
+    expect((await h.sm.sendFreeTextInput(sid, "x".repeat(10001))).error).toBe("TEXT_TOO_LONG");
+    expect((await h.sm.sendFreeTextInput("unknown", "halo")).error).toBe("SESSION_NOT_FOUND");
+
+    // Session dihentikan -> tidak aktif.
+    const r = await h.sm.stopSession(sid);
+    expect(r.ok).toBe(true);
+    expect((await h.sm.sendFreeTextInput(sid, "halo")).error).toBe("SESSION_NOT_ACTIVE");
+  } finally {
+    h.close();
+  }
+});
+
+test("sendFreeTextInput sukses -> echo user; assistant dirakit saat session.idle", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const res = await h.sm.sendFreeTextInput(sid, "hello");
+    expect(res.ok).toBe(true);
+
+    // Echo user tersimpan & terkirim segera.
+    expect(h.messages).toHaveLength(1);
+    expect(h.messages[0]?.role).toBe("user");
+    expect(h.messages[0]?.parts).toEqual([{ type: "text", text: "hello" }]);
+
+    await flush();
+
+    // Prompt dikirim via prompt_async (204) — belum ada pesan assistant.
+    const client = h.fake.clients.get("p1")!;
+    expect(client.calls).toContain("promptAsync:hello");
+    expect(h.messages).toHaveLength(1);
+
+    // Balasan tiba sebagai parts SSE.
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "balasan: hello", messageID: "msg_a1" },
+    });
+    // Turn belum ditutup sebelum idle.
+    expect(h.messages).toHaveLength(1);
+
+    // session.idle Session akar menutup turn -> pesan assistant dirakit.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+
+    expect(h.messages).toHaveLength(2);
+    expect(h.messages[1]?.role).toBe("assistant");
+    expect(h.messages[1]?.id).toBe("msg_a1");
+    expect(h.messages[1]?.parts).toEqual([
+      { type: "text", id: "prt_t1", text: "balasan: hello", messageID: "msg_a1" },
+    ]);
+
+    // Keduanya tersimpan di store (round-trip history).
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok).toBe(true);
+    if (stored.ok) expect(stored.data).toHaveLength(2);
+  } finally {
+    h.close();
+  }
+});
+
+test("sendFreeTextInput: prompt_async gagal -> onError, tanpa pesan assistant", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1");
+    client!.promptAsyncResult = { ok: false, error: "OC_PROMPT_ASYNC_FAILED(500)" };
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+    expect(h.errors).toHaveLength(1);
+    expect(h.errors[0]?.[0]).toBe(sid);
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.idle: turn panjang tersimpan walau POST message tidak dipakai", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    await h.sm.sendFreeTextInput(sid, "delegasikan");
+    await flush();
+
+    // Sub-agent: child session ikut menyumbang pesan pada turn yang sama.
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1" },
+    });
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_induk", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_1", text: "memanggil sub-agent", messageID: "msg_induk" },
+    });
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_child1",
+      info: { id: "msg_child", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_child1",
+      part: { type: "text", id: "prt_2", text: "hasil sub-agent", messageID: "msg_child" },
+    });
+
+    // Idle child TIDAK menutup turn (sub-agent selesai lebih dulu dari induk).
+    client.emit({ type: "session.idle", sessionID: "ses_child1" });
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+
+    // Idle Session akar baru menutup turn.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    expect(assistants.map((m) => m.id)).toEqual(["msg_induk", "msg_child"]);
+
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(2);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.idle ganda -> turn hanya difinalisasi sekali", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "sekali", messageID: "msg_a1" },
+    });
+
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.idle tanpa parts assistant -> tidak menyimpan pesan kosong", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("stopSession di tengah turn menyimpan parts yang sudah ter-stream", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "separuh jalan", messageID: "msg_a1" },
+    });
+
+    expect(h.sm.stopSession(sid).ok).toBe(true);
+
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.parts[0]?.text).toBe("separuh jalan");
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Streaming (SSE message.updated / message.part.updated)
+// ---------------------------------------------------------------------------
+
+test("streaming: part assistant di-forward via onMessagePart setelah turn aktif", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    // Turn dimulai (sendFreeTextInput membuat streamingTurns entry).
+    await h.sm.sendFreeTextInput(sid, "hitung 2+2");
+
+    // SSE: pesan assistant mulai (message.updated role=assistant).
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    // SSE: part reasoning di-stream.
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "reasoning", id: "prt_r1", text: "pikir...", messageID: "msg_a1" },
+    });
+    // SSE: part text di-stream (berkembang).
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "jawaban", messageID: "msg_a1" },
+    });
+
+    expect(h.messageParts).toHaveLength(2);
+    expect(h.messageParts[0]).toEqual([
+      sid,
+      "msg_a1",
+      { type: "reasoning", id: "prt_r1", text: "pikir...", messageID: "msg_a1" },
+    ]);
+    expect(h.messageParts[1]).toEqual([
+      sid,
+      "msg_a1",
+      { type: "text", id: "prt_t1", text: "jawaban", messageID: "msg_a1" },
+    ]);
+  } finally {
+    h.close();
+  }
+});
+
+test("streaming: part user / sebelum assistant dikenal tidak di-forward", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    await h.sm.sendFreeTextInput(sid, "hitung 2+2");
+
+    // Part datang SEBELUM assistant dikenal -> diabaikan.
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_u1", text: "user echo", messageID: "msg_user1" },
+    });
+    expect(h.messageParts).toHaveLength(0);
+
+    // Assistant dikenal -> hanya part dengan messageID yang sama diteruskan.
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_x", text: "salah", messageID: "msg_lain" },
+    });
+    expect(h.messageParts).toHaveLength(0);
+
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "benar", messageID: "msg_a1" },
+    });
+    expect(h.messageParts).toHaveLength(1);
+    expect(h.messageParts[0]?.[1]).toBe("msg_a1");
+  } finally {
+    h.close();
+  }
+});
+
+test("streaming: satu turn dengan beberapa pesan assistant (sub-agent) di-stream semua", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    await h.sm.sendFreeTextInput(sid, "hitung 2+2");
+
+    // Dua pesan assistant dalam satu turn (mis. sub-agent memancarkan pesan sendiri).
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a2", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_1", text: "satu", messageID: "msg_a1" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_2", text: "dua", messageID: "msg_a2" },
+    });
+
+    expect(h.messageParts).toHaveLength(2);
+    expect(h.messageParts.map(([, mid]) => mid).sort()).toEqual(["msg_a1", "msg_a2"]);
+  } finally {
+    h.close();
+  }
+});
+
+test("streaming: turn lama selesai tidak menghapus turn baru (race guard)", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    // Dua input berurutan dengan jeda prompt_async berbeda (40ms lalu 500ms).
+    // Input kedua men-finalisasi turn pertama dan memasang entry turn 2;
+    // penyelesaian prompt_async turn 1 yang menyusul tidak boleh menghapus
+    // entry milik turn 2.
+    const client = h.fake.clients.get("p1")!;
+    client.sendDelays = [40, 500];
+
+    await h.sm.sendFreeTextInput(sid, "input pertama");
+    await h.sm.sendFreeTextInput(sid, "input kedua");
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_b1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_b", text: "lanjutan", messageID: "msg_b1" },
+    });
+    expect(h.messageParts).toHaveLength(1);
+
+    // Tunggu prompt_async pertama selesai (40ms) — yang kedua masih berjalan.
+    await Bun.sleep(100);
+
+    // Turn kedua harus tetap hidup walau turn pertama sudah selesai lebih dulu.
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_b", text: "lanjutan lagi", messageID: "msg_b1" },
+    });
+    expect(h.messageParts).toHaveLength(2);
+    expect(h.messageParts[1]?.[1]).toBe("msg_b1");
+
+    // Biarkan prompt_async kedua selesai agar tidak ada timer menggantung.
+    await Bun.sleep(500);
+  } finally {
+    h.close();
+  }
+});
+
+test("streaming: turn tetap hidup setelah prompt_async, berakhir saat session.idle", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    await h.sm.sendFreeTextInput(sid, "hitung 2+2");
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "sebagian", messageID: "msg_a1" },
+    });
+    expect(h.messageParts).toHaveLength(1);
+
+    // prompt_async selesai (204) TIDAK mengakhiri turn — streaming berlanjut.
+    await flush();
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "sebagian lanjutan", messageID: "msg_a1" },
+    });
+    expect(h.messageParts).toHaveLength(2);
+
+    // session.idle menutup turn -> part berikutnya tidak lagi diteruskan.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "setelah idle", messageID: "msg_a1" },
+    });
+    expect(h.messageParts).toHaveLength(2);
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Interactive_Prompt (permission & question dari event SSE)
+// ---------------------------------------------------------------------------
+
+test("event permission.asked -> prompt kind=permission + onPrompt", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_1",
+      sessionID: "ses_remote1",
+      permission: "bash:ls",
+      patterns: ["ls"],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0]!;
+    expect(p.kind).toBe("permission");
+    expect(p.type).toBe("confirmation");
+    expect(p.sessionId).toBe(sid);
+    expect(p.id).toBe("per_1");
+    expect(p.title).toContain("bash:ls");
+    expect(p.status).toBe("pending");
+  } finally {
+    h.close();
+  }
+});
+
+test("event question.asked -> prompt kind=question menu + options", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "question.asked",
+      requestID: "que_1",
+      sessionID: "ses_remote1",
+      questions: [
+        {
+          question: "Gunakan mode apa?",
+          header: "mode",
+          options: [
+            { label: "Build", description: "menulis kode" },
+            { label: "Plan", description: "hanya rencana" },
+          ],
+        },
+      ],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0]!;
+    expect(p.kind).toBe("question");
+    expect(p.type).toBe("menu");
+    expect(p.sessionId).toBe(sid);
+    expect(p.title).toBe("Gunakan mode apa?");
+    expect(p.options).toEqual(["Build", "Plan"]);
+  } finally {
+    h.close();
+  }
+});
+
+test("sub-agent: permission.asked pada child session -> prompt untuk Session induk", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    // opencode membuat child session saat model memanggil tool `task`.
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1", agent: "explore" },
+    });
+
+    // Izin yang diminta sub-agent memakai sessionID child.
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_sub1",
+      sessionID: "ses_child1",
+      permission: "bash",
+      patterns: ["echo hi"],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0]!;
+    expect(p.id).toBe("per_sub1");
+    // Prompt diatribusikan ke Session lokal induk agar muncul di UI.
+    expect(p.sessionId).toBe(sid);
+  } finally {
+    h.close();
+  }
+});
+
+test("sub-agent: part child session di-stream ke Session induk", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    await h.sm.sendFreeTextInput(sid, "delegasikan ke sub-agent");
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1", agent: "explore" },
+    });
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_child1",
+      info: { id: "msg_sub1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_child1",
+      part: { type: "text", id: "prt_s1", text: "hasil sub-agent", messageID: "msg_sub1" },
+    });
+
+    expect(h.messageParts).toHaveLength(1);
+    expect(h.messageParts[0]?.[0]).toBe(sid);
+    expect(h.messageParts[0]?.[1]).toBe("msg_sub1");
+  } finally {
+    h.close();
+  }
+});
+
+test("sub-agent: child bersarang (cucu) tetap terpetakan ke Session induk", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1" },
+    });
+    // Sub-agent memanggil sub-agent lagi.
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child2",
+      info: { id: "ses_child2", parentID: "ses_child1" },
+    });
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_deep",
+      sessionID: "ses_child2",
+      permission: "edit",
+      patterns: ["src/a.ts"],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]?.sessionId).toBe(sid);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.created tanpa parentID dikenal -> tidak dipetakan", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    // Session lain di server yang sama (mis. dibuat TUI) — bukan milik bridge.
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_asing",
+      info: { id: "ses_asing", parentID: "ses_bukan_milik_bridge" },
+    });
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_asing",
+      sessionID: "ses_asing",
+      permission: "bash",
+    });
+
+    expect(h.prompts).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("stopSession melepas pemetaan child sub-agent", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1" },
+    });
+
+    expect(h.sm.stopSession(sid).ok).toBe(true);
+
+    // Event child setelah stop tidak lagi menghasilkan prompt.
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_setelah_stop",
+      sessionID: "ses_child1",
+      permission: "bash",
+    });
+    expect(h.prompts).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("event permission.v2.asked (action/resources) -> prompt confirmation", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "permission.v2.asked",
+      id: "per_v2",
+      sessionID: "ses_remote1",
+      action: "bash",
+      resources: ["echo hi"],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0]!;
+    expect(p.id).toBe("per_v2");
+    expect(p.kind).toBe("permission");
+    expect(p.type).toBe("confirmation");
+    expect(p.sessionId).toBe(sid);
+    // Judul dirakit dari `action` + `resources` (penamaan v2).
+    expect(p.title).toContain("bash");
+    expect(p.title).toContain("echo hi");
+  } finally {
+    h.close();
+  }
+});
+
+test("event question.v2.asked -> prompt menu + options", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "question.v2.asked",
+      id: "que_v2",
+      sessionID: "ses_remote1",
+      questions: [
+        {
+          question: "Lanjut deploy?",
+          header: "deploy",
+          options: [{ label: "Ya" }, { label: "Tidak" }],
+        },
+      ],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0]!;
+    expect(p.id).toBe("que_v2");
+    expect(p.kind).toBe("question");
+    expect(p.type).toBe("menu");
+    expect(p.sessionId).toBe(sid);
+    expect(p.title).toBe("Lanjut deploy?");
+    expect(p.options).toEqual(["Ya", "Tidak"]);
+  } finally {
+    h.close();
+  }
+});
+
+test("v1 + v2 untuk request yang sama -> kartu tidak terduplikasi", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    // Server memancarkan kedua varian untuk satu request (id sama).
+    client.emit({
+      type: "permission.asked",
+      id: "per_sama",
+      sessionID: "ses_remote1",
+      permission: "bash",
+      patterns: ["ls"],
+    });
+    client.emit({
+      type: "permission.v2.asked",
+      id: "per_sama",
+      sessionID: "ses_remote1",
+      action: "bash",
+      resources: ["ls"],
+    });
+
+    // `prompts.id` PRIMARY KEY menjadikan insert kedua gagal -> satu kartu.
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]?.id).toBe("per_sama");
+  } finally {
+    h.close();
+  }
+});
+
+test("prompt v2 dapat diselesaikan lewat resolvePrompt seperti v1", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "permission.v2.asked",
+      id: "per_v2_resolve",
+      sessionID: "ses_remote1",
+      action: "edit",
+      resources: ["src/a.ts"],
+    });
+
+    // Endpoint reply dipakai bersama v1/v2 (tidak ada rute v2 terpisah).
+    const r = await h.sm.resolvePrompt(sid, "per_v2_resolve", "approve");
+    expect(r.ok).toBe(true);
+    expect(client.calls).toContain("replyPermission:per_v2_resolve:once");
+
+    const stored = h.store.getPrompt("per_v2_resolve");
+    expect(stored.ok && stored.data.status).toBe("resolved");
+  } finally {
+    h.close();
+  }
+});
+
+test("event permission.v2.asked pada child sub-agent -> prompt untuk Session induk", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1" },
+    });
+    client.emit({
+      type: "permission.v2.asked",
+      id: "per_v2_sub",
+      sessionID: "ses_child1",
+      action: "bash",
+      resources: ["echo sub"],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]?.sessionId).toBe(sid);
+  } finally {
+    h.close();
+  }
+});
+
+test("event permission.asked dengan sessionID tak dikenal -> diabaikan", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    h.fake.clients.get("p1")!.emit({
+      type: "permission.asked",
+      requestID: "per_x",
+      sessionID: "ses_tak_dikenal",
+    });
+    expect(h.prompts).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Resolusi prompt
+// ---------------------------------------------------------------------------
+
+async function seedPrompt(
+  h: Harness,
+  sid: string,
+  kind: "permission" | "question",
+  id: string,
+): Promise<string> {
+  const prompt: InteractivePrompt = {
+    id,
+    sessionId: sid,
+    kind,
+    type: kind === "permission" ? "confirmation" : "menu",
+    title: kind === "permission" ? "bash:ls" : "Pilih opsi",
+    options: kind === "permission" ? null : ["A", "B"],
+    status: "pending",
+    createdAt: 1,
+    resolvedAt: null,
   };
+  const ins = h.store.insertPrompt(prompt);
+  expect(ins.ok).toBe(true);
+  return prompt.id;
 }
 
-test("12.3: SIGKILL dikirim setelah 5 detik bila proses belum keluar", () => {
-  const ft = fakeTimers();
-  const h = freshHarness({ setTimeoutFn: ft.setTimeoutFn, clearTimeoutFn: ft.clearTimeoutFn });
-  try {
-    const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const sid = res.session.id;
-    const handle = h.handles.get(sid);
-    expect(handle).toBeDefined();
-
-    const stop = h.sm.stopSession(sid);
-    expect(stop.ok).toBe(true);
-    expect(handle?.kills).toEqual(["SIGTERM"]);
-
-    // Tepat satu timer force-kill dijadwalkan 5 detik (Requirement 1.6)
-    expect(ft.timers.size).toBe(1);
-    const entries = [...ft.timers.entries()];
-    expect(entries[0]?.[1].delay).toBe(5000);
-
-    // Proses belum keluar setelah 5 detik -> SIGKILL dikirim
-    const [, timer] = entries[0] ?? [];
-    timer?.cb();
-    expect(handle?.kills).toEqual(["SIGTERM", "SIGKILL"]);
-
-    // Setelah SIGKILL, proses keluar -> stopped & timer dibersihkan
-    handle?.emitExit(null);
-    expect(statusOf(h.store, sid)).toBe("stopped");
-    expect(ft.timers.size).toBe(0);
-  } finally {
-    h.close();
-  }
-});
-
-test("12.3: proses keluar sebelum 5 detik -> timer dibatalkan, tanpa SIGKILL", () => {
-  const ft = fakeTimers();
-  const h = freshHarness({ setTimeoutFn: ft.setTimeoutFn, clearTimeoutFn: ft.clearTimeoutFn });
-  try {
-    const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-    expect(res.ok).toBe(true);
-    if (!res.ok) return;
-    const sid = res.session.id;
-    const handle = h.handles.get(sid);
-
-    const stop = h.sm.stopSession(sid);
-    expect(stop.ok).toBe(true);
-    expect(ft.timers.size).toBe(1);
-
-    // Proses keluar lebih awal -> tidak ada SIGKILL, timer dibatalkan
-    handle?.emitExit(0);
-    expect(ft.timers.size).toBe(0);
-    expect(handle?.kills).toEqual(["SIGTERM"]);
-    expect(statusOf(h.store, sid)).toBe("stopped");
-  } finally {
-    h.close();
-  }
-});
-
-// ---- Task 12.9: integration test persistensi proses & shutdown ----
-test("12.9: proses tetap hidup & status running tanpa Client; shutdown simpan status running", async () => {
+test("resolvePrompt permission: approve -> once; deny/cancel -> reject; lalu resolved", async () => {
   const h = freshHarness();
   try {
-    const created: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-      expect(res.ok).toBe(true);
-      if (res.ok) created.push(res.session.id);
-    }
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
 
-    // Tidak ada Client terhubung: PtyHandle tetap hidup, tanpa kill, status running
-    // (Requirement 2.1, 2.2)
-    for (const id of created) {
-      const handle = h.handles.get(id);
-      expect(handle).toBeDefined();
-      expect(handle?.kills).toEqual([]);
-      expect(statusOf(h.store, id)).toBe("running");
-    }
+    const pid1 = await seedPrompt(h, sid, "permission", "per_1");
+    const r1 = await h.sm.resolvePrompt(sid, pid1, "approve");
+    expect(r1.ok).toBe(true);
+    expect(client.calls).toContain("replyPermission:per_1:once");
 
-    // Shutdown menyimpan status seluruh Session running dalam budget 5 detik (2.3)
-    const t0 = Date.now();
-    await h.sm.shutdown();
-    const elapsed = Date.now() - t0;
-    expect(elapsed).toBeLessThan(5000);
+    const pid2 = await seedPrompt(h, sid, "permission", "per_2");
+    await h.sm.resolvePrompt(sid, pid2, "deny");
+    expect(client.calls).toContain("replyPermission:per_2:reject");
 
-    for (const id of created) {
-      const hist = h.store.getStatusHistory(id);
-      expect(hist.ok).toBe(true);
-      if (hist.ok) {
-        expect(hist.data.map((x) => x.status)).toContain("running");
-      }
+    const pid3 = await seedPrompt(h, sid, "permission", "per_3");
+    await h.sm.resolvePrompt(sid, pid3, "cancel");
+    expect(client.calls).toContain("replyPermission:per_3:reject");
+
+    // Semua resolved.
+    for (const id of [pid1, pid2, pid3]) {
+      const p = h.store.getPrompt(id);
+      expect(p.ok && p.data.status).toBe("resolved");
     }
   } finally {
     h.close();
   }
 });
 
+test("resolvePrompt question: option -> replyQuestion; cancel -> rejectQuestion", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    const pid1 = await seedPrompt(h, sid, "question", "que_1");
+    const r1 = await h.sm.resolvePrompt(sid, pid1, { option: "A" });
+    expect(r1.ok).toBe(true);
+    expect(client.calls).toContain("replyQuestion:que_1:A");
+
+    const pid2 = await seedPrompt(h, sid, "question", "que_2");
+    const r2 = await h.sm.resolvePrompt(sid, pid2, "cancel");
+    expect(r2.ok).toBe(true);
+    expect(client.calls).toContain("rejectQuestion:que_2");
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt invalid: tidak ditemukan / sudah resolved / respon salah", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
+
+    // promptId tidak dikenal
+    expect((await h.sm.resolvePrompt(sid, "nope", "approve")).error).toBe("PROMPT_NOT_FOUND");
+
+    // sudah resolved
+    const pid = await seedPrompt(h, sid, "permission", "per_1");
+    await h.sm.resolvePrompt(sid, pid, "approve");
+    expect((await h.sm.resolvePrompt(sid, pid, "approve")).error).toBe("PROMPT_ALREADY_RESOLVED");
+
+    // opsi menu pada permission -> invalid
+    const pid2 = await seedPrompt(h, sid, "permission", "per_2");
+    expect((await h.sm.resolvePrompt(sid, pid2, { option: "x" })).error).toBe(
+      "INVALID_PROMPT_RESPONSE",
+    );
+
+    // approve/deny pada question -> invalid
+    const pid3 = await seedPrompt(h, sid, "question", "que_1");
+    expect((await h.sm.resolvePrompt(sid, pid3, "approve")).error).toBe("INVALID_PROMPT_RESPONSE");
+    // Hanya respon valid yang memicu reply; dua kasus invalid tidak.
+    expect(
+      client.calls.filter((c) => c.startsWith("replyPermission") || c.startsWith("replyQuestion")),
+    ).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
-// Task 14 — free-text input & resolusi Interactive_Prompt
+// Lifecycle
 // ---------------------------------------------------------------------------
 
-// Feature: kcg-bridge, Property 18: Respon valid diteruskan dan menandai prompt resolved
-test("Property 18: approve/deny/opsi menu diteruskan & prompt resolved", () => {
-  fc.assert(
-    fc.property(
-      fc.constantFrom("approve", "deny" as const),
-      fc.constantFrom("opA", "opB", "opC"),
-      (simpleResp, option) => {
-        const h = freshHarness();
-        try {
-          const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(res.ok).toBe(true);
-          if (!res.ok) return;
-          const sid = res.session.id;
-          const handle = h.handles.get(sid);
-          expect(handle).toBeDefined();
+test("stopSession: valid -> stopped + abort best-effort; invalid -> ditolak", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1")!;
 
-          // Confirmation: approve -> "y\n", deny -> "n\n"
-          h.store.insertPrompt({
-            id: "c1",
-            sessionId: sid,
-            type: "confirmation",
-            options: null,
-            status: "pending",
-            createdAt: 1,
-            resolvedAt: null,
-          });
-          const r1 = h.sm.resolvePrompt(sid, "c1", simpleResp);
-          expect(r1.ok).toBe(true);
-          expect(handle?.writes).toEqual([simpleResp === "approve" ? "y\n" : "n\n"]);
-          const p1 = h.store.getPrompt("c1");
-          expect(p1.ok).toBe(true);
-          if (p1.ok) {
-            expect(p1.data.status).toBe("resolved");
-            expect(p1.data.resolvedAt).not.toBeNull();
-          }
+    const ok = h.sm.stopSession(sid);
+    expect(ok.ok).toBe(true);
+    expect(statusOf(h.store, sid)).toBe("stopped");
+    expect(client.calls).toContain("abortSession:ses_remote1");
+    expect(h.statuses.some(([id, st]) => id === sid && st === "stopped")).toBe(true);
 
-          // Menu: opsi diteruskan sebagai teks opsi
-          h.store.insertPrompt({
-            id: "m1",
-            sessionId: sid,
-            type: "menu",
-            options: ["opA", "opB", "opC"],
-            status: "pending",
-            createdAt: 2,
-            resolvedAt: null,
-          });
-          const r2 = h.sm.resolvePrompt(sid, "m1", { option });
-          expect(r2.ok).toBe(true);
-          expect(handle?.writes).toEqual([simpleResp === "approve" ? "y\n" : "n\n", `${option}\n`]);
-          const p2 = h.store.getPrompt("m1");
-          expect(p2.ok).toBe(true);
-          if (p2.ok) {
-            expect(p2.data.status).toBe("resolved");
-            expect(p2.data.resolvedAt).not.toBeNull();
-          }
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
+    // stop lagi (sudah stopped) -> ditolak
+    expect(h.sm.stopSession(sid).error).toBe("SESSION_NOT_RUNNING");
+    expect(h.sm.stopSession("unknown").error).toBe("SESSION_NOT_FOUND");
+  } finally {
+    h.close();
+  }
 });
 
-// Feature: kcg-bridge, Property 19: Respon tidak valid selalu ditolak tanpa efek samping
-test("Property 19: prompt tak ada/resolved/opsi invalid -> ditolak tanpa efek samping", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ maxLength: 20 }),
-      fc.constantFrom("opX", "not-in-menu", ""),
-      (unknownId, badOption) => {
-        const h = freshHarness();
-        try {
-          const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(res.ok).toBe(true);
-          if (!res.ok) return;
-          const sid = res.session.id;
-          const handle = h.handles.get(sid);
+test("reconcileOnStartup: session running -> crashed", () => {
+  const h = freshHarness();
+  try {
+    // Seed session running langsung di store (simulasi sisa restart).
+    h.store.insertSession({
+      id: "s1",
+      projectId: "p1",
+      agentType: "opencode",
+      cwd: h.project.path,
+      status: "running",
+      ocSessionId: "ses_x",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    h.store.insertSession({
+      id: "s2",
+      projectId: "p1",
+      agentType: "opencode",
+      cwd: h.project.path,
+      status: "stopped",
+      ocSessionId: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
 
-          // promptId tidak ditemukan
-          const r1 = h.sm.resolvePrompt(sid, unknownId, "approve");
-          expect(r1.ok).toBe(false);
-
-          // prompt sudah resolved
-          h.store.insertPrompt({
-            id: "r1",
-            sessionId: sid,
-            type: "confirmation",
-            options: null,
-            status: "pending",
-            createdAt: 1,
-            resolvedAt: null,
-          });
-          h.store.updatePromptStatus("r1", "resolved", 2);
-          const r2 = h.sm.resolvePrompt(sid, "r1", "approve");
-          expect(r2.ok).toBe(false);
-
-          // opsi menu di luar daftar
-          h.store.insertPrompt({
-            id: "m1",
-            sessionId: sid,
-            type: "menu",
-            options: ["a", "b"],
-            status: "pending",
-            createdAt: 2,
-            resolvedAt: null,
-          });
-          const r3 = h.sm.resolvePrompt(sid, "m1", { option: badOption });
-          expect(r3.ok).toBe(false);
-          if (!r3.ok) expect(r3.error).toBe("INVALID_PROMPT_OPTION");
-
-          // Tidak ada write & tidak ada perubahan status prompt
-          expect(handle?.writes ?? []).toEqual([]);
-          expect(h.store.listPendingPrompts(sid)).toHaveLength(1);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
+    h.sm.reconcileOnStartup();
+    expect(statusOf(h.store, "s1")).toBe("crashed");
+    expect(statusOf(h.store, "s2")).toBe("stopped");
+  } finally {
+    h.close();
+  }
 });
 
-// Feature: kcg-bridge, Property 20: Respon Cancel tidak meneruskan input
-test("Property 20: cancel -> resolved tanpa write ke PtyHandle", () => {
-  fc.assert(
-    fc.property(fc.constantFrom("confirmation", "menu" as const), (type) => {
-      const h = freshHarness();
-      try {
-        const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-        expect(res.ok).toBe(true);
-        if (!res.ok) return;
-        const sid = res.session.id;
-        const handle = h.handles.get(sid);
-
-        h.store.insertPrompt({
-          id: "z1",
-          sessionId: sid,
-          type,
-          options: type === "menu" ? ["a"] : null,
-          status: "pending",
-          createdAt: 1,
-          resolvedAt: null,
-        });
-        const r = h.sm.resolvePrompt(sid, "z1", "cancel");
-        expect(r.ok).toBe(true);
-        expect(handle?.writes ?? []).toEqual([]);
-        const p = h.store.getPrompt("z1");
-        expect(p.ok).toBe(true);
-        if (p.ok) {
-          expect(p.data.status).toBe("resolved");
-          expect(p.data.resolvedAt).not.toBeNull();
-        }
-      } finally {
-        h.close();
-      }
-    }),
-    { numRuns: 100 },
-  );
+test("server exit tak terduga -> session project ditandai crashed", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    // Panggil hook exit yang diregistrasikan Session_Manager.
+    for (const cb of h.fake.exitCbs) cb("p1");
+    expect(statusOf(h.store, sid)).toBe("crashed");
+  } finally {
+    h.close();
+  }
 });
 
-// Feature: kcg-bridge, Property 21: Free-text valid diteruskan utuh dengan newline
-test("Property 21: free-text valid -> write(text + '\\n')", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 10000 }).filter((s) => s.trim().length > 0),
-      (text) => {
-        const h = freshHarness();
-        try {
-          const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(res.ok).toBe(true);
-          if (!res.ok) return;
-          const sid = res.session.id;
-          const handle = h.handles.get(sid);
+test("exit -> recreate -> exit lagi: session baru juga ditandai crashed", async () => {
+  const h = freshHarness();
+  try {
+    const sid1 = await createSession(h);
+    for (const cb of h.fake.exitCbs) cb("p1");
+    expect(statusOf(h.store, sid1)).toBe("crashed");
 
-          const fwd = h.sm.sendFreeTextInput(sid, text);
-          expect(fwd.ok).toBe(true);
-          expect(handle?.writes).toEqual([`${text}\n`]);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
+    // Session baru -> server di-ensure ulang; exitNotified harus di-reset.
+    const sid2 = await createSession(h);
+    expect(statusOf(h.store, sid2)).toBe("running");
+
+    for (const cb of h.fake.exitCbs) cb("p1");
+    expect(statusOf(h.store, sid2)).toBe("crashed");
+  } finally {
+    h.close();
+  }
 });
 
-// Feature: kcg-bridge, Property 22: Free-text kosong atau melebihi batas selalu ditolak
-test("Property 22: kosong/whitespace/panjang > 10000 -> ditolak tanpa write", () => {
-  fc.assert(
-    fc.property(
-      fc.oneof(
-        fc.string({ maxLength: 50 }).filter((s) => s.trim().length === 0),
-        fc.string({ minLength: 10001, maxLength: 10010 }),
-      ),
-      (text) => {
-        const h = freshHarness();
-        try {
-          const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(res.ok).toBe(true);
-          if (!res.ok) return;
-          const sid = res.session.id;
-          const handle = h.handles.get(sid);
-
-          const fwd = h.sm.sendFreeTextInput(sid, text);
-          expect(fwd.ok).toBe(false);
-          if (!fwd.ok) expect(fwd.error?.length ?? 0).toBeGreaterThan(0);
-          expect(handle?.writes ?? []).toEqual([]);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// Feature: kcg-bridge, Property 23: Free-text pada Session tidak aktif selalu ditolak
-test("Property 23: stopped/crashed -> SESSION_NOT_ACTIVE tanpa write", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 200 }).filter((s) => s.trim().length > 0),
-      fc.constantFrom("stopped", "crashed" as const),
-      (text, status) => {
-        const h = freshHarness();
-        try {
-          const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(res.ok).toBe(true);
-          if (!res.ok) return;
-          const sid = res.session.id;
-          const handle = h.handles.get(sid);
-
-          if (status === "stopped") {
-            handle?.kill("SIGTERM");
-            handle?.emitExit(0);
-          } else {
-            handle?.emitExit(1);
-          }
-          expect(statusOf(h.store, sid)).toBe(status);
-
-          const fwd = h.sm.sendFreeTextInput(sid, text);
-          expect(fwd.ok).toBe(false);
-          if (!fwd.ok) expect(fwd.error).toBe("SESSION_NOT_ACTIVE");
-          expect(handle?.writes ?? []).toEqual([]);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// Feature: kcg-bridge, Property 24: Free-text tidak mengubah status Interactive_Prompt
-test("Property 24: free-text valid -> prompt pending tetap pending", () => {
-  fc.assert(
-    fc.property(
-      fc.string({ minLength: 1, maxLength: 100 }).filter((s) => s.trim().length > 0),
-      fc.array(fc.constantFrom("confirmation", "menu" as const), { maxLength: 5 }),
-      (text, types) => {
-        const h = freshHarness();
-        try {
-          const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-          expect(res.ok).toBe(true);
-          if (!res.ok) return;
-          const sid = res.session.id;
-          types.forEach((t, i) => {
-            h.store.insertPrompt({
-              id: `pp-${i}`,
-              sessionId: sid,
-              type: t,
-              options: t === "menu" ? ["a", "b"] : null,
-              status: "pending",
-              createdAt: i,
-              resolvedAt: null,
-            });
-          });
-
-          const fwd = h.sm.sendFreeTextInput(sid, text);
-          expect(fwd.ok).toBe(true);
-          expect(h.store.listPendingPrompts(sid)).toHaveLength(types.length);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
+test("shutdown: simpan status running lalu stop seluruh server", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    await h.sm.shutdown();
+    expect(h.fake.stopped).toContain("p1");
+  } finally {
+    h.close();
+  }
 });

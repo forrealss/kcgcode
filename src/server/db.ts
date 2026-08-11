@@ -1,24 +1,29 @@
 /**
  * Session_Store — persistensi `bun:sqlite`.
- * Sesuai `design.md` — skema SQLite & `db.ts`.
+ * Sesuai `design.md` — skema SQLite & `db.ts` (versi headless).
  *
- * Konvensi:
- * - `output_stream` dan `session_status_history` bersifat **append-only**
- *   (insert-only, tidak pernah UPDATE/DELETE) sehingga Requirement 3.1/3.3
- *   terpenuhi secara struktural.
- * - Seluruh operasi tulis dibungkus try/catch; kegagalan mengembalikan
- *   `{ ok: false, error }` tanpa menghapus data lama (Requirement 3.2).
+ * Perubahan dari versi PTY/TUI:
+ * - `output_stream` (chunk byte TUI) digantikan tabel `messages` berisi
+ *   pesan terstruktur (role + parts JSON).
+ * - `sessions.oc_session_id` menyimpan id Session di server headless opencode.
+ * - `prompts` mendapat kolom `kind` (permission/question) dan `title`.
+ *
+ * Konvensi: `session_status_history` dan `messages` bersifat **append-only**
+ * (insert-only) sehingga Requirement 3.1/3.3 terpenuhi secara struktural.
+ * Seluruh operasi tulis dibungkus try/catch; kegagalan mengembalikan
+ * `{ ok: false, error }` tanpa menghapus data lama (Requirement 3.2).
  */
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import type {
   InteractivePrompt,
-  OutputChunk,
+  MessagePart,
   Project,
   PromptStatus,
   Result,
   Session,
+  SessionMessage,
   SessionStatus,
   StatusHistoryEntry,
 } from "./types";
@@ -39,6 +44,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   agent_type TEXT NOT NULL,
   cwd TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('running','stopped','crashed')),
+  oc_session_id TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -51,21 +57,24 @@ CREATE TABLE IF NOT EXISTS session_status_history (
   changed_at INTEGER NOT NULL
 );
 
--- Append-only: tidak pernah UPDATE/DELETE (Requirement 3.1, 3.2)
-CREATE TABLE IF NOT EXISTS output_stream (
+-- Append-only: pesan percakapan terstruktur (Requirement 3.1, 3.2)
+CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   session_id TEXT NOT NULL REFERENCES sessions(id),
-  seq INTEGER NOT NULL,
-  chunk TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('user','assistant')),
+  parts_json TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  UNIQUE(session_id, seq)
+  UNIQUE(session_id, message_id)
 );
-CREATE INDEX IF NOT EXISTS idx_output_stream_session_seq ON output_stream(session_id, seq);
+CREATE INDEX IF NOT EXISTS idx_messages_session_created ON messages(session_id, created_at);
 
 CREATE TABLE IF NOT EXISTS prompts (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
+  kind TEXT NOT NULL DEFAULT 'permission',
   type TEXT NOT NULL CHECK (type IN ('confirmation','menu')),
+  title TEXT,
   options_json TEXT,
   status TEXT NOT NULL CHECK (status IN ('pending','resolved')),
   created_at INTEGER NOT NULL,
@@ -74,11 +83,16 @@ CREATE TABLE IF NOT EXISTS prompts (
 CREATE INDEX IF NOT EXISTS idx_prompts_session_status ON prompts(session_id, status);
 `;
 
+/** Menambah kolom bila belum ada (migrasi DB lama yang idempoten). */
+function ensureColumn(db: Database, table: string, column: string, ddl: string): void {
+  const cols = db.query(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) db.exec(ddl);
+}
+
 export interface SessionStore {
-  // ---- Output_Stream (append-only) ----
-  insertOutputChunk(chunk: OutputChunk): Result<OutputChunk>;
-  getOutputChunks(sessionId: string): Result<OutputChunk[]>;
-  getLastSeq(sessionId: string): number;
+  // ---- Pesan terstruktur (append-only) ----
+  insertMessage(message: SessionMessage): Result<SessionMessage>;
+  getMessages(sessionId: string): Result<SessionMessage[]>;
 
   // ---- Riwayat status (append-only) ----
   insertStatusHistory(
@@ -96,6 +110,7 @@ export interface SessionStore {
     changedAt?: number,
   ): Result<Session>;
   getSession(sessionId: string): Result<Session>;
+  getSessionByOcId(ocSessionId: string): Result<Session>;
   listSessions(): Session[];
 
   // ---- Projects (CRUD) ----
@@ -131,6 +146,7 @@ interface SessionRow {
   agent_type: string;
   cwd: string;
   status: string;
+  oc_session_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -138,11 +154,21 @@ interface SessionRow {
 interface PromptRow {
   id: string;
   session_id: string;
+  kind: string;
   type: string;
+  title: string | null;
   options_json: string | null;
   status: string;
   created_at: number;
   resolved_at: number | null;
+}
+
+interface MessageRow {
+  session_id: string;
+  message_id: string;
+  role: string;
+  parts_json: string;
+  created_at: number;
 }
 
 function mapProject(r: ProjectRow): Project {
@@ -156,6 +182,7 @@ function mapSession(r: SessionRow): Session {
     agentType: r.agent_type as Session["agentType"],
     cwd: r.cwd,
     status: r.status as SessionStatus,
+    ocSessionId: r.oc_session_id,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -165,11 +192,23 @@ function mapPrompt(r: PromptRow): InteractivePrompt {
   return {
     id: r.id,
     sessionId: r.session_id,
+    kind: (r.kind as InteractivePrompt["kind"]) ?? "permission",
     type: r.type as InteractivePrompt["type"],
+    title: r.title,
     options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null,
     status: r.status as PromptStatus,
     createdAt: r.created_at,
     resolvedAt: r.resolved_at,
+  };
+}
+
+function mapMessage(r: MessageRow): SessionMessage {
+  return {
+    id: r.message_id,
+    sessionId: r.session_id,
+    role: r.role as SessionMessage["role"],
+    parts: JSON.parse(r.parts_json) as MessagePart[],
+    createdAt: r.created_at,
   };
 }
 
@@ -188,6 +227,19 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
   const db = new Database(dbPath, { create: true });
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec(SCHEMA);
+  ensureColumn(
+    db,
+    "sessions",
+    "oc_session_id",
+    "ALTER TABLE sessions ADD COLUMN oc_session_id TEXT",
+  );
+  ensureColumn(
+    db,
+    "prompts",
+    "kind",
+    "ALTER TABLE prompts ADD COLUMN kind TEXT NOT NULL DEFAULT 'permission'",
+  );
+  ensureColumn(db, "prompts", "title", "ALTER TABLE prompts ADD COLUMN title TEXT");
 
   // Prepared statements
   const q = {
@@ -201,19 +253,19 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     listProjects: db.query("SELECT * FROM projects ORDER BY created_at ASC, name ASC"),
 
     insertSession: db.query(
-      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getSession: db.query("SELECT * FROM sessions WHERE id = ?"),
+    getSessionByOcId: db.query("SELECT * FROM sessions WHERE oc_session_id = ?"),
     listSessions: db.query("SELECT * FROM sessions ORDER BY created_at ASC, id ASC"),
     updateSession: db.query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?"),
 
-    insertOutput: db.query(
-      "INSERT INTO output_stream (session_id, seq, chunk, created_at) VALUES (?, ?, ?, ?)",
+    insertMessage: db.query(
+      "INSERT INTO messages (session_id, message_id, role, parts_json, created_at) VALUES (?, ?, ?, ?, ?)",
     ),
-    getOutputs: db.query(
-      "SELECT session_id, seq, chunk, created_at FROM output_stream WHERE session_id = ? ORDER BY seq ASC",
+    getMessages: db.query(
+      "SELECT session_id, message_id, role, parts_json, created_at FROM messages WHERE session_id = ? ORDER BY created_at ASC, id ASC",
     ),
-    maxSeq: db.query("SELECT COALESCE(MAX(seq), 0) AS m FROM output_stream WHERE session_id = ?"),
 
     insertHistory: db.query(
       "INSERT INTO session_status_history (session_id, status, changed_at) VALUES (?, ?, ?)",
@@ -223,7 +275,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     ),
 
     insertPrompt: db.query(
-      "INSERT INTO prompts (id, session_id, type, options_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO prompts (id, session_id, kind, type, title, options_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getPrompt: db.query("SELECT * FROM prompts WHERE id = ?"),
     pendingPrompts: db.query(
@@ -233,43 +285,31 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
   };
 
   const store: SessionStore = {
-    // ---------------- Output_Stream (append-only) ----------------
-    insertOutputChunk(chunk: OutputChunk): Result<OutputChunk> {
+    // ---------------- Pesan terstruktur (append-only) ----------------
+    insertMessage(message: SessionMessage): Result<SessionMessage> {
       try {
-        if (!q.sessionExists.get(chunk.sessionId)) return errResult("SESSION_NOT_FOUND");
-        q.insertOutput.run(chunk.sessionId, chunk.seq, chunk.data, chunk.ts);
-        return { ok: true, data: chunk };
+        if (!q.sessionExists.get(message.sessionId)) return errResult("SESSION_NOT_FOUND");
+        q.insertMessage.run(
+          message.sessionId,
+          message.id,
+          message.role,
+          JSON.stringify(message.parts),
+          message.createdAt,
+        );
+        return { ok: true, data: message };
       } catch (e) {
-        return errResult(`OUTPUT_WRITE_FAILED: ${(e as Error).message}`);
+        return errResult(`MESSAGE_WRITE_FAILED: ${(e as Error).message}`);
       }
     },
 
-    getOutputChunks(sessionId: string): Result<OutputChunk[]> {
+    getMessages(sessionId: string): Result<SessionMessage[]> {
       try {
         if (!q.sessionExists.get(sessionId)) return errResult("SESSION_NOT_FOUND");
-        const rows = q.getOutputs.all(sessionId) as {
-          session_id: string;
-          seq: number;
-          chunk: string;
-          created_at: number;
-        }[];
-        return {
-          ok: true,
-          data: rows.map((r) => ({
-            sessionId: r.session_id,
-            seq: r.seq,
-            data: r.chunk,
-            ts: r.created_at,
-          })),
-        };
+        const rows = q.getMessages.all(sessionId) as MessageRow[];
+        return { ok: true, data: rows.map(mapMessage) };
       } catch (e) {
-        return errResult(`OUTPUT_READ_FAILED: ${(e as Error).message}`);
+        return errResult(`MESSAGE_READ_FAILED: ${(e as Error).message}`);
       }
-    },
-
-    getLastSeq(sessionId: string): number {
-      const row = q.maxSeq.get(sessionId) as { m: number };
-      return row?.m ?? 0;
     },
 
     // ---------------- Riwayat status (append-only) ----------------
@@ -315,6 +355,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
           session.agentType,
           session.cwd,
           session.status,
+          session.ocSessionId,
           session.createdAt,
           session.updatedAt,
         );
@@ -343,6 +384,16 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     getSession(sessionId: string): Result<Session> {
       try {
         const row = q.getSession.get(sessionId) as SessionRow | null;
+        if (!row) return errResult("SESSION_NOT_FOUND");
+        return { ok: true, data: mapSession(row) };
+      } catch (e) {
+        return errResult(`SESSION_READ_FAILED: ${(e as Error).message}`);
+      }
+    },
+
+    getSessionByOcId(ocSessionId: string): Result<Session> {
+      try {
+        const row = q.getSessionByOcId.get(ocSessionId) as SessionRow | null;
         if (!row) return errResult("SESSION_NOT_FOUND");
         return { ok: true, data: mapSession(row) };
       } catch (e) {
@@ -396,7 +447,9 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
         q.insertPrompt.run(
           prompt.id,
           prompt.sessionId,
+          prompt.kind,
           prompt.type,
+          prompt.title,
           prompt.options ? JSON.stringify(prompt.options) : null,
           prompt.status,
           prompt.createdAt,

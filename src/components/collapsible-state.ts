@@ -28,6 +28,33 @@ export function initialCollapsibleState(messageIds: readonly string[]): Collapsi
   return state;
 }
 
+/**
+ * State awal: seluruh reasoning tertutup (collapsed) — hanya baris "Thinking"
+ * yang tampil; isi dibuka lewat toggle. Tinggi konten tetap dibatasi
+ * (`max-h` + scroll) walau di-expand.
+ */
+export function initialCollapsedState(messageIds: readonly string[]): CollapsibleState {
+  return extendCollapsed({}, messageIds);
+}
+
+/**
+ * Perluas state dengan key baru (mis. reasoning pesan baru lewat event
+ * `message`) dalam keadaan collapsed, tanpa mengubah status key yang sudah
+ * ada. Mengembalikan state baru (immutable).
+ */
+export function extendCollapsed(
+  state: CollapsibleState,
+  messageIds: readonly string[],
+): CollapsibleState {
+  if (messageIds.length === 0) return state;
+  const next: CollapsibleState = {};
+  for (const [key, value] of Object.entries(state)) setOwn(next, key, value);
+  for (const id of messageIds) {
+    if (!Object.hasOwn(next, id)) setOwn(next, id, false);
+  }
+  return next;
+}
+
 /** Status tampil saat ini untuk sebuah pesan (default: expanded, Req 8.3). */
 export function isCollapsibleExpanded(state: CollapsibleState, messageId: string): boolean {
   if (Object.hasOwn(state, messageId)) {

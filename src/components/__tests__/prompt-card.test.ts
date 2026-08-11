@@ -18,7 +18,9 @@ function makePrompt(overrides: Partial<InteractivePrompt> = {}): InteractiveProm
   return {
     id: "p1",
     sessionId: "s1",
+    kind: "permission",
     type: "confirmation",
+    title: "bash:ls",
     options: null,
     status: "pending",
     createdAt: 0,

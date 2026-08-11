@@ -1,20 +1,15 @@
 /**
- * Property & unit test `websocket-gateway.ts` (task 17).
+ * Unit test `websocket-gateway.ts` (versi headless).
  *
- * Property test:
- * - Property 6: Status Session tidak terpengaruh disconnect WebSocket (2.2)
- * - Property 11: Reattach mengirim riwayat sesuai urutan sebelum data baru (4.1)
- * - Property 12: Tidak ada duplikasi atau chunk terlewat setelah reattach (4.2)
- * - Property 13: Reattach ke Session tidak ditemukan menghasilkan error (4.3)
- * - Property 14: Reattach mengirim seluruh prompt belum resolved (4.4)
- * - Property 15: Broadcast konsisten ke banyak Client (5.1, 5.2)
- * - Property 16: Kegagalan satu Client tidak memengaruhi Client lain (5.3)
+ * - attach: history berisi `messages` + `prompts` pending (4.1, 4.4);
+ *   Session tak dikenal -> error + close (4.3).
+ * - input / prompt_response: diteruskan ke Session_Manager (async); error
+ *   domain -> pesan `error` ke Client pengirim.
+ * - notify*: broadcast ke seluruh subscriber Session (5.1, 5.2); kegagalan
+ *   `send` satu Client tidak menghentikan Client lain (5.3).
  *
- * Unit & wiring (17.5): input/prompt_response/resize -> Session_Manager,
- * notifikasi `session_status` & `prompt_resolved`, dispatch pesan.
- *
- * `Subscriber` (ws.send) dan `PtyHandle` di-mock seluruhnya sesuai batasan
- * mocking `design.md`.
+ * `Subscriber` (ws.send) dan `SessionManager` di-mock; store `bun:sqlite`
+ * asli sesuai batasan mocking `design.md`.
  */
 import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -22,9 +17,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
 import { openSessionStore, type SessionStore } from "../db";
-import type { PtyHandle } from "../pty-process";
-import { createSessionManager, type SessionManager, type SpawnPtyFn } from "../session-manager";
-import type { Project, SessionStatus } from "../types";
+import type { SessionManager } from "../session-manager";
+import type { InteractivePrompt, PromptResponse, SessionMessage } from "../types";
 import {
   createWebSocketGateway,
   dispatchClientMessage,
@@ -32,56 +26,6 @@ import {
   type WebSocketGateway,
 } from "../websocket-gateway";
 import { ErrorCodes, type ServerMessage } from "../ws-protocol";
-
-// ---------------------------------------------------------------------------
-// Mock PtyHandle
-// ---------------------------------------------------------------------------
-
-interface PtyMock extends PtyHandle {
-  writes: string[];
-  kills: string[];
-  resizes: [number, number][];
-  emitData(chunk: string): void;
-  emitExit(code: number | null): void;
-}
-
-function makePtyMock(sessionId: string): PtyMock {
-  const writes: string[] = [];
-  const kills: string[] = [];
-  const resizes: [number, number][] = [];
-  let dataCb: ((chunk: string) => void) | null = null;
-  let exitCb: ((code: number | null, expected: boolean) => void) | null = null;
-  let killRequested = false;
-
-  return {
-    sessionId,
-    writes,
-    kills,
-    resizes,
-    write(data: string) {
-      writes.push(data);
-    },
-    resize(cols: number, rows: number) {
-      resizes.push([cols, rows]);
-    },
-    kill(signal: "SIGTERM" | "SIGKILL" = "SIGTERM") {
-      kills.push(signal);
-      killRequested = true;
-    },
-    onData(cb) {
-      dataCb = cb;
-    },
-    onExit(cb) {
-      exitCb = cb;
-    },
-    emitData(chunk: string) {
-      dataCb?.(chunk);
-    },
-    emitExit(code: number | null) {
-      exitCb?.(code, killRequested);
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Mock Subscriber (ws.send)
@@ -112,58 +56,115 @@ function makeSub(id: string, failOnSend = false): MockSub {
   return sub;
 }
 
-type OutputMsg = Extract<ServerMessage, { type: "output" }>;
-type PromptMsg = Extract<ServerMessage, { type: "prompt" }>;
+type HistoryMsg = Extract<ServerMessage, { type: "history" }>;
 
-function outputs(sent: ServerMessage[]): OutputMsg[] {
-  return sent.filter((m): m is OutputMsg => m.type === "output");
+function makeMessage(sessionId: string, id: string, role: "user" | "assistant"): SessionMessage {
+  return {
+    id,
+    sessionId,
+    role,
+    parts: [{ type: "text", text: `isi-${id}` }],
+    createdAt: 0,
+  };
+}
+
+function makePrompt(
+  sessionId: string,
+  id: string,
+  kind: "permission" | "question",
+): InteractivePrompt {
+  return {
+    id,
+    sessionId,
+    kind,
+    type: kind === "permission" ? "confirmation" : "menu",
+    title: kind === "permission" ? "bash:ls" : "Pilih",
+    options: kind === "permission" ? null : ["A", "B"],
+    status: "pending",
+    createdAt: 0,
+    resolvedAt: null,
+  };
 }
 
 // ---------------------------------------------------------------------------
-// Harness: Session_Manager + Gateway ter-wire (onOutput / onStatusChange)
+// Mock SessionManager
+// ---------------------------------------------------------------------------
+
+interface FakeSessionManager extends SessionManager {
+  inputs: [string, string][];
+  promptReplies: [string, string, PromptResponse][];
+  stops: string[];
+  inputResult: { ok: boolean; error?: string };
+  resolveResult: { ok: boolean; error?: string };
+  stopResult: { ok: boolean; error?: string };
+}
+
+function makeFakeSessionManager(): FakeSessionManager {
+  const sm: FakeSessionManager = {
+    inputs: [],
+    promptReplies: [],
+    stops: [],
+    inputResult: { ok: true },
+    resolveResult: { ok: true },
+    stopResult: { ok: true },
+    async createSession() {
+      return { ok: false, error: "not-used" };
+    },
+    listSessions: () => [],
+    getSession: () => ({ ok: false, error: "SESSION_NOT_FOUND" }),
+    stopSession(sessionId) {
+      sm.stops.push(sessionId);
+      return sm.stopResult;
+    },
+    async sendFreeTextInput(sessionId, text) {
+      sm.inputs.push([sessionId, text]);
+      return sm.inputResult;
+    },
+    async resolvePrompt(sessionId, promptId, response) {
+      sm.promptReplies.push([sessionId, promptId, response]);
+      return sm.resolveResult;
+    },
+    reconcileOnStartup: () => {},
+    async shutdown() {},
+  };
+  return sm;
+}
+
+// ---------------------------------------------------------------------------
+// Harness
 // ---------------------------------------------------------------------------
 
 interface Harness {
   store: SessionStore;
-  sm: SessionManager;
+  sm: FakeSessionManager;
   gw: WebSocketGateway;
-  handles: Map<string, PtyMock>;
-  project: Project;
-  root: string;
   close(): void;
 }
 
 function freshHarness(): Harness {
   const store = openSessionStore(":memory:");
-  const root = mkdtempSync(path.join(tmpdir(), "kcg-wsg-"));
+  const root = mkdtempSync(path.join(tmpdir(), "kcg-wsg2-"));
   const cwd = path.join(root, "proj");
   mkdirSync(cwd, { recursive: true });
   store.insertProject({ id: "p1", name: "proj", path: cwd, createdAt: 1 });
-
-  const handles = new Map<string, PtyMock>();
-  const spawn: SpawnPtyFn = (_cmd, _cwd, sessionId) => {
-    const h = makePtyMock(sessionId);
-    handles.set(sessionId, h);
-    return h;
-  };
-
-  let gw: WebSocketGateway | null = null;
-  const sm = createSessionManager({
-    store,
-    spawn,
-    now: () => 1000,
-    onOutput: (chunk) => gw?.broadcast(chunk.sessionId, chunk),
-    onStatusChange: (sessionId, status) => gw?.notifySessionStatus(sessionId, status),
+  store.insertSession({
+    id: "s1",
+    projectId: "p1",
+    agentType: "opencode",
+    cwd,
+    status: "running",
+    ocSessionId: "ses_1",
+    createdAt: 0,
+    updatedAt: 0,
   });
-  gw = createWebSocketGateway({ store, sessionManager: sm });
+
+  const sm = makeFakeSessionManager();
+  const gw = createWebSocketGateway({ store, sessionManager: sm });
 
   return {
     store,
     sm,
     gw,
-    handles,
-    project: { id: "p1", name: "proj", path: cwd, createdAt: 1 },
-    root,
     close() {
       store.close();
       rmSync(root, { recursive: true, force: true });
@@ -171,179 +172,48 @@ function freshHarness(): Harness {
   };
 }
 
-function createRunningSession(h: Harness): string {
-  const res = h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
-  expect(res.ok).toBe(true);
-  if (!res.ok) throw new Error("harness: createSession gagal");
-  return res.session.id;
-}
-
-function statusOf(store: SessionStore, sid: string): SessionStatus | undefined {
-  const r = store.getSession(sid);
-  return r.ok ? r.data.status : undefined;
-}
-
 // ---------------------------------------------------------------------------
-// Property 6 — Status Session tidak terpengaruh disconnect WebSocket (2.2)
+// Attach
 // ---------------------------------------------------------------------------
 
-// Feature: kcg-bridge, Property 6: Status Session tidak terpengaruh disconnect WebSocket
-test("Property 6: disconnect semua client -> status tetap running", () => {
-  fc.assert(
-    fc.property(fc.array(fc.string({ maxLength: 8 }), { maxLength: 5 }), (clientIds) => {
-      const h = freshHarness();
-      try {
-        const sid = createRunningSession(h);
-        const handle = h.handles.get(sid);
+test("attach: history berisi messages terurut + prompts pending (4.1, 4.4)", () => {
+  const h = freshHarness();
+  try {
+    h.store.insertMessage(makeMessage("s1", "m1", "user"));
+    h.store.insertMessage(makeMessage("s1", "m2", "assistant"));
+    h.store.insertPrompt(makePrompt("s1", "pr1", "permission"));
+    h.store.insertPrompt(makePrompt("s1", "pr2", "question"));
+    h.store.updatePromptStatus("pr2", "resolved", 5);
 
-        const subs = clientIds.map((id) => makeSub(id));
-        for (const s of subs) h.gw.attach(s, sid);
-        expect(h.gw.subscriberCount(sid)).toBe(subs.length);
+    const sub = makeSub("c1");
+    h.gw.attach(sub, "s1");
 
-        // Disconnect seluruh koneksi (Requirement 2.2)
-        for (const s of subs) h.gw.detach(s);
-        expect(h.gw.subscriberCount(sid)).toBe(0);
-
-        // Status tetap running, tanpa kill
-        expect(statusOf(h.store, sid)).toBe("running");
-        expect(handle?.kills ?? []).toEqual([]);
-
-        // Output_Stream tetap mengalir ke store meski tanpa Client
-        handle?.emitData("hello");
-        const chunks = h.store.getOutputChunks(sid);
-        expect(chunks.ok).toBe(true);
-        if (chunks.ok) expect(chunks.data.map((c) => c.data)).toEqual(["hello"]);
-      } finally {
-        h.close();
-      }
-    }),
-    { numRuns: 100 },
-  );
+    const hist = sub.sent.find((m): m is HistoryMsg => m.type === "history");
+    expect(hist).toBeDefined();
+    if (hist) {
+      expect(hist.messages.map((m) => m.id)).toEqual(["m1", "m2"]);
+      expect(hist.prompts.map((p) => p.id)).toEqual(["pr1"]); // hanya pending
+    }
+    expect(h.gw.subscriberCount("s1")).toBe(1);
+  } finally {
+    h.close();
+  }
 });
 
-// ---------------------------------------------------------------------------
-// Property 11 — Reattach mengirim riwayat sesuai urutan sebelum data baru (4.1)
-// ---------------------------------------------------------------------------
-
-// Feature: kcg-bridge, Property 11: Reattach mengirim riwayat sesuai urutan sebelum data baru
-test("Property 11: attach -> history urut seq; data baru seq lebih besar", () => {
-  fc.assert(
-    fc.property(fc.array(fc.string({ maxLength: 100 }), { maxLength: 30 }), (chunks) => {
-      const h = freshHarness();
-      try {
-        const sid = createRunningSession(h);
-        const handle = h.handles.get(sid);
-        for (const c of chunks) handle?.emitData(c);
-
-        const sub = makeSub("reattach");
-        h.gw.attach(sub, sid);
-
-        // history berisi seluruh chunk terurut seq naik (Requirement 4.1)
-        const hist = sub.sent.find((m): m is Extract<ServerMessage, { type: "history" }> => {
-          return m.type === "history";
-        });
-        expect(hist).toBeDefined();
-        if (hist) {
-          expect(hist.chunks).toHaveLength(chunks.length);
-          expect(hist.chunks.map((c) => c.seq)).toEqual(chunks.map((_, i) => i + 1));
-          expect(hist.chunks.map((c) => c.data)).toEqual(chunks);
-        }
-
-        // data baru setelah attach: seq > seluruh seq pada history
-        handle?.emitData("setelah-attach");
-        const out = outputs(sub.sent);
-        expect(out).toHaveLength(1);
-        expect(out[0]?.seq).toBe(chunks.length + 1);
-      } finally {
-        h.close();
-      }
-    }),
-    { numRuns: 100 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Property 12 — Tidak ada duplikasi atau chunk terlewat setelah reattach (4.2)
-// ---------------------------------------------------------------------------
-
-// Feature: kcg-bridge, Property 12: Tidak ada duplikasi atau chunk terlewat setelah reattach
-test("Property 12: chunk basi tidak dikirim ulang; chunk baru tepat satu kali", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.string({ maxLength: 50 }), { maxLength: 10 }),
-      fc.array(fc.tuple(fc.integer({ min: 1, max: 25 }), fc.string({ maxLength: 50 })), {
-        maxLength: 25,
-      }),
-      (initChunks, newChunks) => {
-        const h = freshHarness();
-        try {
-          const sid = createRunningSession(h);
-          const handle = h.handles.get(sid);
-          for (const c of initChunks) handle?.emitData(c);
-          const base = initChunks.length;
-
-          const sub = makeSub("cursor");
-          h.gw.attach(sub, sid);
-
-          // chunk dengan seq <= cursor (lastSeqSent) tidak boleh dikirim ulang
-          const stale = new Set<number>();
-          for (const [s] of newChunks) if (s <= base) stale.add(s);
-          stale.add(base);
-          for (const s of stale) {
-            h.gw.broadcast(sid, { sessionId: sid, seq: s, data: "stale", ts: 0 });
-          }
-
-          // chunk baru (seq > cursor), dedup, urut naik
-          const seen = new Set<number>();
-          const fresh: [number, string][] = [];
-          for (const [s, d] of newChunks) {
-            if (s <= base || seen.has(s)) continue;
-            seen.add(s);
-            fresh.push([s, d]);
-          }
-          fresh.sort((a, b) => a[0] - b[0]);
-          for (const [s, d] of fresh) {
-            h.gw.broadcast(sid, { sessionId: sid, seq: s, data: d, ts: 0 });
-          }
-
-          const out = outputs(sub.sent);
-          expect(out.length).toBe(fresh.length);
-          expect(out.map((o) => o.seq)).toEqual(fresh.map(([s]) => s));
-          expect(out.map((o) => o.data)).toEqual(fresh.map(([, d]) => d));
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Property 13 — Reattach ke Session tidak ditemukan menghasilkan error (4.3)
-// ---------------------------------------------------------------------------
-
-// Feature: kcg-bridge, Property 13: Reattach ke Session tidak ditemukan menghasilkan error
-test("Property 13: attach session tak dikenal -> error + close, tanpa history/output", () => {
+test("attach session tak dikenal -> error SESSION_NOT_FOUND + close, tanpa history (4.3)", () => {
   fc.assert(
     fc.property(fc.string({ maxLength: 20 }), (unknownId) => {
       const h = freshHarness();
       try {
         const sub = makeSub("c1");
         h.gw.attach(sub, unknownId);
-
-        // error SESSION_NOT_FOUND dikirim sebelum koneksi ditutup (Req 4.3)
         const err = sub.sent.find((m): m is Extract<ServerMessage, { type: "error" }> => {
           return m.type === "error";
         });
         expect(err).toBeDefined();
         if (err) expect(err.code).toBe(ErrorCodes.SESSION_NOT_FOUND);
         expect(sub.closed).toBe(true);
-
-        // tidak ada history / output yang dikirim
         expect(sub.sent.some((m) => m.type === "history")).toBe(false);
-        expect(sub.sent.some((m) => m.type === "output")).toBe(false);
-        // subscriber tidak terdaftar
         expect(h.gw.subscriberCount(unknownId)).toBe(0);
       } finally {
         h.close();
@@ -354,308 +224,225 @@ test("Property 13: attach session tak dikenal -> error + close, tanpa history/ou
 });
 
 // ---------------------------------------------------------------------------
-// Property 14 — Reattach mengirim seluruh prompt belum resolved (4.4)
+// Wire pesan Client -> Session_Manager
 // ---------------------------------------------------------------------------
 
-// Feature: kcg-bridge, Property 14: Reattach mengirim seluruh prompt belum resolved
-test("Property 14: attach -> prompt pending terkirim semua, resolved tidak", () => {
-  fc.assert(
-    fc.property(
-      fc.array(fc.constantFrom("pending", "resolved" as const), { maxLength: 20 }),
-      (statuses) => {
-        const h = freshHarness();
-        try {
-          const sid = createRunningSession(h);
-          statuses.forEach((st, i) => {
-            h.store.insertPrompt({
-              id: `pr-${i}`,
-              sessionId: sid,
-              type: "confirmation",
-              options: null,
-              status: st,
-              createdAt: i,
-              resolvedAt: st === "resolved" ? 999 : null,
-            });
-          });
-
-          const sub = makeSub("c1");
-          h.gw.attach(sub, sid);
-
-          const prompts = sub.sent.filter((m): m is PromptMsg => m.type === "prompt");
-          const expectedIds = statuses
-            .map((s, i) => (s === "pending" ? `pr-${i}` : null))
-            .filter((x): x is string => x !== null);
-
-          // tepat satu pesan prompt per prompt pending, tidak ada yang resolved
-          expect(prompts.map((p) => p.prompt.id).sort()).toEqual(expectedIds.sort());
-          for (const p of prompts) expect(p.prompt.status).toBe("pending");
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Property 15 — Broadcast konsisten ke banyak Client (5.1, 5.2)
-// ---------------------------------------------------------------------------
-
-// Feature: kcg-bridge, Property 15: Broadcast konsisten ke banyak Client
-test("Property 15: setiap client menerima seluruh chunk sekali, urut identik", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 2, max: 6 }),
-      fc.array(fc.string({ maxLength: 40 }), { maxLength: 20 }),
-      (clientCount, chunkData) => {
-        const h = freshHarness();
-        try {
-          const sid = createRunningSession(h);
-          const subs = Array.from({ length: clientCount }, (_, i) => makeSub(`c${i}`));
-          for (const s of subs) h.gw.attach(s, sid);
-
-          chunkData.forEach((d, i) => {
-            h.gw.broadcast(sid, { sessionId: sid, seq: i + 1, data: d, ts: 0 });
-          });
-
-          for (const s of subs) {
-            const out = outputs(s.sent);
-            expect(out.map((o) => o.seq)).toEqual(chunkData.map((_, i) => i + 1));
-            expect(out.map((o) => o.data)).toEqual(chunkData);
-          }
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Property 16 — Kegagalan satu Client tidak memengaruhi Client lain (5.3)
-// ---------------------------------------------------------------------------
-
-// Feature: kcg-bridge, Property 16: Kegagalan satu Client tidak memengaruhi Client lain
-test("Property 16: client gagal dihapus; client lain tetap lengkap & urut", () => {
-  fc.assert(
-    fc.property(
-      fc.integer({ min: 2, max: 6 }),
-      fc
-        .array(fc.boolean(), { minLength: 2, maxLength: 6 })
-        .filter((flags) => flags.some((f) => !f)),
-      fc.array(fc.string({ maxLength: 40 }), { minLength: 1, maxLength: 15 }),
-      (clientCount, failFlags, chunkData) => {
-        const h = freshHarness();
-        try {
-          const sid = createRunningSession(h);
-          const flags = Array.from(
-            { length: clientCount },
-            (_, i) => failFlags[i % failFlags.length],
-          );
-          const healthy = flags.filter((f) => !f).length;
-          const subs = flags.map((f, i) => makeSub(`c${i}`, f));
-          for (const s of subs) h.gw.attach(s, sid);
-          // Client yang send-nya gagal ditolak saat attach (send history gagal),
-          // sehingga hanya client sehat yang terdaftar.
-          expect(h.gw.subscriberCount(sid)).toBe(healthy);
-
-          chunkData.forEach((d, i) => {
-            h.gw.broadcast(sid, { sessionId: sid, seq: i + 1, data: d, ts: 0 });
-          });
-
-          // client sehat: lengkap & berurutan (Req 5.3); client gagal: tanpa output
-          flags.forEach((f, i) => {
-            const s = subs[i];
-            if (!s) return;
-            if (f) {
-              expect(outputs(s.sent)).toHaveLength(0);
-            } else {
-              const out = outputs(s.sent);
-              expect(out.map((o) => o.seq)).toEqual(chunkData.map((_, i) => i + 1));
-              expect(out.map((o) => o.data)).toEqual(chunkData);
-            }
-          });
-
-          // registry hanya berisi client sehat
-          expect(h.gw.subscriberCount(sid)).toBe(healthy);
-        } finally {
-          h.close();
-        }
-      },
-    ),
-    { numRuns: 100 },
-  );
-});
-
-// ---------------------------------------------------------------------------
-// Task 17.5 — wiring pesan Client -> Session_Manager & notifikasi
-// ---------------------------------------------------------------------------
-
-test("17.5: input diteruskan ke Session_Manager; input invalid -> error", () => {
+test("input diteruskan; input invalid -> error INVALID_TEXT", async () => {
   const h = freshHarness();
   try {
-    const sid = createRunningSession(h);
-    const handle = h.handles.get(sid);
     const sub = makeSub("c1");
-    h.gw.attach(sub, sid);
+    h.gw.attach(sub, "s1");
 
-    h.gw.input(sub, sid, "hello world");
-    expect(handle?.writes).toEqual(["hello world\n"]);
+    h.gw.input(sub, "s1", "hello");
+    await Bun.sleep(0);
+    expect(h.sm.inputs).toEqual([["s1", "hello"]]);
 
-    // free-text invalid -> error INVALID_TEXT
-    h.gw.input(sub, sid, "   ");
+    h.sm.inputResult = { ok: false, error: "TEXT_EMPTY" };
+    h.gw.input(sub, "s1", "   ");
+    await Bun.sleep(0);
     const err = sub.sent.find((m): m is Extract<ServerMessage, { type: "error" }> => {
       return m.type === "error";
     });
     expect(err).toBeDefined();
     if (err) expect(err.code).toBe(ErrorCodes.INVALID_TEXT);
-    expect(handle?.writes).toEqual(["hello world\n"]);
   } finally {
     h.close();
   }
 });
 
-test("17.5: prompt_response -> resolvePrompt + notif prompt_resolved; invalid -> error", () => {
+test("prompt_response sukses -> notify prompt_resolved; gagal -> error", async () => {
   const h = freshHarness();
   try {
-    const sid = createRunningSession(h);
-    const handle = h.handles.get(sid);
+    h.store.insertPrompt(makePrompt("s1", "pr1", "permission"));
     const sub = makeSub("c1");
-    h.gw.attach(sub, sid);
+    h.gw.attach(sub, "s1");
 
-    h.store.insertPrompt({
-      id: "c1",
-      sessionId: sid,
-      type: "confirmation",
-      options: null,
-      status: "pending",
-      createdAt: 1,
-      resolvedAt: null,
-    });
-
-    h.gw.promptResponse(sub, sid, "c1", "approve");
-    expect(handle?.writes).toEqual(["y\n"]);
-
+    h.gw.promptResponse(sub, "s1", "pr1", "approve");
+    await Bun.sleep(0);
+    expect(h.sm.promptReplies).toEqual([["s1", "pr1", "approve"]]);
     const resolved = sub.sent.filter(
-      (m): m is Extract<ServerMessage, { type: "prompt_resolved" }> => {
-        return m.type === "prompt_resolved";
-      },
+      (m): m is Extract<ServerMessage, { type: "prompt_resolved" }> => m.type === "prompt_resolved",
     );
     expect(resolved).toHaveLength(1);
-    expect(resolved[0]?.promptId).toBe("c1");
+    expect(resolved[0]?.promptId).toBe("pr1");
 
-    // respon kedua (sudah resolved) -> error, tanpa notif resolved tambahan
-    h.gw.promptResponse(sub, sid, "c1", "deny");
+    // Gagal -> error, tanpa notif resolved
+    h.sm.resolveResult = { ok: false, error: "PROMPT_NOT_FOUND" };
+    h.gw.promptResponse(sub, "s1", "pr2", "approve");
+    await Bun.sleep(0);
     const err = sub.sent.find((m): m is Extract<ServerMessage, { type: "error" }> => {
       return m.type === "error";
     });
     expect(err).toBeDefined();
-    if (err) expect(err.code).toBe(ErrorCodes.PROMPT_ALREADY_RESOLVED);
+    if (err) expect(err.code).toBe(ErrorCodes.PROMPT_NOT_FOUND);
     expect(sub.sent.filter((m) => m.type === "prompt_resolved")).toHaveLength(1);
   } finally {
     h.close();
   }
 });
 
-test("17.5: resize diteruskan ke Session_Manager; ukuran invalid -> error", () => {
+test("stop diteruskan; session tidak running -> error SESSION_NOT_RUNNING", () => {
   const h = freshHarness();
   try {
-    const sid = createRunningSession(h);
-    const handle = h.handles.get(sid);
     const sub = makeSub("c1");
-    h.gw.attach(sub, sid);
+    h.gw.attach(sub, "s1");
 
-    h.gw.resize(sub, sid, 120, 40);
-    expect(handle?.resizes).toEqual([[120, 40]]);
+    h.gw.stop(sub, "s1");
+    expect(h.sm.stops).toEqual(["s1"]);
 
-    h.gw.resize(sub, sid, 0, 40);
+    h.sm.stopResult = { ok: false, error: "SESSION_NOT_RUNNING" };
+    h.gw.stop(sub, "s1");
     const err = sub.sent.find((m): m is Extract<ServerMessage, { type: "error" }> => {
       return m.type === "error";
     });
     expect(err).toBeDefined();
-    if (err) expect(err.code).toBe(ErrorCodes.INVALID_SIZE);
-    expect(handle?.resizes).toEqual([[120, 40]]);
+    if (err) expect(err.code).toBe(ErrorCodes.SESSION_NOT_RUNNING);
   } finally {
     h.close();
   }
 });
 
-test("notifyPrompt: prompt baru terkirim ke seluruh subscriber Session", () => {
+// ---------------------------------------------------------------------------
+// Broadcast & isolasi kegagalan
+// ---------------------------------------------------------------------------
+
+test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", () => {
   const h = freshHarness();
   try {
-    const sid = createRunningSession(h);
-    const subs = [makeSub("c1"), makeSub("c2")];
-    for (const s of subs) h.gw.attach(s, sid);
-
-    h.gw.notifyPrompt(sid, {
-      id: "np1",
-      sessionId: sid,
-      type: "confirmation",
-      options: null,
-      status: "pending",
-      createdAt: 1,
-      resolvedAt: null,
+    // Session kedua untuk membuktikan isolasi per-Session.
+    h.store.insertSession({
+      id: "s2",
+      projectId: "p1",
+      agentType: "opencode",
+      cwd: "/x",
+      status: "running",
+      ocSessionId: "ses_2",
+      createdAt: 0,
+      updatedAt: 0,
     });
 
-    for (const s of subs) {
-      const prompts = s.sent.filter((m): m is PromptMsg => m.type === "prompt");
-      expect(prompts).toHaveLength(1);
-      expect(prompts[0]?.prompt.id).toBe("np1");
+    const subs = [makeSub("c1"), makeSub("c2"), makeSub("other")];
+    h.gw.attach(subs[0]!, "s1");
+    h.gw.attach(subs[1]!, "s1");
+    h.gw.attach(subs[2]!, "s2");
+
+    h.gw.notifyMessage("s1", makeMessage("s1", "m1", "assistant"));
+    h.gw.notifyMessagePart("s1", "m1", { type: "text", id: "prt_1", text: "stream" });
+    h.gw.notifyPrompt("s1", makePrompt("s1", "pr1", "permission"));
+    h.gw.notifySessionStatus("s1", "stopped");
+    h.gw.notifyPromptResolved("s1", "pr1");
+    h.gw.notifyError("s1", "AGENT_ERROR", "gagal");
+
+    for (const s of [subs[0]!, subs[1]!]) {
+      expect(s.sent.filter((m) => m.type === "message")).toHaveLength(1);
+      expect(s.sent.filter((m) => m.type === "message_part")).toHaveLength(1);
+      const part = s.sent.find((m): m is Extract<ServerMessage, { type: "message_part" }> => {
+        return m.type === "message_part";
+      });
+      if (part) {
+        expect(part.messageId).toBe("m1");
+        expect(part.part).toEqual({ type: "text", id: "prt_1", text: "stream" });
+      }
+      expect(s.sent.filter((m) => m.type === "prompt")).toHaveLength(1);
+      expect(s.sent.filter((m) => m.type === "session_status")).toHaveLength(1);
+      expect(s.sent.filter((m) => m.type === "prompt_resolved")).toHaveLength(1);
+      expect(s.sent.filter((m) => m.type === "error")).toHaveLength(1);
     }
+    // Subscriber Session lain tidak menerima apa pun.
+    expect(subs[2]!.sent.filter((m) => m.type === "message" || m.type === "prompt")).toHaveLength(
+      0,
+    );
   } finally {
     h.close();
   }
 });
 
-test("17.5: onStatusChange -> client menerima session_status saat proses exit", () => {
-  const h = freshHarness();
-  try {
-    const sid = createRunningSession(h);
-    const handle = h.handles.get(sid);
-    const sub = makeSub("c1");
-    h.gw.attach(sub, sid);
+test("Property 15/16: broadcast konsisten ke banyak client; client gagal diisolasi (5.3)", () => {
+  fc.assert(
+    fc.property(
+      fc.integer({ min: 2, max: 6 }),
+      fc.array(fc.boolean(), { minLength: 2, maxLength: 6 }),
+      fc.array(fc.string({ maxLength: 20 }), { maxLength: 10 }),
+      (clientCount, failFlags, msgIds) => {
+        const h = freshHarness();
+        try {
+          const flags = Array.from(
+            { length: clientCount },
+            (_, i) => failFlags[i % failFlags.length],
+          );
+          const healthy = flags.filter((f) => !f).length;
+          const subs = flags.map((f, i) => makeSub(`c${i}`, f));
+          for (const s of subs) h.gw.attach(s, "s1");
+          // Client yang send history gagal tidak terdaftar.
+          expect(h.gw.subscriberCount("s1")).toBe(healthy);
 
-    // exit tak terduga kode bukan nol -> crashed
-    handle?.emitExit(1);
-    expect(statusOf(h.store, sid)).toBe("crashed");
+          msgIds.forEach((id, i) => {
+            h.gw.notifyMessage("s1", makeMessage("s1", `${id}-${i}`, "assistant"));
+          });
 
-    const st = sub.sent.find((m): m is Extract<ServerMessage, { type: "session_status" }> => {
-      return m.type === "session_status";
-    });
-    expect(st).toBeDefined();
-    if (st) expect(st.status).toBe("crashed");
-  } finally {
-    h.close();
-  }
+          flags.forEach((f, i) => {
+            const s = subs[i];
+            if (!s) return;
+            if (f) {
+              expect(s.sent.filter((m) => m.type === "message")).toHaveLength(0);
+            } else {
+              const msgs = s.sent.filter(
+                (m): m is Extract<ServerMessage, { type: "message" }> => m.type === "message",
+              );
+              expect(msgs).toHaveLength(msgIds.length);
+              expect(msgs.map((m) => m.message.id)).toEqual(msgIds.map((id, j) => `${id}-${j}`));
+            }
+          });
+          expect(h.gw.subscriberCount("s1")).toBe(healthy);
+        } finally {
+          h.close();
+        }
+      },
+    ),
+    { numRuns: 100 },
+  );
 });
 
-test("17.1: dispatchClientMessage mengarahkan pesan sesuai tipe", () => {
+// ---------------------------------------------------------------------------
+// Dispatch pesan Client
+// ---------------------------------------------------------------------------
+
+test("dispatchClientMessage mengarahkan attach/input/prompt_response/stop/error", async () => {
   const h = freshHarness();
   try {
-    const sid = createRunningSession(h);
-    const handle = h.handles.get(sid);
-
-    // attach lewat dispatch
     const sub = makeSub("d1");
-    dispatchClientMessage(h.gw, sub, JSON.stringify({ type: "attach", sessionId: sid }));
+    dispatchClientMessage(h.gw, sub, JSON.stringify({ type: "attach", sessionId: "s1" }));
     expect(sub.sent.some((m) => m.type === "history")).toBe(true);
 
-    // input lewat dispatch
     dispatchClientMessage(
       h.gw,
       sub,
-      JSON.stringify({ type: "input", sessionId: sid, text: "halo" }),
+      JSON.stringify({ type: "input", sessionId: "s1", text: "halo" }),
     );
-    expect(handle?.writes).toContain("halo\n");
+    await Bun.sleep(0);
+    expect(h.sm.inputs).toEqual([["s1", "halo"]]);
 
-    // JSON rusak -> error INVALID_MESSAGE
+    dispatchClientMessage(
+      h.gw,
+      sub,
+      JSON.stringify({
+        type: "prompt_response",
+        sessionId: "s1",
+        promptId: "p",
+        response: "approve",
+      }),
+    );
+    await Bun.sleep(0);
+    expect(h.sm.promptReplies).toEqual([["s1", "p", "approve"]]);
+
+    dispatchClientMessage(h.gw, sub, JSON.stringify({ type: "stop", sessionId: "s1" }));
+    expect(h.sm.stops).toEqual(["s1"]);
+
+    // JSON rusak / tipe tak dikenal
     const sub2 = makeSub("d2");
     dispatchClientMessage(h.gw, sub2, "bukan-json");
     expect(sub2.sent.some((m) => m.type === "error")).toBe(true);
 
-    // tipe tak dikenal -> error UNKNOWN_MESSAGE_TYPE
     const sub3 = makeSub("d3");
     dispatchClientMessage(h.gw, sub3, JSON.stringify({ type: "bogus" }));
     const err = sub3.sent.find((m): m is Extract<ServerMessage, { type: "error" }> => {

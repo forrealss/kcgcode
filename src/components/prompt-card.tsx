@@ -10,7 +10,7 @@
  * Logika pemetaan aksi diekstrak ke `getPromptActions` (fungsi murni) agar
  * dapat diuji tanpa DOM (unit test 24.6).
  */
-import { AlertTriangleIcon, ListChecksIcon } from "lucide-react";
+import { AlertTriangleIcon, HelpCircleIcon, ListChecksIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -56,6 +56,7 @@ export interface PromptCardProps {
 export function PromptCard({ prompt, onResolve }: PromptCardProps) {
   const actions = getPromptActions(prompt);
   const isMenu = prompt.type === "menu";
+  const isPermission = prompt.kind === "permission";
 
   return (
     <Card className="gap-3 border-primary/30 py-4">
@@ -63,13 +64,19 @@ export function PromptCard({ prompt, onResolve }: PromptCardProps) {
         <CardTitle className="flex items-center gap-2 text-sm">
           {isMenu ? (
             <ListChecksIcon className="size-4" data-icon="inline-start" />
-          ) : (
+          ) : isPermission ? (
             <AlertTriangleIcon className="size-4 text-muted-foreground" data-icon="inline-start" />
+          ) : (
+            <HelpCircleIcon className="size-4 text-muted-foreground" data-icon="inline-start" />
           )}
-          Interactive Prompt
+          {isPermission ? "Izin tool" : isMenu ? "Pertanyaan" : "Interactive Prompt"}
         </CardTitle>
-        <CardDescription className="flex items-center gap-2 text-xs">
-          <Badge variant={isMenu ? "secondary" : "outline"}>{prompt.type}</Badge>
+        <CardDescription className="flex flex-col items-start gap-1.5 text-xs">
+          <span className="flex items-center gap-2">
+            <Badge variant={isMenu ? "secondary" : "outline"}>{prompt.type}</Badge>
+            <Badge variant="ghost">{prompt.kind}</Badge>
+          </span>
+          {prompt.title && <span className="font-mono">{prompt.title}</span>}
           {isMenu ? "Pilih salah satu opsi" : "Setujui atau tolak permintaan CLI_Agent"}
         </CardDescription>
       </CardHeader>

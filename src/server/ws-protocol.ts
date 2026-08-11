@@ -1,27 +1,37 @@
 /**
- * Protokol pesan WebSocket bersama Client <-> Server.
- * Sesuai `design.md` — Protokol Pesan WebSocket.
+ * Protokol pesan WebSocket bersama Client <-> Server (versi headless).
+ *
+ * Perubahan dari versi PTY/TUI:
+ * - `history` kini membawa `messages` (SessionMessage terstruktur) dan
+ *   `prompts` (pending) — bukan chunk Output_Stream.
+ * - `output`/`resize` dihapus; digantikan `message` dan `stop`.
  */
-import type { InteractivePrompt, PromptResponse, SessionStatus } from "./types";
-
-/** Payload chunk riwayat Output_Stream pada pesan `history`. */
-export interface HistoryChunk {
-  seq: number;
-  data: string;
-  ts: number;
-}
+import type {
+  InteractivePrompt,
+  MessagePart,
+  PromptResponse,
+  SessionMessage,
+  SessionStatus,
+} from "./types";
 
 /** Pesan Client -> Server. */
 export type ClientMessage =
   | { type: "attach"; sessionId: string }
   | { type: "input"; sessionId: string; text: string }
   | { type: "prompt_response"; sessionId: string; promptId: string; response: PromptResponse }
-  | { type: "resize"; sessionId: string; cols: number; rows: number };
+  | { type: "stop"; sessionId: string };
 
 /** Pesan Server -> Client. */
 export type ServerMessage =
-  | { type: "history"; sessionId: string; chunks: HistoryChunk[] }
-  | { type: "output"; sessionId: string; seq: number; data: string; ts: number }
+  | {
+      type: "history";
+      sessionId: string;
+      messages: SessionMessage[];
+      prompts: InteractivePrompt[];
+    }
+  | { type: "message"; sessionId: string; message: SessionMessage }
+  /** Part pesan yang sedang di-stream (SSE `message.part.updated`). */
+  | { type: "message_part"; sessionId: string; messageId: string; part: MessagePart }
   | { type: "prompt"; sessionId: string; prompt: InteractivePrompt }
   | { type: "prompt_resolved"; sessionId: string; promptId: string }
   | { type: "session_status"; sessionId: string; status: SessionStatus }
@@ -35,6 +45,5 @@ export const ErrorCodes = {
   INVALID_RESPONSE: "INVALID_RESPONSE",
   SESSION_NOT_RUNNING: "SESSION_NOT_RUNNING",
   INVALID_TEXT: "INVALID_TEXT",
-  INVALID_SIZE: "INVALID_SIZE",
   AUTH_FAILED: "AUTH_FAILED",
 } as const;

@@ -8,7 +8,7 @@
  */
 
 import { CheckIcon, ChevronRightIcon, FolderIcon, Undo2Icon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -53,8 +53,12 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
 
   // Saat path terpilih di-reset eksternal (mis. usai Project dibuat),
   // kembalikan tampilan browser ke posisi yang sesuai (root).
+  const prevSelectedPath = useRef(selectedPath);
   useEffect(() => {
-    if (selectedPath === "" && cwd !== "") setCwd("");
+    if (selectedPath === "" && prevSelectedPath.current !== "") {
+      setCwd("");
+    }
+    prevSelectedPath.current = selectedPath;
   }, [selectedPath]);
 
   const segments = cwd === "" ? [] : cwd.split("/");

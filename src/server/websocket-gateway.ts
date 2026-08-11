@@ -1,25 +1,28 @@
 /**
- * WebSocket_Gateway — registrasi koneksi, reattach, broadcast, cursor per client.
- * Sesuai `design.md` — `websocket-gateway.ts`.
+ * WebSocket_Gateway — registrasi koneksi, reattach, broadcast (versi headless).
  *
- * Prinsip:
- * - `Map<Subscriber, { sessionId, lastSeqSent }>` menyimpan cursor **per
- *   koneksi** (bukan per-session) agar tiap Client independen (Req 5.2).
- * - Alur `attach`: (1) validasi `sessionId` ada di store — bila tidak, kirim
- *   `error` lalu `close()` (Req 4.3); (2) kirim `history` terurut `seq` ASC
- *   (Req 4.1); (3) set `lastSeqSent`; (4) kirim `prompt` untuk seluruh prompt
- *   `pending` (Req 4.4); (5) daftarkan sebagai subscriber live.
- * - `broadcast(sessionId, chunk)`: kirim hanya jika `chunk.seq > lastSeqSent`,
- *   update `lastSeqSent`, tangkap error `send` per-subscriber (hapus subscriber
- *   gagal) tanpa menghentikan iterasi ke subscriber lain (Req 4.2, 5.1, 5.3).
+ * Perubahan dari versi PTY/TUI:
+ * - Cursor `seq` per-koneksi dihapus (tidak ada lagi chunk Output_Stream);
+ *   reattach mengirim `history` berisi `messages` + `prompts` pending.
+ * - `input` / `prompt_response` kini asinkron (HTTP ke server headless);
+ *   error asinkron dilaporkan via pesan `error` ke Client pengirim.
+ * - Pesan `stop` meneruskan ke `stopSession`.
  *
- * `Subscriber` adalah abstraksi tipis di atas WebSocket agar seluruh logika
- * gateway dapat diuji dengan mock `ws.send` (batasan mocking `design.md`).
+ * Prinsip yang dipertahankan: kegagalan `send` ke satu Client ditangkap
+ * per-Client (hapus subscriber) tanpa menghentikan broadcast ke Client lain
+ * (Requirement 5.3); attach ke Session tidak ditemukan -> `error` + `close`
+ * (Requirement 4.3).
  */
 import type { ServerWebSocket } from "bun";
 import type { SessionStore } from "./db";
 import type { SessionManager } from "./session-manager";
-import type { InteractivePrompt, OutputChunk, PromptResponse, SessionStatus } from "./types";
+import type {
+  InteractivePrompt,
+  MessagePart,
+  PromptResponse,
+  SessionMessage,
+  SessionStatus,
+} from "./types";
 import { ErrorCodes, type ServerMessage } from "./ws-protocol";
 
 /** Abstraksi koneksi — diimplementasikan oleh `bunWsSubscriber` atau mock test. */
@@ -28,10 +31,9 @@ export interface Subscriber {
   close(): void;
 }
 
-/** Cursor per-koneksi: Session yang di-attach + seq terakhir yang dikirim. */
+/** Koneksi yang ter-attach ke sebuah Session. */
 export interface AttachedInfo {
   sessionId: string;
-  lastSeqSent: number;
 }
 
 export interface WebSocketGatewayOptions {
@@ -40,30 +42,22 @@ export interface WebSocketGatewayOptions {
 }
 
 export interface WebSocketGateway {
-  /** Alur attach/reattach ke Session (Req 4.1, 4.3, 4.4). */
   attach(sub: Subscriber, sessionId: string): void;
-  /** Wire pesan `input` ke Session_Manager (Req 7.1). */
   input(sub: Subscriber, sessionId: string, text: string): void;
-  /** Wire pesan `prompt_response` ke Session_Manager + notifikasi resolved (Req 6.3). */
   promptResponse(
     sub: Subscriber,
     sessionId: string,
     promptId: string,
     response: PromptResponse,
   ): void;
-  /** Wire pesan `resize` ke Session_Manager. */
-  resize(sub: Subscriber, sessionId: string, cols: number, rows: number): void;
-  /** Broadcast Output_Stream baru ke subscriber Session (Req 4.2, 5.1, 5.3). */
-  broadcast(sessionId: string, chunk: OutputChunk): void;
-  /** Kirim Interactive_Prompt baru ke subscriber Session. */
+  stop(sub: Subscriber, sessionId: string): void;
+  notifyMessage(sessionId: string, message: SessionMessage): void;
+  notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
   notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
-  /** Kirim notifikasi perubahan status ke subscriber Session (task 17.5). */
   notifySessionStatus(sessionId: string, status: SessionStatus): void;
-  /** Kirim notifikasi prompt resolved ke subscriber Session (task 17.5). */
   notifyPromptResolved(sessionId: string, promptId: string): void;
-  /** Hapus koneksi dari registry (dipanggil saat WS close). */
+  notifyError(sessionId: string, code: string, message: string): void;
   detach(sub: Subscriber): void;
-  /** Jumlah subscriber aktif sebuah Session (untuk verifikasi). */
   subscriberCount(sessionId: string): number;
 }
 
@@ -79,7 +73,6 @@ function toErrorCode(error: string): string {
   if (error === "INVALID_PROMPT_OPTION" || error === "INVALID_PROMPT_RESPONSE") {
     return ErrorCodes.INVALID_RESPONSE;
   }
-  if (error === "INVALID_SIZE") return ErrorCodes.INVALID_SIZE;
   return "ERROR";
 }
 
@@ -111,34 +104,32 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
       return;
     }
 
-    // (2) riwayat Output_Stream terurut seq ASC (Req 4.1)
-    const chunks = store.getOutputChunks(sessionId);
-    if (!chunks.ok) {
-      sendSafe(sub, { type: "error", code: "STORE_ERROR", message: chunks.error });
+    // (2) riwayat pesan terstruktur + prompt pending (Req 4.1, 4.4)
+    const messages = store.getMessages(sessionId);
+    if (!messages.ok) {
+      sendSafe(sub, { type: "error", code: "STORE_ERROR", message: messages.error });
       sub.close();
       return;
     }
-    const history = chunks.data.map((c) => ({ seq: c.seq, data: c.data, ts: c.ts }));
-    const last = history[history.length - 1];
-    const lastSeq = last?.seq ?? 0;
-    // Bila kiriman history gagal, jangan daftarkan subscriber yang rusak.
-    if (!sendSafe(sub, { type: "history", sessionId, chunks: history })) return;
+    const prompts = store.listPendingPrompts(sessionId);
+    if (!sendSafe(sub, { type: "history", sessionId, messages: messages.data, prompts })) return;
 
-    // (4) seluruh prompt belum resolved (Req 4.4)
-    for (const prompt of store.listPendingPrompts(sessionId)) {
-      sendSafe(sub, { type: "prompt", sessionId, prompt });
-    }
-
-    // (5) daftarkan sebagai subscriber live dengan cursor per-koneksi
-    subs.set(sub, { sessionId, lastSeqSent: lastSeq });
+    // (3) daftarkan sebagai subscriber live
+    subs.set(sub, { sessionId });
   }
 
   function input(sub: Subscriber, sessionId: string, text: string): void {
-    const res = sessionManager.sendFreeTextInput(sessionId, text);
-    if (!res.ok) {
-      const code = toErrorCode(res.error ?? "");
-      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
-    }
+    void sessionManager
+      .sendFreeTextInput(sessionId, text)
+      .then((res) => {
+        if (!res.ok) {
+          const code = toErrorCode(res.error ?? "");
+          sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+        }
+      })
+      .catch(() => {
+        sendSafe(sub, { type: "error", code: "ERROR", message: "Gagal mengirim pesan" });
+      });
   }
 
   function promptResponse(
@@ -147,57 +138,58 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     promptId: string,
     response: PromptResponse,
   ): void {
-    const res = sessionManager.resolvePrompt(sessionId, promptId, response);
+    void sessionManager
+      .resolvePrompt(sessionId, promptId, response)
+      .then((res) => {
+        if (!res.ok) {
+          const code = toErrorCode(res.error ?? "");
+          sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+          return;
+        }
+        notifyPromptResolved(sessionId, promptId);
+      })
+      .catch(() => {
+        sendSafe(sub, { type: "error", code: "ERROR", message: "Gagal memproses respon prompt" });
+      });
+  }
+
+  function stop(sub: Subscriber, sessionId: string): void {
+    const res = sessionManager.stopSession(sessionId);
     if (!res.ok) {
       const code = toErrorCode(res.error ?? "");
       sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
-      return;
-    }
-    notifyPromptResolved(sessionId, promptId);
-  }
-
-  function resize(sub: Subscriber, sessionId: string, cols: number, rows: number): void {
-    const res = sessionManager.resizeSession(sessionId, cols, rows);
-    if (!res.ok) {
-      const code = toErrorCode(res.error ?? "");
-      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
     }
   }
 
-  function broadcast(sessionId: string, chunk: OutputChunk): void {
+  function broadcast(sessionId: string, build: () => ServerMessage): void {
     for (const [sub, info] of subs) {
       if (info.sessionId !== sessionId) continue;
-      if (chunk.seq <= info.lastSeqSent) continue; // jangan kirim ulang (Req 4.2)
-      const ok = sendSafe(sub, {
-        type: "output",
-        sessionId,
-        seq: chunk.seq,
-        data: chunk.data,
-        ts: chunk.ts,
-      });
-      if (ok) info.lastSeqSent = chunk.seq;
+      sendSafe(sub, build());
     }
+  }
+
+  function notifyMessage(sessionId: string, message: SessionMessage): void {
+    broadcast(sessionId, () => ({ type: "message", sessionId, message }));
+  }
+
+  function notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void {
+    broadcast(sessionId, () => ({ type: "message_part", sessionId, messageId, part }));
   }
 
   function notifyPrompt(sessionId: string, prompt: InteractivePrompt): void {
-    for (const [sub, info] of subs) {
-      if (info.sessionId !== sessionId) continue;
-      sendSafe(sub, { type: "prompt", sessionId, prompt });
-    }
+    broadcast(sessionId, () => ({ type: "prompt", sessionId, prompt }));
   }
 
   function notifySessionStatus(sessionId: string, status: SessionStatus): void {
-    for (const [sub, info] of subs) {
-      if (info.sessionId !== sessionId) continue;
-      sendSafe(sub, { type: "session_status", sessionId, status });
-    }
+    broadcast(sessionId, () => ({ type: "session_status", sessionId, status }));
   }
 
   function notifyPromptResolved(sessionId: string, promptId: string): void {
-    for (const [sub, info] of subs) {
-      if (info.sessionId !== sessionId) continue;
-      sendSafe(sub, { type: "prompt_resolved", sessionId, promptId });
-    }
+    broadcast(sessionId, () => ({ type: "prompt_resolved", sessionId, promptId }));
+  }
+
+  function notifyError(sessionId: string, code: string, message: string): void {
+    broadcast(sessionId, () => ({ type: "error", code, message }));
   }
 
   function detach(sub: Subscriber): void {
@@ -216,11 +208,13 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     attach,
     input,
     promptResponse,
-    resize,
-    broadcast,
+    stop,
+    notifyMessage,
+    notifyMessagePart,
     notifyPrompt,
     notifySessionStatus,
     notifyPromptResolved,
+    notifyError,
     detach,
     subscriberCount,
   };
@@ -299,15 +293,11 @@ export function dispatchClientMessage(
         invalidMessage(sub, "prompt_response membutuhkan sessionId, promptId, dan response valid");
       }
       break;
-    case "resize":
-      if (
-        typeof msg.sessionId === "string" &&
-        typeof msg.cols === "number" &&
-        typeof msg.rows === "number"
-      ) {
-        gateway.resize(sub, msg.sessionId, msg.cols, msg.rows);
+    case "stop":
+      if (typeof msg.sessionId === "string") {
+        gateway.stop(sub, msg.sessionId);
       } else {
-        invalidMessage(sub, "resize membutuhkan sessionId, cols, dan rows");
+        invalidMessage(sub, "stop membutuhkan sessionId string");
       }
       break;
     default:

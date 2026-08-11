@@ -1,19 +1,26 @@
 /**
- * Tampilan Session (Requirement 5.1, 5.2, 6.1, 6.2, 7.1, 8.3).
+ * Tampilan Session — versi headless (opencode serve).
+ *
+ * Berbeda dari versi PTY/TUI (yang me-render chunk byte terminal TUI):
+ * - Pesan datang sebagai `SessionMessage` terstruktur (`role` + `parts`):
+ *   text, reasoning (collapsible per part), tool/step.
+ * - Interactive_Prompt (permission/question) dirender via `prompt-card.tsx`.
+ * - Tidak ada `resize` PTY; ada aksi Stop (kirim `{ type: "stop" }`).
  *
  * Konsumen `use-websocket.ts`:
- * - `history` (reattach) & `output` dirender sebagai daftar pesan; tiap pesan
- *   memiliki collapsible thinking block dengan state `Record<messageId, boolean>`
- *   default expanded (Requirement 8.3) — logika murni di `collapsible-state.ts`
- *   (Property 25).
- * - `prompt` dirender lewat `prompt-card.tsx`; `prompt_resolved` menghapusnya.
- * - `session_status` memperbarui badge status; `error` ditampilkan.
- * - Input field bebas mengirim `{ type: "input" }` (Requirement 7.1).
- * - `resize` dikirim sekali saat mount agar PTY menyesuaikan viewport.
+ * - `history` (reattach) berisi `messages` + `prompts` pending.
+ * - `message` menambah pesan baru; `prompt`/`prompt_resolved` mengelola kartu.
+ * - `session_status` memperbarui badge; `error` ditampilkan.
  */
-
-import { ChevronLeftIcon, ChevronRightIcon, SendHorizontalIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import {
+  BotIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  SendHorizontalIcon,
+  SquareIcon,
+  WrenchIcon,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
@@ -31,22 +38,29 @@ import {
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/use-websocket";
 import { getAuthToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { OutputChunk, PromptResponse, Session, SessionStatus } from "@/server/types";
+import type {
+  InteractivePrompt,
+  MessagePart,
+  PromptResponse,
+  Session,
+  SessionMessage,
+  SessionStatus,
+} from "@/server/types";
 import type { ServerMessage } from "@/server/ws-protocol";
 import {
   type CollapsibleState,
-  initialCollapsibleState,
+  extendCollapsed,
+  initialCollapsedState,
   isCollapsibleExpanded,
   toggleCollapsible,
 } from "./collapsible-state";
 import { PromptCard } from "./prompt-card";
+import { TypewriterText } from "./typewriter-text";
 
 export interface SessionViewProps {
   session: Session;
   onBack: () => void;
 }
-
-type ViewMessage = Omit<OutputChunk, "sessionId">;
 
 function wsStatusLabel(status: WsConnectionStatus): string {
   switch (status) {
@@ -75,30 +89,173 @@ function formatTime(ts: number): string {
   });
 }
 
+function partText(p: MessagePart): string | null {
+  return typeof p.text === "string" ? p.text : null;
+}
+
+/**
+ * Gabungkan teks jawaban dari part `text` saja — reasoning/tool/step tidak
+ * ikut, walau part tersebut juga membawa field `text` dari opencode.
+ */
+export function textOf(parts: MessagePart[]): string {
+  return parts
+    .filter((p) => p.type === "text")
+    .map(partText)
+    .filter((t): t is string => t !== null)
+    .join("\n");
+}
+
+/**
+ * Deteksi pertumbuhan teks part yang di-stream LIVE (SSE `message_part`).
+ * - `prevLen > 0`: part sudah pernah tampil (bukan kemunculan pertama, yang
+ *   sering kali kosong / snapshot awal).
+ * - `newLen > prevLen`: teks bertambah -> provider benar-benar men-stream
+ *   token bertahap. Bila true, pesan ditandai "live" dan tidak perlu efek
+ *   typewriter (teks sudah tampil bertambah di layar).
+ */
+export function isLiveTextGrowth(prevLen: number, newLen: number): boolean {
+  return prevLen > 0 && newLen > prevLen;
+}
+
+/**
+ * Keputusan efek mengetik untuk satu pesan assistant (murni, diuji):
+ * - `typingIds` berisi id pesan final yang baru tiba (kandidat typewriter).
+ * - `liveTextIds` berisi id pesan yang teksnya ter-stream live bertahap —
+ *   pesan ini TIDAK boleh di-typewrite (teks sudah tampil apa adanya).
+ */
+export function shouldTypewrite(
+  messageId: string,
+  typingIds: ReadonlySet<string>,
+  liveTextIds: ReadonlySet<string>,
+): boolean {
+  return typingIds.has(messageId) && !liveTextIds.has(messageId);
+}
+
+/**
+ * Upsert satu part ke dalam daftar pesan (streaming, event `message_part`).
+ * - Belum ada pesan dengan `messageId` -> buat placeholder assistant streaming.
+ * - Sudah ada -> part dengan `id` sama diganti, selainnya ditambahkan.
+ * Mengembalikan array baru (immutable) agar mudah diverifikasi.
+ */
+export function upsertMessagePart(
+  messages: SessionMessage[],
+  sessionId: string,
+  messageId: string,
+  part: MessagePart,
+): SessionMessage[] {
+  const idx = messages.findIndex((m) => m.id === messageId);
+  if (idx === -1) {
+    return [
+      ...messages,
+      {
+        id: messageId,
+        sessionId,
+        role: "assistant",
+        parts: [part],
+        createdAt: Date.now(),
+        streaming: true,
+      },
+    ];
+  }
+  const cur = messages[idx];
+  if (!cur) return messages;
+  const partIdx = cur.parts.findIndex((p) => p.id !== undefined && p.id === part.id);
+  const nextParts =
+    partIdx === -1 ? [...cur.parts, part] : cur.parts.map((p, i) => (i === partIdx ? part : p));
+  const next: SessionMessage = { ...cur, parts: nextParts, streaming: true };
+  return messages.map((m, i) => (i === idx ? next : m));
+}
+
+/**
+ * Ganti pesan final (hasil POST, non-streaming) — replace bila id sama
+ * (menutup versi streaming), selainnya tambahkan.
+ */
+export function upsertMessage(
+  messages: SessionMessage[],
+  message: SessionMessage,
+): SessionMessage[] {
+  const idx = messages.findIndex((m) => m.id === message.id);
+  if (idx === -1) return [...messages, message];
+  return messages.map((m, i) => (i === idx ? message : m));
+}
+
 export function SessionView({ session, onBack }: SessionViewProps) {
-  const [messages, setMessages] = useState<ViewMessage[]>([]);
+  const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [collapsible, setCollapsible] = useState<CollapsibleState>({});
-  const [prompts, setPrompts] = useState<Extract<ServerMessage, { type: "prompt" }>["prompt"][]>(
-    [],
-  );
+  const [prompts, setPrompts] = useState<InteractivePrompt[]>([]);
   const [status, setStatus] = useState<SessionStatus>(session.status);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
+  /**
+   * Id pesan assistant final yang baru tiba -> kandidat efek mengetik.
+   * Hanya fallback: bila teks sudah ter-stream live, pesan dirender penuh.
+   */
+  const [typingIds, setTypingIds] = useState<Set<string>>(new Set());
+  /** Id pesan yang teksnya ter-stream LIVE (bertambah bertahap) — tanpa typewriter. */
+  const [liveTextIds, setLiveTextIds] = useState<Set<string>>(new Set());
+  /** Panjang teks part terakhir (key `${messageId}:${partId}`) untuk deteksi growth. */
+  const partLenRef = useRef<Map<string, number>>(new Map());
 
   const onMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
       case "history":
         setError(null);
-        setMessages(msg.chunks.map((c) => ({ seq: c.seq, data: c.data, ts: c.ts })));
-        setCollapsible(initialCollapsibleState(msg.chunks.map((c) => String(c.seq))));
-        break;
-      case "output":
-        setError(null);
-        setMessages((prev) =>
-          prev.some((m) => m.seq === msg.seq)
-            ? prev
-            : [...prev, { seq: msg.seq, data: msg.data, ts: msg.ts }],
+        setMessages(msg.messages);
+        setPrompts(msg.prompts);
+        // Pesan lama tampil penuh tanpa efek mengetik; reset status live.
+        setTypingIds(new Set());
+        setLiveTextIds(new Set());
+        partLenRef.current.clear();
+        // Reasoning tampil collapsed (baris "Thinking"), bisa di-expand per part.
+        // Key berbasis part.id agar stabil walau parts bertambah saat streaming.
+        setCollapsible(
+          initialCollapsedState(
+            msg.messages.flatMap((m) =>
+              m.parts
+                .map((p, i) => (p.type === "reasoning" ? `${m.id}:${p.id ?? i}` : null))
+                .filter((k): k is string => k !== null),
+            ),
+          ),
         );
+        break;
+      case "message":
+        setError(null);
+        // Replace versi streaming (id sama) atau tambahkan pesan baru.
+        setMessages((prev) => upsertMessage(prev, msg.message));
+        // Pesan assistant final yang baru tiba -> efek mengetik dari kosong.
+        if (msg.message.role === "assistant") {
+          setTypingIds((prev) => new Set(prev).add(msg.message.id));
+        }
+        // Reasoning final juga default collapsed (extendCollapsed tidak mengubah
+        // status key yang sudah ada, termasuk yang sudah di-toggle user).
+        setCollapsible((prev) =>
+          extendCollapsed(
+            prev,
+            msg.message.parts
+              .map((p, i) => (p.type === "reasoning" ? `${msg.message.id}:${p.id ?? i}` : null))
+              .filter((k): k is string => k !== null),
+          ),
+        );
+        break;
+      case "message_part":
+        setError(null);
+        setMessages((prev) => upsertMessagePart(prev, msg.sessionId, msg.messageId, msg.part));
+        // Part text yang bertambah bertahap (provider streaming asli) -> tandai
+        // live agar pesan final tidak memulai ulang efek mengetik atas teks yang
+        // sudah tampil. Kemunculan pertama (biasanya kosong) tidak dihitung.
+        if (msg.part.type === "text" && msg.part.id !== undefined) {
+          const key = `${msg.messageId}:${msg.part.id}`;
+          const prevLen = partLenRef.current.get(key) ?? 0;
+          const newLen = typeof msg.part.text === "string" ? msg.part.text.length : 0;
+          if (isLiveTextGrowth(prevLen, newLen)) {
+            setLiveTextIds((prev) => new Set(prev).add(msg.messageId));
+          }
+          partLenRef.current.set(key, newLen);
+        }
+        // Reasoning yang baru mulai di-stream: default collapsed.
+        if (msg.part.type === "reasoning" && msg.part.id !== undefined) {
+          setCollapsible((prev) => extendCollapsed(prev, [`${msg.messageId}:${msg.part.id}`]));
+        }
         break;
       case "prompt":
         setError(null);
@@ -128,21 +285,10 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     onMessage,
   });
 
-  // Attach per mount (perubahan session => remount via key di App). Tanpa
-  // guard ref: React 19 StrictMode me-double-invoke efek (effect -> cleanup
-  // -> effect), dan `attach()` idempoten — server mengirim ulang `history`
-  // yang *replace* state, sehingga aman dipanggil dua kali.
   useEffect(() => {
     attach(session.id);
     return () => disconnect();
   }, [attach, disconnect, session.id]);
-
-  // Kirim resize awal agar PTY menyesuaikan viewport (Requirement 5.1).
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const cols = Math.max(40, Math.min(200, Math.floor(window.innerWidth / 8)));
-    send({ type: "resize", sessionId: session.id, cols, rows: 24 });
-  }, [send, session.id]);
 
   const resolvePrompt = useCallback(
     (promptId: string, response: PromptResponse) => {
@@ -158,11 +304,113 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     setText("");
   };
 
+  const stop = () => {
+    send({ type: "stop", sessionId: session.id });
+  };
+
   const canInput = wsStatus === "connected" && status === "running";
 
-  const toggleMessage = (messageId: string) => {
-    setCollapsible((s) => toggleCollapsible(s, messageId));
+  const toggleMessage = (key: string) => {
+    setCollapsible((s) => toggleCollapsible(s, key));
   };
+
+  const renderAssistantMessage = (m: SessionMessage) => {
+    const reasoning = m.parts
+      .map((p, i) => ({ part: p, index: i }))
+      .filter(({ part }) => part.type === "reasoning");
+    const tools = m.parts.filter(
+      (p) => p.type === "tool" || p.type === "shell" || p.type === "file",
+    );
+    const body = textOf(m.parts);
+
+    return (
+      <Message key={m.id} align="start">
+        <MessageContent>
+          <MessageHeader className="gap-1.5">
+            <BotIcon className="size-3.5" data-icon="inline-start" />
+            OpenCode
+          </MessageHeader>
+          {reasoning.map(({ part, index }) => {
+            const key = `${m.id}:${part.id ?? index}`;
+            const expanded = isCollapsibleExpanded(collapsible, key);
+            return (
+              <Collapsible key={key} open={expanded}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs text-muted-foreground"
+                  onClick={() => toggleMessage(key)}
+                  aria-expanded={expanded}
+                >
+                  <ChevronRightIcon
+                    data-icon="inline-start"
+                    className={cn("transition-transform", expanded && "rotate-90")}
+                  />
+                  Thinking
+                </Button>
+                <CollapsibleContent>
+                  <div className="pt-1.5">
+                    <Bubble variant="outline">
+                      {/* Tinggi konten dibatasi + scroll internal agar reasoning
+                          panjang tidak memenuhi layar (tetap bisa di-expand). */}
+                      <BubbleContent className="font-mono whitespace-pre-wrap">
+                        <div className="max-h-64 overflow-y-auto">{partText(part)}</div>
+                      </BubbleContent>
+                    </Bubble>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            );
+          })}
+          {body !== "" && (
+            <Bubble variant="secondary">
+              <BubbleContent>
+                <TypewriterText
+                  text={body}
+                  // Efek mengetik hanya fallback: teks yang sudah ter-stream
+                  // live (bertambah bertahap) dirender penuh apa adanya.
+                  active={shouldTypewrite(m.id, typingIds, liveTextIds)}
+                  className="whitespace-pre-wrap"
+                />
+              </BubbleContent>
+            </Bubble>
+          )}
+          {m.streaming && (
+            <span className="animate-pulse px-3 text-xs text-muted-foreground">
+              sedang mengetik…
+            </span>
+          )}
+          {tools.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-3">
+              {tools.map((p) => (
+                <Badge
+                  key={p.id ?? `${m.id}-${p.tool ?? p.type}`}
+                  variant="outline"
+                  className="gap-1 font-mono text-[11px]"
+                >
+                  <WrenchIcon className="size-3" data-icon="inline-start" />
+                  {p.tool ?? p.type}
+                </Badge>
+              ))}
+            </div>
+          )}
+          <MessageFooter>{formatTime(m.createdAt)}</MessageFooter>
+        </MessageContent>
+      </Message>
+    );
+  };
+
+  const renderUserMessage = (m: SessionMessage) => (
+    <Message key={m.id} align="end">
+      <MessageContent>
+        <Bubble>
+          <BubbleContent className="whitespace-pre-wrap">{textOf(m.parts)}</BubbleContent>
+        </Bubble>
+        <MessageFooter>{formatTime(m.createdAt)}</MessageFooter>
+      </MessageContent>
+    </Message>
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -180,6 +428,12 @@ export function SessionView({ session, onBack }: SessionViewProps) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {status === "running" && (
+            <Button type="button" variant="outline" size="sm" onClick={stop} aria-label="Hentikan">
+              <SquareIcon data-icon="inline-start" />
+              Stop
+            </Button>
+          )}
           <Badge variant={wsStatus === "connected" ? "default" : "secondary"}>
             {wsStatusLabel(wsStatus)}
           </Badge>
@@ -187,7 +441,7 @@ export function SessionView({ session, onBack }: SessionViewProps) {
         </div>
       </header>
 
-      {/* Output_Stream */}
+      {/* Percakapan terstruktur */}
       <MessageScrollerProvider autoScroll>
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport>
@@ -200,49 +454,13 @@ export function SessionView({ session, onBack }: SessionViewProps) {
               {messages.length === 0 && prompts.length === 0 ? (
                 <MessageScrollerItem messageId="empty">
                   <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    Menunggu output CLI_Agent…
+                    Belum ada percakapan. Kirim pesan pertama untuk mulai.
                   </p>
                 </MessageScrollerItem>
               ) : (
-                messages.map((m) => {
-                  const id = String(m.seq);
-                  const expanded = isCollapsibleExpanded(collapsible, id);
-                  return (
-                    <MessageScrollerItem key={id} messageId={id}>
-                      <Message align="start">
-                        <MessageContent>
-                          <MessageHeader>#{m.seq}</MessageHeader>
-                          <Collapsible open={expanded}>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-                              onClick={() => toggleMessage(id)}
-                              aria-expanded={expanded}
-                            >
-                              <ChevronRightIcon
-                                data-icon="inline-start"
-                                className={cn("transition-transform", expanded && "rotate-90")}
-                              />
-                              Thinking
-                            </Button>
-                            <CollapsibleContent>
-                              <div className="pt-1.5">
-                                <Bubble variant="outline">
-                                  <BubbleContent className="font-mono whitespace-pre-wrap">
-                                    {m.data}
-                                  </BubbleContent>
-                                </Bubble>
-                              </div>
-                            </CollapsibleContent>
-                          </Collapsible>
-                          <MessageFooter>{formatTime(m.ts)}</MessageFooter>
-                        </MessageContent>
-                      </Message>
-                    </MessageScrollerItem>
-                  );
-                })
+                messages.map((m) =>
+                  m.role === "user" ? renderUserMessage(m) : renderAssistantMessage(m),
+                )
               )}
               {prompts.map((prompt) => (
                 <MessageScrollerItem key={prompt.id} messageId={prompt.id}>
@@ -262,7 +480,7 @@ export function SessionView({ session, onBack }: SessionViewProps) {
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {/* Input bebas (Requirement 7.1) */}
+      {/* Input bebas */}
       <footer className="border-t px-3 py-2">
         <form onSubmit={submitText} className="flex items-center gap-2">
           <Input

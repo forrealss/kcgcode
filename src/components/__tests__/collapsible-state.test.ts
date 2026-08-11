@@ -14,6 +14,8 @@ import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 
 import {
+  extendCollapsed,
+  initialCollapsedState,
   initialCollapsibleState,
   isCollapsibleExpanded,
   toggleCollapsible,
@@ -57,6 +59,32 @@ describe("collapsible-state — Property 25", () => {
     const state = initialCollapsibleState(["a"]);
     expect(isCollapsibleExpanded(state, "a")).toBe(true);
     expect(isCollapsibleExpanded(state, "b")).toBe(true);
+  });
+
+  // Reason: render Thinking sekarang default collapsed (dibatasi tinggi),
+  // dapat di-expand per part — perilaku baru dari sesi headless.
+  test("initialCollapsedState: seluruh reasoning default tertutup", () => {
+    const state = initialCollapsedState(["m1:0", "m1:1"]);
+    expect(isCollapsibleExpanded(state, "m1:0")).toBe(false);
+    expect(isCollapsibleExpanded(state, "m1:1")).toBe(false);
+  });
+
+  test("extendCollapsed: key baru tertutup, key yang sudah ada dipertahankan", () => {
+    let state = initialCollapsedState(["m1:0"]);
+    state = toggleCollapsible(state, "m1:0"); // user expand m1:0
+    expect(isCollapsibleExpanded(state, "m1:0")).toBe(true);
+
+    // Pesan baru datang -> reasoning-nya collapsed; m1:0 tetap expanded.
+    state = extendCollapsed(state, ["m2:0", "m2:1"]);
+    expect(isCollapsibleExpanded(state, "m1:0")).toBe(true);
+    expect(isCollapsibleExpanded(state, "m2:0")).toBe(false);
+    expect(isCollapsibleExpanded(state, "m2:1")).toBe(false);
+    expect(isCollapsibleExpanded(state, "m3:0")).toBe(true); // tak dikenal -> default
+  });
+
+  test("extendCollapsed: daftar kosong tidak mengubah state", () => {
+    const state = initialCollapsedState(["a"]);
+    expect(extendCollapsed(state, [])).toBe(state);
   });
 
   test("urutan toggle sederhana membalik status pesan terkait saja", () => {

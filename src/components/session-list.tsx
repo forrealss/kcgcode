@@ -39,7 +39,8 @@ export interface SessionListProps {
   onBack: () => void;
 }
 
-const AGENT_TYPES: AgentType[] = ["opencode", "claude-code"];
+// v1 headless: hanya opencode (claude-code punya mekanisme headless sendiri).
+const AGENT_TYPES: AgentType[] = ["opencode"];
 
 function statusVariant(status: SessionStatus): "default" | "secondary" | "destructive" {
   if (status === "running") return "default";
@@ -132,7 +133,8 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
             Session Baru
           </CardTitle>
           <CardDescription>
-            Pilih tipe CLI_Agent. Direktori kerja otomatis memakai path Project.
+            Pilih tipe CLI_Agent. Session berjalan di server headless OpenCode dengan direktori
+            kerja path Project.
           </CardDescription>
         </CardHeader>
         <CardContent>

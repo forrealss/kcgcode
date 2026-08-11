@@ -14,7 +14,6 @@
  * Dipisah dari `src/index.ts` (entry) agar dapat diuji (task 20.2) dengan
  * injeksi `config`, `auth`, `store`, dan `spawn` mock — tanpa mengimpor HTML.
  */
-import { randomUUID } from "node:crypto";
 import { type BunRequest, type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
 import {
   type AuthConfig,
@@ -25,10 +24,10 @@ import {
 } from "./auth";
 import { type AppConfig, loadConfig } from "./config";
 import { openSessionStore, type SessionStore } from "./db";
+import { createOpenCodeServerManager, type OpenCodeServerManager } from "./opencode-server";
 import { createProjectManager, type ProjectManager } from "./project-manager";
-import { detectPrompt } from "./prompt-detector";
-import { createSessionManager, type SessionManager, type SpawnPtyFn } from "./session-manager";
-import type { AgentType, InteractivePrompt, OutputChunk } from "./types";
+import { createSessionManager, type SessionManager } from "./session-manager";
+import type { AgentType } from "./types";
 import {
   bunWsSubscriber,
   createWebSocketGateway,
@@ -46,8 +45,8 @@ export interface KcgServerOptions {
   config?: AppConfig;
   auth?: AuthConfig;
   store?: SessionStore;
-  /** Injeksi spawn PTY (untuk pengujian, task 20.2). */
-  spawn?: SpawnPtyFn;
+  /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
+  servers?: OpenCodeServerManager;
   hostname?: string;
   port?: number;
   /** Shell SPA untuk rute tak dikenal (default: 404). */
@@ -147,52 +146,18 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const port = opts.port ?? resolvePort();
 
   const projectManager = createProjectManager(config.sandboxRoot, store);
-
-  // ---- Prompt_Detector pipeline (Requirement 6.1, 6.2) ---------------------
-  // Buffer bergulir per Session; saat pola terdeteksi dan belum ada prompt
-  // pending, simpan ke store lalu kirim ke Client via gateway.
-  const promptBuffers = new Map<string, string>();
-  const PROMPT_BUFFER_MAX = 4000;
-
-  function runPromptDetection(chunk: OutputChunk): void {
-    const prev = promptBuffers.get(chunk.sessionId) ?? "";
-    const buffer = (prev + chunk.data).slice(-PROMPT_BUFFER_MAX);
-    promptBuffers.set(chunk.sessionId, buffer);
-
-    const draft = detectPrompt(buffer);
-    if (!draft) return;
-    if (store.listPendingPrompts(chunk.sessionId).length > 0) return;
-
-    const prompt: InteractivePrompt = {
-      id: randomUUID(),
-      sessionId: chunk.sessionId,
-      type: draft.type,
-      options: draft.options,
-      status: "pending",
-      createdAt: Date.now(),
-      resolvedAt: null,
-    };
-    const inserted = store.insertPrompt(prompt);
-    if (inserted.ok) {
-      // Reset buffer agar pola yang sama tidak memicu prompt ganda (Req 6.2).
-      promptBuffers.set(chunk.sessionId, "");
-      gateway.notifyPrompt(chunk.sessionId, prompt);
-    }
-  }
+  const servers = opts.servers ?? createOpenCodeServerManager();
 
   let gateway: WebSocketGateway;
   const sessionManager = createSessionManager({
     store,
-    ...(opts.spawn ? { spawn: opts.spawn } : {}),
-    onOutput: (chunk) => {
-      gateway.broadcast(chunk.sessionId, chunk);
-      runPromptDetection(chunk);
-    },
-    onStatusChange: (sessionId, status) => {
-      // Buffer prompt hanya relevan saat Session berjalan; bersihkan saat berhenti.
-      if (status !== "running") promptBuffers.delete(sessionId);
-      gateway.notifySessionStatus(sessionId, status);
-    },
+    servers,
+    onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
+    onMessagePart: (sessionId, messageId, part) =>
+      gateway.notifyMessagePart(sessionId, messageId, part),
+    onPrompt: (prompt) => gateway.notifyPrompt(prompt.sessionId, prompt),
+    onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
+    onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
   });
   gateway = createWebSocketGateway({ store, sessionManager });
 
@@ -284,7 +249,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
               agentType?: unknown;
               projectId?: unknown;
             };
-            const res = sessionManager.createSession({
+            const res = await sessionManager.createSession({
               agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
               projectId: typeof projectId === "string" ? projectId : "",
             });
@@ -350,6 +315,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   });
 
   async function close(): Promise<void> {
+    // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
     await sessionManager.shutdown();
     await server.stop(true);
     store.close();

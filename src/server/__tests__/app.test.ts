@@ -1,13 +1,13 @@
 /**
  * Integration test end-to-end alur utama (task 20.2) + wiring otentikasi.
  *
- * Skenario dengan `PtyHandle` mock:
+ * Skenario dengan `OpenCodeServerManager` + `OpenCodeClient` mock:
  * buat Project (POST /api/projects) -> buat Session (POST /api/sessions)
- * -> `attach` via WebSocket -> terima `output` -> respon Interactive_Prompt
- * -> `stopSession` (DELETE /api/sessions/:id).
+ * -> `attach` via WebSocket -> kirim `input` -> terima pesan terstruktur
+ * -> event `permission.asked` -> respon prompt -> `stop`.
  *
  * Server nyata (`Bun.serve` via `createKcgServer`) + WebSocket client nyata;
- * hanya `PtyHandle` yang di-mock sesuai batasan mocking `design.md`.
+ * hanya komponen opencode headless yang di-mock.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -15,51 +15,127 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createKcgServer, type KcgServer } from "../app";
 import { openSessionStore, type SessionStore } from "../db";
-import type { PtyHandle } from "../pty-process";
+import type { OpenCodeClient, OpenCodeEvent } from "../opencode-client";
+import type { OpenCodeServerManager } from "../opencode-server";
 import type { Project, Session } from "../types";
 import type { ServerMessage } from "../ws-protocol";
 
 // ---------------------------------------------------------------------------
-// Mock PtyHandle
+// Mock OpenCodeClient + OpenCodeServerManager
 // ---------------------------------------------------------------------------
 
-interface PtyMock extends PtyHandle {
-  writes: string[];
-  kills: string[];
-  emitData(chunk: string): void;
-  emitExit(code: number | null): void;
+interface FakeClient extends OpenCodeClient {
+  emit(ev: OpenCodeEvent): void;
+  sendMessageCalls: string[];
+  replyPermissionCalls: [string, string][];
+  abortCalls: string[];
 }
 
-function makePtyMock(sessionId: string): PtyMock {
-  const writes: string[] = [];
-  const kills: string[] = [];
-  let dataCb: ((chunk: string) => void) | null = null;
-  let exitCb: ((code: number | null, expected: boolean) => void) | null = null;
-  let killRequested = false;
+function makeFakeClient(projectId: string): FakeClient {
+  let eventCb: ((ev: OpenCodeEvent) => void) | null = null;
+  const client: FakeClient = {
+    sendMessageCalls: [],
+    replyPermissionCalls: [],
+    abortCalls: [],
+    async createSession() {
+      return { ok: true, data: { id: `ses_${projectId}`, directory: "/proj" } };
+    },
+    async sendMessage(_sessionId, text) {
+      client.sendMessageCalls.push(text);
+      return {
+        ok: true,
+        data: {
+          info: { id: `msg_${projectId}`, role: "assistant" },
+          parts: [{ type: "text", text: `balasan: ${text}` }],
+        },
+      };
+    },
+    /**
+     * Meniru server sungguhan: prompt diterima (204), balasan mengalir lewat
+     * SSE, lalu `session.idle` menutup turn.
+     */
+    async promptAsync(sessionId, text) {
+      client.sendMessageCalls.push(text);
+      const messageID = `msg_${projectId}`;
+      queueMicrotask(() => {
+        client.emit({
+          type: "message.updated",
+          sessionID: sessionId,
+          info: { id: messageID, role: "assistant" },
+        });
+        client.emit({
+          type: "message.part.updated",
+          sessionID: sessionId,
+          part: { type: "text", id: "prt_1", text: `balasan: ${text}`, messageID },
+        });
+        client.emit({ type: "session.idle", sessionID: sessionId });
+      });
+      return { ok: true, data: null };
+    },
+    async replyPermission(requestId, reply) {
+      client.replyPermissionCalls.push([requestId, reply]);
+      return { ok: true, data: null };
+    },
+    async replyQuestion() {
+      return { ok: true, data: null };
+    },
+    async rejectQuestion() {
+      return { ok: true, data: null };
+    },
+    async abortSession(sessionId) {
+      client.abortCalls.push(sessionId);
+      return { ok: true, data: null };
+    },
+    subscribeEvents(cb) {
+      eventCb = cb;
+      return () => {
+        eventCb = null;
+      };
+    },
+    async health() {
+      return true;
+    },
+    emit(ev: OpenCodeEvent) {
+      eventCb?.(ev);
+    },
+  };
+  return client;
+}
 
+interface FakeServers {
+  manager: OpenCodeServerManager;
+  clients: Map<string, FakeClient>;
+  stopped: string[];
+}
+
+function makeFakeServers(): FakeServers {
+  const clients = new Map<string, FakeClient>();
+  const stopped: string[] = [];
   return {
-    sessionId,
-    writes,
-    kills,
-    write(data: string) {
-      writes.push(data);
-    },
-    resize() {},
-    kill(signal: "SIGTERM" | "SIGKILL" = "SIGTERM") {
-      kills.push(signal);
-      killRequested = true;
-    },
-    onData(cb) {
-      dataCb = cb;
-    },
-    onExit(cb) {
-      exitCb = cb;
-    },
-    emitData(chunk: string) {
-      dataCb?.(chunk);
-    },
-    emitExit(code: number | null) {
-      exitCb?.(code, killRequested);
+    stopped,
+    clients,
+    manager: {
+      async ensureServer(projectId) {
+        let client = clients.get(projectId);
+        if (!client) {
+          client = makeFakeClient(projectId);
+          clients.set(projectId, client);
+        }
+        return { ok: true, data: { projectId, baseUrl: "http://x", client } };
+      },
+      getServer(projectId) {
+        const client = clients.get(projectId);
+        return client ? { projectId, baseUrl: "http://x", client } : undefined;
+      },
+      async stopServer(projectId) {
+        stopped.push(projectId);
+        clients.delete(projectId);
+      },
+      async stopAll() {
+        for (const id of [...clients.keys()]) stopped.push(id);
+        clients.clear();
+      },
+      onServerExit() {},
     },
   };
 }
@@ -72,27 +148,23 @@ async function waitFor(pred: () => boolean, timeoutMs = 3000, label = "kondisi")
   }
 }
 
-describe("createKcgServer — alur utama e2e", () => {
+describe("createKcgServer — alur utama e2e (headless)", () => {
   let store: SessionStore;
   let app: KcgServer;
   let root: string;
-  let handles: Map<string, PtyMock>;
+  let servers: FakeServers;
 
   beforeAll(() => {
     store = openSessionStore(":memory:");
-    root = mkdtempSync(path.join(tmpdir(), "kcg-e2e-"));
+    root = mkdtempSync(path.join(tmpdir(), "kcg-e2e2-"));
     mkdirSync(path.join(root, "proj"), { recursive: true });
-    handles = new Map<string, PtyMock>();
+    servers = makeFakeServers();
     app = createKcgServer({
       config: { sandboxRoot: root, configPath: "test" },
       auth: { hostname: "127.0.0.1", authEnabled: false, authToken: "" },
       store,
+      servers: servers.manager,
       port: 0,
-      spawn: (_cmd, _cwd, sessionId) => {
-        const h = makePtyMock(sessionId);
-        handles.set(sessionId, h);
-        return h;
-      },
     });
   });
 
@@ -105,7 +177,7 @@ describe("createKcgServer — alur utama e2e", () => {
     return `http://127.0.0.1:${app.server.port}`;
   }
 
-  test("20.2: project -> session -> attach -> output -> prompt -> stop", async () => {
+  test("20.2: project -> session -> attach -> input -> pesan terstruktur -> prompt -> stop", async () => {
     // ---- buat Project (Requirement 10.4) ----
     const projRes = await fetch(`${baseUrl()}/api/projects`, {
       method: "POST",
@@ -132,10 +204,11 @@ describe("createKcgServer — alur utama e2e", () => {
     const sessBody = (await sessRes.json()) as { session: Session };
     const sessionId = sessBody.session.id;
     expect(sessBody.session.status).toBe("running");
+    expect(sessBody.session.ocSessionId).toBe(`ses_${projBody.project.id}`);
 
-    const handle = handles.get(sessionId);
-    expect(handle).toBeDefined();
-    if (!handle) return;
+    const client = servers.clients.get(projBody.project.id);
+    expect(client).toBeDefined();
+    if (!client) return;
 
     // ---- attach via WebSocket (Requirement 4.1) ----
     const msgs: ServerMessage[] = [];
@@ -147,52 +220,67 @@ describe("createKcgServer — alur utama e2e", () => {
     ws.send(JSON.stringify({ type: "attach", sessionId }));
 
     await waitFor(() => msgs.some((m) => m.type === "history"), 3000, "pesan history");
-    expect(msgs.some((m) => m.type === "history")).toBe(true);
+    const hist = msgs.find((m): m is Extract<ServerMessage, { type: "history" }> => {
+      return m.type === "history";
+    });
+    expect(hist?.messages ?? []).toHaveLength(0);
 
-    // ---- terima Output_Stream real-time (Requirement 5.1) ----
-    handle.emitData("Hello dari agent");
+    // ---- kirim input -> echo user + balasan assistant (Requirement 7.1) ----
+    ws.send(JSON.stringify({ type: "input", sessionId, text: "hello" }));
     await waitFor(
-      () => msgs.some((m) => m.type === "output" && m.data === "Hello dari agent"),
+      () => msgs.filter((m) => m.type === "message" && m.message.role === "user").length === 1,
       3000,
-      "pesan output",
+      "echo pesan user",
     );
-    const output = msgs.find((m) => m.type === "output" && m.data === "Hello dari agent");
-    expect(output).toBeDefined();
-    if (output?.type === "output") expect(output.seq).toBeGreaterThan(0);
+    await waitFor(
+      () => msgs.filter((m) => m.type === "message" && m.message.role === "assistant").length === 1,
+      3000,
+      "balasan assistant",
+    );
+    const reply = msgs.find(
+      (m): m is Extract<ServerMessage, { type: "message" }> =>
+        m.type === "message" && m.message.role === "assistant",
+    );
+    // Parts dirakit dari SSE, jadi membawa metadata part (id, messageID).
+    expect(reply?.message.parts).toHaveLength(1);
+    expect(reply?.message.parts[0]).toMatchObject({ type: "text", text: "balasan: hello" });
 
-    // ---- Interactive_Prompt terdeteksi (Requirement 6.1) ----
-    handle.emitData("Allow this command? (y/n)");
+    // ---- Interactive_Prompt dari event SSE terstruktur (Requirement 6) ----
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_1",
+      sessionID: `ses_${projBody.project.id}`,
+      permission: "bash:ls",
+    });
     await waitFor(() => msgs.some((m) => m.type === "prompt"), 3000, "pesan prompt");
     const promptMsg = msgs.find((m): m is Extract<ServerMessage, { type: "prompt" }> => {
       return m.type === "prompt";
     });
-    expect(promptMsg).toBeDefined();
-    const promptId = promptMsg?.prompt.id ?? "";
+    expect(promptMsg?.prompt.kind).toBe("permission");
     expect(promptMsg?.prompt.type).toBe("confirmation");
-    expect(promptMsg?.prompt.status).toBe("pending");
 
-    // ---- respon Interactive_Prompt (Requirement 6.3, 6.4) ----
-    ws.send(JSON.stringify({ type: "prompt_response", sessionId, promptId, response: "approve" }));
-    await waitFor(
-      () => msgs.some((m) => m.type === "prompt_resolved" && m.promptId === promptId),
-      3000,
-      "pesan prompt_resolved",
+    // ---- respon prompt -> replyPermission (Requirement 6.3) ----
+    ws.send(
+      JSON.stringify({
+        type: "prompt_response",
+        sessionId,
+        promptId: promptMsg?.prompt.id ?? "",
+        response: "approve",
+      }),
     );
-    expect(handle.writes).toContain("y\n");
+    await waitFor(() => msgs.some((m) => m.type === "prompt_resolved"), 3000, "prompt_resolved");
+    expect(client.replyPermissionCalls).toContainEqual(["per_1", "once"]);
 
     // ---- stopSession (Requirement 1.6) ----
     const delRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
     expect(delRes.status).toBe(200);
-    expect(handle.kills).toContain("SIGTERM");
-
-    handle.emitExit(0);
+    expect(client.abortCalls).toContain(`ses_${projBody.project.id}`);
     await waitFor(
       () => msgs.some((m) => m.type === "session_status" && m.status === "stopped"),
       3000,
-      "notifikasi session_status stopped",
+      "session_status stopped",
     );
 
-    // Status tersimpan: stopped (Requirement 1.6)
     const listRes = await fetch(`${baseUrl()}/api/sessions`);
     const listBody = (await listRes.json()) as { sessions: Session[] };
     const listed = listBody.sessions.find((s) => s.id === sessionId);
@@ -209,6 +297,32 @@ describe("createKcgServer — alur utama e2e", () => {
 
     const sessRes = await fetch(`${baseUrl()}/api/sessions`);
     expect(sessRes.status).toBe(200);
+  });
+
+  test("agentType claude-code ditolak (v1 headless hanya opencode)", async () => {
+    const projRes = await fetch(`${baseUrl()}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "demo2", path: "proj" }),
+    });
+    expect(projRes.status).toBe(409); // path sudah dipakai
+    // Buat path baru untuk project lain.
+    mkdirSync(path.join(root, "proj2"), { recursive: true });
+    const proj2 = await fetch(`${baseUrl()}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "demo2b", path: "proj2" }),
+    });
+    expect(proj2.status).toBe(201);
+    const body2 = (await proj2.json()) as { project: Project };
+
+    const sessRes = await fetch(`${baseUrl()}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentType: "claude-code", projectId: body2.project.id }),
+    });
+    expect(sessRes.status).toBe(400);
+    expect(((await sessRes.json()) as { error: string }).error).toBe("UNSUPPORTED_AGENT_TYPE");
   });
 
   test("body JSON tidak valid -> 400 INVALID_JSON", async () => {
@@ -228,70 +342,6 @@ describe("createKcgServer — alur utama e2e", () => {
     expect(sessRes.status).toBe(400);
     expect(((await sessRes.json()) as { error: string }).error).toBe("INVALID_JSON");
   });
-
-  test("6.2: deteksi prompt tidak ganda setelah resolusi (reset buffer)", async () => {
-    const projDir = path.join(root, "proj2");
-    mkdirSync(projDir, { recursive: true });
-    const projRes = await fetch(`${baseUrl()}/api/projects`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "prompt-dedup", path: "proj2" }),
-    });
-    expect(projRes.status).toBe(201);
-    const projBody = (await projRes.json()) as { project: Project };
-
-    const sessRes = await fetch(`${baseUrl()}/api/sessions`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agentType: "opencode", projectId: projBody.project.id }),
-    });
-    expect(sessRes.status).toBe(201);
-    const sessBody = (await sessRes.json()) as { session: Session };
-    const sessionId = sessBody.session.id;
-
-    const handle = handles.get(sessionId);
-    expect(handle).toBeDefined();
-    if (!handle) return;
-
-    const msgs: ServerMessage[] = [];
-    const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
-    ws.onmessage = (event) => {
-      msgs.push(JSON.parse(String(event.data)) as ServerMessage);
-    };
-    await waitFor(() => ws.readyState === WebSocket.OPEN, 3000, "koneksi WS terbuka");
-    ws.send(JSON.stringify({ type: "attach", sessionId }));
-    await waitFor(() => msgs.some((m) => m.type === "history"), 3000, "pesan history");
-
-    // Prompt pertama terdeteksi.
-    handle.emitData("Allow this command? (y/n)");
-    await waitFor(
-      () => msgs.filter((m) => m.type === "prompt").length === 1,
-      3000,
-      "prompt pertama",
-    );
-    const first = msgs.find(
-      (m): m is Extract<ServerMessage, { type: "prompt" }> => m.type === "prompt",
-    );
-    const promptId = first?.prompt.id ?? "";
-    expect(promptId).not.toBe("");
-
-    ws.send(JSON.stringify({ type: "prompt_response", sessionId, promptId, response: "approve" }));
-    await waitFor(
-      () => msgs.some((m) => m.type === "prompt_resolved" && m.promptId === promptId),
-      3000,
-      "prompt_resolved",
-    );
-
-    // Output berikutnya TANPA pola prompt tidak boleh memicu prompt baru
-    // (buffer sudah direset setelah deteksi).
-    handle.emitData("proceeding with build");
-    await Bun.sleep(150);
-    expect(msgs.filter((m) => m.type === "prompt")).toHaveLength(1);
-
-    const delRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
-    expect(delRes.status).toBe(200);
-    ws.close();
-  });
 });
 
 describe("createKcgServer — wiring otentikasi (Req 9.2, 9.3)", () => {
@@ -299,13 +349,13 @@ describe("createKcgServer — wiring otentikasi (Req 9.2, 9.3)", () => {
   let root: string;
 
   beforeAll(() => {
-    root = mkdtempSync(path.join(tmpdir(), "kcg-auth-"));
+    root = mkdtempSync(path.join(tmpdir(), "kcg-auth2-"));
     app = createKcgServer({
       config: { sandboxRoot: root, configPath: "test" },
       auth: { hostname: "127.0.0.1", authEnabled: true, authToken: "secret" },
       store: openSessionStore(":memory:"),
+      servers: makeFakeServers().manager,
       port: 0,
-      spawn: (_cmd, _cwd, sessionId) => makePtyMock(sessionId),
     });
   });
 
