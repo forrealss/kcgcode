@@ -117,4 +117,29 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  /* Scrollbar bertema: tipis dengan track transparan agar menyatu dengan UI.
+     Chrome 121+, Safari 18.2+, dan Firefox memakai properti standar; blok
+     ::-webkit-scrollbar di bawah hanya berlaku sebagai fallback browser lama
+     (diabaikan otomatis saat scrollbar-width/color standar aktif). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-border) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track,
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  /* Thumb "mengambang" (border transparan + background-clip) agar ujung
+     thumb tidak menempel/menembus sudut rounded card. */
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--color-border);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
 }

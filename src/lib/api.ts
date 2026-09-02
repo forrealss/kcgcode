@@ -36,6 +36,21 @@ export class ApiError extends Error {
 
 /** Pemetaan kode error domain -> pesan ramah pengguna (design.md — Error Handling). */
 export function apiErrorMessage(code: string): string {
+  // Kode dari server headless opencode membawa detail status, mis.
+  // "OC_LIST_MODELS_FAILED(500)" -> cocokkan berdasarkan prefiks.
+  if (code.startsWith("OC_LIST_MODELS_FAILED")) {
+    return "Gagal memuat daftar model dari server opencode.";
+  }
+  if (code.startsWith("OC_CREATE_SESSION_FAILED")) {
+    return "Gagal membuat session di server opencode.";
+  }
+  if (code.startsWith("OC_DELETE_SESSION_FAILED")) {
+    return "Gagal menghapus session di server opencode.";
+  }
+  if (code.startsWith("SERVER_START_FAILED")) {
+    return "Gagal menjalankan server opencode untuk Project ini.";
+  }
+
   switch (code) {
     case "NAME_REQUIRED":
       return "Nama Project wajib diisi.";
@@ -57,6 +72,10 @@ export function apiErrorMessage(code: string): string {
       return "Session tidak ditemukan.";
     case "SESSION_NOT_RUNNING":
       return "Session tidak sedang berjalan.";
+    case "SESSION_ALREADY_RUNNING":
+      return "Session sudah berjalan.";
+    case "MODEL_NOT_FOUND":
+      return "Model tidak tersedia pada server opencode Project ini.";
     case "INVALID_JSON":
       return "Format JSON permintaan tidak valid.";
     case "AUTH_FAILED":

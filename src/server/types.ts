@@ -28,6 +28,15 @@ export interface Project {
   createdAt: number;
 }
 
+/**
+ * Model LLM pilihan untuk Session (dipakai saat mengirim prompt).
+ * `null` = biarkan opencode memakai model default-nya.
+ */
+export interface SessionModel {
+  providerID: string;
+  modelID: string;
+}
+
 export interface Session {
   id: string;
   projectId: string;
@@ -36,6 +45,8 @@ export interface Session {
   status: SessionStatus;
   /** Id Session di server headless opencode (`ses_...`); null sebelum dibuat. */
   ocSessionId: string | null;
+  /** Model LLM pilihan; null = model default opencode. */
+  model: SessionModel | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -82,6 +93,9 @@ export interface InteractivePrompt {
 }
 
 export type PromptResponse = "approve" | "deny" | "cancel" | { option: string };
+
+/** Hasil operasi tanpa payload (ok / gagal dengan kode error). */
+export type SimpleResult = { ok: boolean; error?: string };
 
 /** Satu entri riwayat status (append-only). */
 export interface StatusHistoryEntry {

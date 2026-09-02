@@ -4,10 +4,11 @@
  * Yang diuji (tanpa jaringan/proses sungguhan):
  * - `parseSseFrame` / `normalizeEvent`: parsing & normalisasi event SSE.
  * - `parseListeningPort`: ekstraksi port dari baris log server.
+ * - `flattenProviders`: respons GET /config/providers -> daftar model UI.
  */
 import { expect, test } from "bun:test";
 import fc from "fast-check";
-import { normalizeEvent, parseSseFrame } from "../opencode-client";
+import { flattenProviders, normalizeEvent, parseSseFrame } from "../opencode-client";
 import { parseListeningPort } from "../opencode-server";
 
 test("parseSseFrame: mengambil baris data; frame tanpa data -> null", () => {
@@ -55,4 +56,69 @@ test("parseListeningPort: properti — port valid apa pun selalu diekstrak", () 
     }),
     { numRuns: 50 },
   );
+});
+
+// ---------------------------------------------------------------------------
+// flattenProviders (GET /config/providers -> daftar model untuk UI)
+// ---------------------------------------------------------------------------
+
+test("flattenProviders: flatten provider + model dengan nama tampilan", () => {
+  const payload = {
+    providers: [
+      {
+        id: "kcgrouter",
+        name: "kcgrouter",
+        models: {
+          "kiro/claude-opus-5": { id: "kiro/claude-opus-5", name: "Claude Opus 5" },
+          "mimo/mimo-v2.5": { id: "mimo/mimo-v2.5" }, // tanpa name -> fallback id
+        },
+      },
+    ],
+  };
+  expect(flattenProviders(payload)).toEqual([
+    {
+      providerID: "kcgrouter",
+      providerName: "kcgrouter",
+      modelID: "kiro/claude-opus-5",
+      name: "Claude Opus 5",
+    },
+    {
+      providerID: "kcgrouter",
+      providerName: "kcgrouter",
+      modelID: "mimo/mimo-v2.5",
+      name: "mimo/mimo-v2.5",
+    },
+  ]);
+});
+
+test("flattenProviders: model deprecated disaring", () => {
+  const payload = {
+    providers: [
+      {
+        id: "p",
+        name: "P",
+        models: {
+          lama: { id: "lama", status: "deprecated" },
+          baru: { id: "baru", status: "active" },
+        },
+      },
+    ],
+  };
+  const out = flattenProviders(payload);
+  expect(out.map((m) => m.modelID)).toEqual(["baru"]);
+});
+
+test("flattenProviders: payload tidak valid / kosong -> []", () => {
+  expect(flattenProviders(null)).toEqual([]);
+  expect(flattenProviders({})).toEqual([]);
+  expect(flattenProviders({ providers: "bukan array" })).toEqual([]);
+  // provider tanpa id / tanpa models diabaikan
+  expect(flattenProviders({ providers: [{ name: "tanpa-id" }, { id: "kosong" }] })).toEqual([]);
+});
+
+test("flattenProviders: provider name kosong fallback ke id", () => {
+  const out = flattenProviders({
+    providers: [{ id: "opencode", name: "", models: { m1: { id: "m1", name: "M1" } } }],
+  });
+  expect(out[0]).toMatchObject({ providerID: "opencode", providerName: "opencode" });
 });

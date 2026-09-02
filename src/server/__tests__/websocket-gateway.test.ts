@@ -98,7 +98,6 @@ interface FakeSessionManager extends SessionManager {
   resolveResult: { ok: boolean; error?: string };
   stopResult: { ok: boolean; error?: string };
 }
-
 function makeFakeSessionManager(): FakeSessionManager {
   const sm: FakeSessionManager = {
     inputs: [],
@@ -115,6 +114,21 @@ function makeFakeSessionManager(): FakeSessionManager {
     stopSession(sessionId) {
       sm.stops.push(sessionId);
       return sm.stopResult;
+    },
+    async resumeSession() {
+      return { ok: false, error: "not-used" };
+    },
+    async deleteSession() {
+      return { ok: false, error: "not-used" };
+    },
+    async findFiles() {
+      return { ok: false, error: "not-used" };
+    },
+    async listModels() {
+      return { ok: false, error: "not-used" };
+    },
+    setSessionModel() {
+      return { ok: false, error: "not-used" };
     },
     async sendFreeTextInput(sessionId, text) {
       sm.inputs.push([sessionId, text]);
@@ -154,6 +168,7 @@ function freshHarness(): Harness {
     cwd,
     status: "running",
     ocSessionId: "ses_1",
+    model: null,
     createdAt: 0,
     updatedAt: 0,
   });
@@ -317,14 +332,15 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
       cwd: "/x",
       status: "running",
       ocSessionId: "ses_2",
+      model: null,
       createdAt: 0,
       updatedAt: 0,
     });
 
-    const subs = [makeSub("c1"), makeSub("c2"), makeSub("other")];
-    h.gw.attach(subs[0]!, "s1");
-    h.gw.attach(subs[1]!, "s1");
-    h.gw.attach(subs[2]!, "s2");
+    const subs = [makeSub("c1"), makeSub("c2"), makeSub("other")] as const;
+    h.gw.attach(subs[0], "s1");
+    h.gw.attach(subs[1], "s1");
+    h.gw.attach(subs[2], "s2");
 
     h.gw.notifyMessage("s1", makeMessage("s1", "m1", "assistant"));
     h.gw.notifyMessagePart("s1", "m1", { type: "text", id: "prt_1", text: "stream" });
@@ -333,7 +349,7 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
     h.gw.notifyPromptResolved("s1", "pr1");
     h.gw.notifyError("s1", "AGENT_ERROR", "gagal");
 
-    for (const s of [subs[0]!, subs[1]!]) {
+    for (const s of [subs[0], subs[1]]) {
       expect(s.sent.filter((m) => m.type === "message")).toHaveLength(1);
       expect(s.sent.filter((m) => m.type === "message_part")).toHaveLength(1);
       const part = s.sent.find((m): m is Extract<ServerMessage, { type: "message_part" }> => {
@@ -349,9 +365,7 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
       expect(s.sent.filter((m) => m.type === "error")).toHaveLength(1);
     }
     // Subscriber Session lain tidak menerima apa pun.
-    expect(subs[2]!.sent.filter((m) => m.type === "message" || m.type === "prompt")).toHaveLength(
-      0,
-    );
+    expect(subs[2].sent.filter((m) => m.type === "message" || m.type === "prompt")).toHaveLength(0);
   } finally {
     h.close();
   }

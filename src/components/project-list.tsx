@@ -8,13 +8,14 @@
  *   lewat Alert (10.5, 10.6, 10.7).
  */
 
-import { FolderPlusIcon, RefreshCwIcon } from "lucide-react";
+import { FolderPlusIcon, RefreshCwIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -41,6 +42,8 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
   const [path, setPath] = useState("");
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /** Form pembuatan disembunyikan secara default — dibuka lewat tombol. */
+  const [formOpen, setFormOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -68,6 +71,7 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
       await apiFetch("/api/projects", { method: "POST", body: JSON.stringify({ name, path }) });
       setName("");
       setPath("");
+      setFormOpen(false);
       await refresh();
     } catch (e) {
       setFormError(e instanceof ApiError ? e.message : "Gagal membuat Project");
@@ -76,72 +80,39 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
     }
   };
 
+  const openForm = () => {
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const closeForm = () => {
+    setFormOpen(false);
+    setFormError(null);
+    setName("");
+    setPath("");
+  };
+
   return (
     <div className="flex flex-col gap-6">
-      {/* Form pembuatan Project */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <FolderPlusIcon className="size-4" data-icon="inline-start" />
-            Project Baru
-          </CardTitle>
-          <CardDescription>
-            Pilih direktori kerja di dalam Sandbox_Root, lalu beri nama Project.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={create} className="flex flex-col gap-4">
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="project-name">Nama Project</FieldLabel>
-                <Input
-                  id="project-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="mis. web-app"
-                  maxLength={120}
-                />
-              </Field>
-              <Field>
-                <FieldLabel>Direktori Kerja</FieldLabel>
-                <FolderBrowser selectedPath={path} onPick={setPath} />
-              </Field>
-            </FieldGroup>
-            <div className="flex justify-end">
-              <Button type="submit" disabled={creating || name.trim() === ""}>
-                {creating ? (
-                  <>
-                    <Spinner data-icon="inline-start" />
-                    Membuat…
-                  </>
-                ) : (
-                  "Buat Project"
-                )}
-              </Button>
-            </div>
-          </form>
-          {formError && (
-            <Alert variant="destructive" className="mt-4">
-              <AlertTitle>Gagal membuat Project</AlertTitle>
-              <AlertDescription>{formError}</AlertDescription>
-            </Alert>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Daftar Project */}
+      {/* Daftar Project — selalu tampil di halaman `/` */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-medium text-muted-foreground">Project ({projects.length})</h2>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={refresh}
-            aria-label="Muat ulang"
-          >
-            <RefreshCwIcon data-icon="inline-start" />
-          </Button>
+          <div className="flex shrink-0 items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={refresh}
+              aria-label="Muat ulang"
+            >
+              <RefreshCwIcon data-icon="inline-start" />
+            </Button>
+            <Button type="button" size="sm" onClick={openForm}>
+              <FolderPlusIcon data-icon="inline-start" />
+              Project Baru
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -161,7 +132,16 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
                 <FolderPlusIcon />
               </EmptyMedia>
               <EmptyTitle>Belum ada Project</EmptyTitle>
-              <EmptyDescription>Buat Project pertama dengan mengisi form di atas.</EmptyDescription>
+              <EmptyDescription>
+                Tambahkan Project untuk mulai menjalankan CLI_Agent — atau gunakan tombol "Project
+                Baru" di atas.
+              </EmptyDescription>
+              <EmptyContent>
+                <Button type="button" size="sm" onClick={openForm}>
+                  <FolderPlusIcon data-icon="inline-start" />
+                  Project Baru
+                </Button>
+              </EmptyContent>
             </EmptyHeader>
           </Empty>
         ) : (
@@ -184,6 +164,64 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
           </div>
         )}
       </div>
+
+      {/* Form pembuatan Project — muncul saat tombol "Project Baru" ditekan */}
+      {formOpen && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FolderPlusIcon className="size-4" data-icon="inline-start" />
+              Project Baru
+            </CardTitle>
+            <CardDescription>
+              Pilih direktori kerja di dalam Sandbox_Root, lalu beri nama Project.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={create} className="flex flex-col gap-4">
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="project-name">Nama Project</FieldLabel>
+                  <Input
+                    id="project-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="mis. web-app"
+                    maxLength={120}
+                    autoFocus
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Direktori Kerja</FieldLabel>
+                  <FolderBrowser selectedPath={path} onPick={setPath} />
+                </Field>
+              </FieldGroup>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={closeForm} disabled={creating}>
+                  <XIcon data-icon="inline-start" />
+                  Batal
+                </Button>
+                <Button type="submit" disabled={creating || name.trim() === ""}>
+                  {creating ? (
+                    <>
+                      <Spinner data-icon="inline-start" />
+                      Membuat…
+                    </>
+                  ) : (
+                    "Buat Project"
+                  )}
+                </Button>
+              </div>
+            </form>
+            {formError && (
+              <Alert variant="destructive" className="mt-4">
+                <AlertTitle>Gagal membuat Project</AlertTitle>
+                <AlertDescription>{formError}</AlertDescription>
+              </Alert>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

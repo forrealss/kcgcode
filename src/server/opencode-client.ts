@@ -16,11 +16,56 @@
  * `{ type, id, ...properties }` agar konsumen mudah membaca `requestID`,
  * `sessionID`, `permission`, `questions`, dst.
  */
-import type { MessagePart, Result } from "./types";
+import type { MessagePart, Result, SessionModel, SimpleResult } from "./types";
 
 export interface OpenCodeSessionInfo {
   id: string;
   directory?: string;
+}
+
+/** Satu model yang tersedia pada sebuah provider (hasil GET /config/providers). */
+export interface ModelOption {
+  providerID: string;
+  providerName: string;
+  modelID: string;
+  /** Nama tampilan (fallback: modelID). */
+  name: string;
+}
+
+/**
+ * Flatten respons `GET /config/providers` menjadi satu entri per model.
+ * Bentuk sumber: `{ providers: [{ id, name, models: { [modelID]: {...} } }] }`.
+ * Model berstatus `deprecated` disaring; provider tanpa model diabaikan.
+ * Diekspor agar dapat diuji tanpa server.
+ */
+export function flattenProviders(payload: unknown): ModelOption[] {
+  const providers = (payload as { providers?: unknown } | null)?.providers;
+  if (!Array.isArray(providers)) return [];
+  const out: ModelOption[] = [];
+  for (const p of providers) {
+    if (typeof p !== "object" || p === null) continue;
+    const prov = p as { id?: unknown; name?: unknown; models?: unknown };
+    if (typeof prov.id !== "string" || prov.id === "") continue;
+    const providerName = typeof prov.name === "string" && prov.name !== "" ? prov.name : prov.id;
+    const models =
+      typeof prov.models === "object" && prov.models !== null
+        ? (prov.models as Record<string, unknown>)
+        : {};
+    for (const [modelID, raw] of Object.entries(models)) {
+      const m = (typeof raw === "object" && raw !== null ? raw : {}) as {
+        name?: unknown;
+        status?: unknown;
+      };
+      if (m.status === "deprecated") continue;
+      out.push({
+        providerID: prov.id,
+        providerName,
+        modelID,
+        name: typeof m.name === "string" && m.name !== "" ? m.name : modelID,
+      });
+    }
+  }
+  return out;
 }
 
 export interface OpenCodeMessageResult {
@@ -39,6 +84,21 @@ export interface OpenCodeEvent {
 
 export interface OpenCodeClient {
   createSession(opts?: { title?: string }): Promise<Result<OpenCodeSessionInfo>>;
+  /**
+   * Cek keberadaan Session di server headless (`GET /session/{id}`):
+   * `{ ok: true }` bila Session masih dikenal server, `{ ok: false }`
+   * bila tidak ada / server gagal merespons.
+   */
+  getSession(sessionId: string): Promise<SimpleResult>;
+  /** Daftar model yang tersedia pada server (`GET /config/providers`),
+   * sudah di-flatten menjadi satu entri per model.
+   */
+  listModels(): Promise<Result<ModelOption[]>>;
+  /**
+   * Hapus Session di server headless (`DELETE /session/{id}`) beserta
+   * seluruh riwayat pesannya di sisi opencode.
+   */
+  deleteSession(sessionId: string): Promise<SimpleResult>;
   sendMessage(
     sessionId: string,
     text: string,
@@ -46,10 +106,22 @@ export interface OpenCodeClient {
   ): Promise<Result<OpenCodeMessageResult>>;
   /**
    * Kirim prompt tanpa menunggu balasan (`POST /session/{id}/prompt_async`,
-   * 204). Hasil turn diterima lewat SSE, jadi tidak ada koneksi HTTP berumur
-   * panjang yang bisa putus di tengah turn.
+   * 204). `model` disertakan dalam body agar Session memakai model pilihan
+   * user, bukan model default opencode.
    */
-  promptAsync(sessionId: string, text: string): Promise<Result<null>>;
+  /**
+   * Kirim prompt tanpa menunggu balasan (`POST /session/{id}/prompt_async`,
+   * 204). `files` berupa file URL absolut (`file:///abs/path`) — opencode
+   * mem-parse `url` part file dengan `URL()` dan membaca isinya sendiri.
+   */
+  promptAsync(
+    sessionId: string,
+    text: string,
+    model?: SessionModel | null,
+    files?: string[],
+  ): Promise<Result<null>>;
+  /** Cari file project untuk autocomplete `@file` (path relatif). */
+  findFiles(query: string): Promise<Result<string[]>>;
   replyPermission(requestId: string, reply: OpenCodePermissionReply): Promise<Result<unknown>>;
   replyQuestion(requestId: string, answers: string[]): Promise<Result<unknown>>;
   rejectQuestion(requestId: string): Promise<Result<unknown>>;
@@ -114,6 +186,21 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     }
   }
 
+  async function getSession(sessionId: string): Promise<SimpleResult> {
+    try {
+      const { status } = await requestJson(
+        baseUrl,
+        "GET",
+        `/session/${sessionId}`,
+        undefined,
+        AbortSignal.timeout(5000),
+      );
+      return status === 200 ? { ok: true } : errResult(`OC_SESSION_NOT_FOUND(${status})`);
+    } catch (e) {
+      return errResult(`OC_GET_SESSION_FAILED: ${(e as Error).message}`);
+    }
+  }
+
   async function createSession(
     opts: { title?: string } = {},
   ): Promise<Result<OpenCodeSessionInfo>> {
@@ -160,13 +247,29 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     }
   }
 
-  async function promptAsync(sessionId: string, text: string): Promise<Result<null>> {
+  async function promptAsync(
+    sessionId: string,
+    text: string,
+    model?: SessionModel | null,
+    files: string[] = [],
+  ): Promise<Result<null>> {
     try {
+      // Parts prompt: teks bebas + satu part `file` per referensi @file.
+      // `filename` path relatif (untuk tampilan), `url` file URL absolut.
+      const parts: Record<string, unknown>[] = [{ type: "text", text }];
+      for (const url of files) {
+        const filename = url.replace(/^file:\/\//, "") || url;
+        parts.push({ type: "file", mime: "text/plain", filename, url });
+      }
+      const body: Record<string, unknown> = { parts };
+      // Skema prompt_async menerima `model: { providerID, modelID }` opsional;
+      // tanpa field ini opencode memakai model default-nya.
+      if (model) body.model = { providerID: model.providerID, modelID: model.modelID };
       const { status } = await requestJson(
         baseUrl,
         "POST",
         `/session/${sessionId}/prompt_async`,
-        { parts: [{ type: "text", text }] },
+        body,
         // Hanya menunggu penerimaan prompt (204), bukan seluruh turn.
         AbortSignal.timeout(30_000),
       );
@@ -176,6 +279,60 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
         : errResult(`OC_PROMPT_ASYNC_FAILED(${status})`);
     } catch (e) {
       return errResult(`OC_PROMPT_ASYNC_FAILED: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * Cari file di project (`GET /find/file?query=`) — dipakai autocomplete
+   * referensi `@file` di composer. Mengembalikan path relatif project.
+   */
+  async function findFiles(query: string): Promise<Result<string[]>> {
+    try {
+      const { status, json } = await requestJson(
+        baseUrl,
+        "GET",
+        `/find/file?query=${encodeURIComponent(query)}`,
+        undefined,
+        AbortSignal.timeout(5000),
+      );
+      if (status !== 200) return errResult(`OC_FIND_FILES_FAILED(${status})`);
+      const raw = Array.isArray(json) ? json : [];
+      const out: string[] = [];
+      for (const item of raw) {
+        if (typeof item === "string" && item.length > 0) out.push(item);
+      }
+      return { ok: true, data: out };
+    } catch (e) {
+      return errResult(`OC_FIND_FILES_FAILED: ${(e as Error).message}`);
+    }
+  }
+
+  async function listModels(): Promise<Result<ModelOption[]>> {
+    try {
+      const { status, json } = await requestJson(baseUrl, "GET", "/config/providers");
+      if (status !== 200) return errResult(`OC_LIST_MODELS_FAILED(${status})`);
+      return { ok: true, data: flattenProviders(json) };
+    } catch (e) {
+      return errResult(`OC_LIST_MODELS_FAILED: ${(e as Error).message}`);
+    }
+  }
+
+  async function deleteSession(sessionId: string): Promise<SimpleResult> {
+    try {
+      const { status } = await requestJson(
+        baseUrl,
+        "DELETE",
+        `/session/${sessionId}`,
+        undefined,
+        AbortSignal.timeout(10_000),
+      );
+      // 200 = terhapus. 404 dianggap sukses: target sudah tidak ada (idemoten
+      // terhadap storage opencode yang mungkin sudah dibersihkan manual).
+      return status === 200 || status === 404
+        ? { ok: true }
+        : errResult(`OC_DELETE_SESSION_FAILED(${status})`);
+    } catch (e) {
+      return errResult(`OC_DELETE_SESSION_FAILED: ${(e as Error).message}`);
     }
   }
 
@@ -276,8 +433,12 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
 
   return {
     createSession,
+    getSession,
+    listModels,
+    deleteSession,
     sendMessage,
     promptAsync,
+    findFiles,
     replyPermission,
     replyQuestion,
     rejectQuestion,

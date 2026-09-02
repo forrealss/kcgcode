@@ -17,7 +17,12 @@ import path from "node:path";
 import fc from "fast-check";
 import type { SessionStore } from "../db";
 import { openSessionStore } from "../db";
-import type { OpenCodeClient, OpenCodeEvent, OpenCodePermissionReply } from "../opencode-client";
+import type {
+  ModelOption,
+  OpenCodeClient,
+  OpenCodeEvent,
+  OpenCodePermissionReply,
+} from "../opencode-client";
 import type { OpenCodeServerHandle, OpenCodeServerManager } from "../opencode-server";
 import {
   type CreateSessionRequest,
@@ -43,6 +48,20 @@ interface FakeClient extends OpenCodeClient {
   sendMessageResult: { ok: boolean; error?: string };
   promptAsyncResult: { ok: boolean; error?: string };
   createSessionResult: { ok: boolean; error?: string; id?: string };
+  /** Hasil getSession — false mensimulasikan oc session tidak dikenal server. */
+  getSessionResult: { ok: boolean; error?: string };
+  /** Hasil listModels — dipakai validasi model saat createSession. */
+  listModelsResult: { ok: boolean; error?: string };
+  /** Hasil deleteSession — false mensimulasikan server headless menolak. */
+  deleteSessionResult: { ok: boolean; error?: string };
+  /** Hasil findFiles — dipakai autocomplete @file. */
+  findFilesResult: { ok: boolean; error?: string };
+  /** Daftar file yang "tersedia" untuk findFiles. */
+  availableFiles: string[];
+  /** Model yang tersedia (default: satu provider dengan satu model). */
+  availableModels: ModelOption[];
+  /** Model yang diterima tiap panggilan promptAsync (null = default). */
+  promptModels: (string | null)[];
   /** Antrean jeda simulasi sebelum tiap sendMessage selesai (ms) — uji race. */
   sendDelays?: number[];
   emit(ev: OpenCodeEvent): void;
@@ -57,6 +76,25 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     sendMessageResult: { ok: true },
     promptAsyncResult: { ok: true },
     createSessionResult: { ok: true, id: "ses_remote1" },
+    getSessionResult: { ok: true },
+    listModelsResult: { ok: true },
+    deleteSessionResult: { ok: true },
+    findFilesResult: { ok: true },
+    availableFiles: [
+      "src/App.tsx",
+      "src/server/app.ts",
+      "src/lib/api.ts",
+      "src/components/session-list.tsx",
+    ],
+    availableModels: [
+      {
+        providerID: "kcgrouter",
+        providerName: "kcgrouter",
+        modelID: "kiro/claude-opus-5",
+        name: "Claude Opus 5",
+      },
+    ],
+    promptModels: [],
     async createSession(opts) {
       calls.push(`createSession:${opts?.title ?? ""}`);
       if (!client.createSessionResult.ok) {
@@ -66,6 +104,27 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         ok: true,
         data: { id: client.createSessionResult.id ?? "ses_remote1", directory: "/proj" },
       };
+    },
+    async getSession(sessionId) {
+      calls.push(`getSession:${sessionId}`);
+      if (!client.getSessionResult.ok) {
+        return { ok: false, error: client.getSessionResult.error ?? "OC_SESSION_NOT_FOUND" };
+      }
+      return { ok: true };
+    },
+    async listModels() {
+      calls.push("listModels");
+      if (!client.listModelsResult.ok) {
+        return { ok: false, error: client.listModelsResult.error ?? "OC_LIST_MODELS_FAILED" };
+      }
+      return { ok: true, data: client.availableModels };
+    },
+    async findFiles(query) {
+      calls.push(`findFiles:${query}`);
+      if (!client.findFilesResult.ok) {
+        return { ok: false, error: client.findFilesResult.error ?? "OC_FIND_FILES_FAILED" };
+      }
+      return { ok: true, data: client.availableFiles.filter((f) => f.includes(query)) };
     },
     async sendMessage(_sessionId, text) {
       calls.push(`sendMessage:${text}`);
@@ -82,8 +141,9 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         },
       };
     },
-    async promptAsync(_sessionId, text) {
+    async promptAsync(_sessionId, text, model) {
       calls.push(`promptAsync:${text}`);
+      client.promptModels.push(model ? `${model.providerID}/${model.modelID}` : null);
       const delay = client.sendDelays?.shift();
       if (delay) await Bun.sleep(delay);
       if (!client.promptAsyncResult.ok) {
@@ -106,6 +166,13 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     async abortSession(sessionId) {
       calls.push(`abortSession:${sessionId}`);
       return { ok: true, data: null };
+    },
+    async deleteSession(sessionId) {
+      calls.push(`deleteSession:${sessionId}`);
+      if (!client.deleteSessionResult.ok) {
+        return { ok: false, error: client.deleteSessionResult.error ?? "OC_DELETE_SESSION_FAILED" };
+      }
+      return { ok: true };
     },
     subscribeEvents(cb) {
       client.eventCb = cb;
@@ -205,6 +272,12 @@ interface Harness {
 }
 
 function freshHarness(): Harness {
+  return freshHarnessWithHooks({});
+}
+
+function freshHarnessWithHooks(
+  extraHooks: Pick<Parameters<typeof createSessionManager>[0], "onDeleted">,
+): Harness {
   const store = openSessionStore(":memory:");
   const root = mkdtempSync(path.join(tmpdir(), "kcg-sm2-"));
   const cwd = path.join(root, "proj");
@@ -223,6 +296,7 @@ function freshHarness(): Harness {
     store,
     servers: fake.manager,
     now: () => 1000,
+    ...extraHooks,
     onMessage: (m) => messages.push(m),
     onMessagePart: (sid, mid, part) => messageParts.push([sid, mid, part]),
     onPrompt: (p) => prompts.push(p),
@@ -264,6 +338,20 @@ async function createSession(h: Harness, agentType: AgentType = "opencode"): Pro
 function statusOf(store: SessionStore, sid: string): SessionStatus | undefined {
   const r = store.getSession(sid);
   return r.ok ? r.data.status : undefined;
+}
+
+/** Ambil FakeClient project "p1"; melempar bila belum ada (harusnya sudah dibuat). */
+function clientOf(h: Harness): FakeClient {
+  const client = h.fake.clients.get("p1");
+  if (!client) throw new Error("fake client p1 tidak ada");
+  return client;
+}
+
+/** Prompt pertama yang tercatat; melempar bila kosong (harusnya sudah ada). */
+function promptOf(h: Harness): InteractivePrompt {
+  const p = h.prompts[0];
+  if (!p) throw new Error("belum ada prompt tercatat");
+  return p;
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +496,7 @@ test("sendFreeTextInput sukses -> echo user; assistant dirakit saat session.idle
     await flush();
 
     // Prompt dikirim via prompt_async (204) — belum ada pesan assistant.
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     expect(client.calls).toContain("promptAsync:hello");
     expect(h.messages).toHaveLength(1);
 
@@ -449,8 +537,8 @@ test("sendFreeTextInput: prompt_async gagal -> onError, tanpa pesan assistant", 
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1");
-    client!.promptAsyncResult = { ok: false, error: "OC_PROMPT_ASYNC_FAILED(500)" };
+    const client = clientOf(h);
+    client.promptAsyncResult = { ok: false, error: "OC_PROMPT_ASYNC_FAILED(500)" };
     await h.sm.sendFreeTextInput(sid, "hello");
     await flush();
     expect(h.errors).toHaveLength(1);
@@ -465,7 +553,7 @@ test("session.idle: turn panjang tersimpan walau POST message tidak dipakai", as
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     await h.sm.sendFreeTextInput(sid, "delegasikan");
     await flush();
 
@@ -517,7 +605,7 @@ test("session.idle ganda -> turn hanya difinalisasi sekali", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     await h.sm.sendFreeTextInput(sid, "hello");
     await flush();
 
@@ -545,7 +633,7 @@ test("session.idle tanpa parts assistant -> tidak menyimpan pesan kosong", async
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     await h.sm.sendFreeTextInput(sid, "hello");
     await flush();
 
@@ -561,7 +649,7 @@ test("stopSession di tengah turn menyimpan parts yang sudah ter-stream", async (
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     await h.sm.sendFreeTextInput(sid, "hello");
     await flush();
 
@@ -594,7 +682,7 @@ test("streaming: part assistant di-forward via onMessagePart setelah turn aktif"
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     // Turn dimulai (sendFreeTextInput membuat streamingTurns entry).
     await h.sm.sendFreeTextInput(sid, "hitung 2+2");
@@ -638,7 +726,7 @@ test("streaming: part user / sebelum assistant dikenal tidak di-forward", async 
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     await h.sm.sendFreeTextInput(sid, "hitung 2+2");
 
@@ -679,7 +767,7 @@ test("streaming: satu turn dengan beberapa pesan assistant (sub-agent) di-stream
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     await h.sm.sendFreeTextInput(sid, "hitung 2+2");
 
@@ -720,7 +808,7 @@ test("streaming: turn lama selesai tidak menghapus turn baru (race guard)", asyn
     // Input kedua men-finalisasi turn pertama dan memasang entry turn 2;
     // penyelesaian prompt_async turn 1 yang menyusul tidak boleh menghapus
     // entry milik turn 2.
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.sendDelays = [40, 500];
 
     await h.sm.sendFreeTextInput(sid, "input pertama");
@@ -760,7 +848,7 @@ test("streaming: turn tetap hidup setelah prompt_async, berakhir saat session.id
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     await h.sm.sendFreeTextInput(sid, "hitung 2+2");
     client.emit({
@@ -805,7 +893,7 @@ test("event permission.asked -> prompt kind=permission + onPrompt", async () => 
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "permission.asked",
       requestID: "per_1",
@@ -815,7 +903,7 @@ test("event permission.asked -> prompt kind=permission + onPrompt", async () => 
     });
 
     expect(h.prompts).toHaveLength(1);
-    const p = h.prompts[0]!;
+    const p = promptOf(h);
     expect(p.kind).toBe("permission");
     expect(p.type).toBe("confirmation");
     expect(p.sessionId).toBe(sid);
@@ -831,7 +919,7 @@ test("event question.asked -> prompt kind=question menu + options", async () => 
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "question.asked",
       requestID: "que_1",
@@ -849,7 +937,7 @@ test("event question.asked -> prompt kind=question menu + options", async () => 
     });
 
     expect(h.prompts).toHaveLength(1);
-    const p = h.prompts[0]!;
+    const p = promptOf(h);
     expect(p.kind).toBe("question");
     expect(p.type).toBe("menu");
     expect(p.sessionId).toBe(sid);
@@ -864,7 +952,7 @@ test("sub-agent: permission.asked pada child session -> prompt untuk Session ind
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     // opencode membuat child session saat model memanggil tool `task`.
     client.emit({
@@ -883,7 +971,7 @@ test("sub-agent: permission.asked pada child session -> prompt untuk Session ind
     });
 
     expect(h.prompts).toHaveLength(1);
-    const p = h.prompts[0]!;
+    const p = promptOf(h);
     expect(p.id).toBe("per_sub1");
     // Prompt diatribusikan ke Session lokal induk agar muncul di UI.
     expect(p.sessionId).toBe(sid);
@@ -896,7 +984,7 @@ test("sub-agent: part child session di-stream ke Session induk", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     await h.sm.sendFreeTextInput(sid, "delegasikan ke sub-agent");
     client.emit({
@@ -927,7 +1015,7 @@ test("sub-agent: child bersarang (cucu) tetap terpetakan ke Session induk", asyn
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     client.emit({
       type: "session.created",
@@ -959,7 +1047,7 @@ test("session.created tanpa parentID dikenal -> tidak dipetakan", async () => {
   const h = freshHarness();
   try {
     await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     // Session lain di server yang sama (mis. dibuat TUI) — bukan milik bridge.
     client.emit({
@@ -984,7 +1072,7 @@ test("stopSession melepas pemetaan child sub-agent", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "session.created",
       sessionID: "ses_child1",
@@ -1010,7 +1098,7 @@ test("event permission.v2.asked (action/resources) -> prompt confirmation", asyn
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "permission.v2.asked",
       id: "per_v2",
@@ -1020,7 +1108,7 @@ test("event permission.v2.asked (action/resources) -> prompt confirmation", asyn
     });
 
     expect(h.prompts).toHaveLength(1);
-    const p = h.prompts[0]!;
+    const p = promptOf(h);
     expect(p.id).toBe("per_v2");
     expect(p.kind).toBe("permission");
     expect(p.type).toBe("confirmation");
@@ -1037,7 +1125,7 @@ test("event question.v2.asked -> prompt menu + options", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "question.v2.asked",
       id: "que_v2",
@@ -1052,7 +1140,7 @@ test("event question.v2.asked -> prompt menu + options", async () => {
     });
 
     expect(h.prompts).toHaveLength(1);
-    const p = h.prompts[0]!;
+    const p = promptOf(h);
     expect(p.id).toBe("que_v2");
     expect(p.kind).toBe("question");
     expect(p.type).toBe("menu");
@@ -1068,7 +1156,7 @@ test("v1 + v2 untuk request yang sama -> kartu tidak terduplikasi", async () => 
   const h = freshHarness();
   try {
     await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     // Server memancarkan kedua varian untuk satu request (id sama).
     client.emit({
@@ -1098,7 +1186,7 @@ test("prompt v2 dapat diselesaikan lewat resolvePrompt seperti v1", async () => 
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "permission.v2.asked",
       id: "per_v2_resolve",
@@ -1123,7 +1211,7 @@ test("event permission.v2.asked pada child sub-agent -> prompt untuk Session ind
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
     client.emit({
       type: "session.created",
       sessionID: "ses_child1",
@@ -1148,7 +1236,7 @@ test("event permission.asked dengan sessionID tak dikenal -> diabaikan", async (
   const h = freshHarness();
   try {
     await createSession(h);
-    h.fake.clients.get("p1")!.emit({
+    clientOf(h).emit({
       type: "permission.asked",
       requestID: "per_x",
       sessionID: "ses_tak_dikenal",
@@ -1189,7 +1277,7 @@ test("resolvePrompt permission: approve -> once; deny/cancel -> reject; lalu res
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     const pid1 = await seedPrompt(h, sid, "permission", "per_1");
     const r1 = await h.sm.resolvePrompt(sid, pid1, "approve");
@@ -1218,7 +1306,7 @@ test("resolvePrompt question: option -> replyQuestion; cancel -> rejectQuestion"
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     const pid1 = await seedPrompt(h, sid, "question", "que_1");
     const r1 = await h.sm.resolvePrompt(sid, pid1, { option: "A" });
@@ -1238,7 +1326,7 @@ test("resolvePrompt invalid: tidak ditemukan / sudah resolved / respon salah", a
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     // promptId tidak dikenal
     expect((await h.sm.resolvePrompt(sid, "nope", "approve")).error).toBe("PROMPT_NOT_FOUND");
@@ -1274,7 +1362,7 @@ test("stopSession: valid -> stopped + abort best-effort; invalid -> ditolak", as
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const client = h.fake.clients.get("p1")!;
+    const client = clientOf(h);
 
     const ok = h.sm.stopSession(sid);
     expect(ok.ok).toBe(true);
@@ -1301,6 +1389,7 @@ test("reconcileOnStartup: session running -> crashed", () => {
       cwd: h.project.path,
       status: "running",
       ocSessionId: "ses_x",
+      model: null,
       createdAt: 1,
       updatedAt: 1,
     });
@@ -1311,6 +1400,7 @@ test("reconcileOnStartup: session running -> crashed", () => {
       cwd: h.project.path,
       status: "stopped",
       ocSessionId: null,
+      model: null,
       createdAt: 1,
       updatedAt: 1,
     });
@@ -1359,6 +1449,399 @@ test("shutdown: simpan status running lalu stop seluruh server", async () => {
     await createSession(h);
     await h.sm.shutdown();
     expect(h.fake.stopped).toContain("p1");
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// resumeSession (start ulang Session stopped/crashed, ocSessionId dipertahankan)
+// ---------------------------------------------------------------------------
+
+test("resumeSession: stopped + ocSessionId masih dikenal -> running tanpa createSession", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const before = h.store.getSession(sid);
+    const ocIdBefore = before.ok ? before.data.ocSessionId : null;
+    expect(h.sm.stopSession(sid).ok).toBe(true);
+    const callsBefore =
+      h.fake.clients.get("p1")?.calls.filter((c) => c.startsWith("createSession")).length ?? 0;
+
+    const res = await h.sm.resumeSession(sid);
+    expect(res.ok).toBe(true);
+    expect(statusOf(h.store, sid)).toBe("running");
+    // ocSessionId lama dipertahankan — riwayat opencode tetap nyambung.
+    const after = h.store.getSession(sid);
+    expect(after.ok && after.data.ocSessionId).toBe(ocIdBefore);
+    // Tidak ada createSession tambahan.
+    const callsAfter =
+      h.fake.clients.get("p1")?.calls.filter((c) => c.startsWith("createSession")).length ?? 0;
+    expect(callsAfter).toBe(callsBefore);
+    // Event SSE tetap terpasang.
+    expect(h.fake.clients.get("p1")?.eventCb).not.toBeNull();
+  } finally {
+    h.close();
+  }
+});
+
+test("resumeSession: ocSessionId tidak dikenal server -> sesi remote baru, oc_session_id diperbarui", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    expect(h.sm.stopSession(sid).ok).toBe(true);
+    // Server melaporkan oc session lama sudah hilang.
+    const client = h.fake.clients.get("p1");
+    if (client) client.getSessionResult = { ok: false, error: "OC_SESSION_NOT_FOUND" };
+
+    const res = await h.sm.resumeSession(sid);
+    expect(res.ok).toBe(true);
+    expect(statusOf(h.store, sid)).toBe("running");
+    const after = h.store.getSession(sid);
+    expect(after.ok).toBe(true);
+    if (after.ok) {
+      // ocSessionId baru dari createSessionResult (masih ses_remote1, tapi
+      // createSession terpanggil — riwayat lokal utuh, pemetaan SSE baru).
+      expect(after.data.ocSessionId).toBe("ses_remote1");
+    }
+    expect(client?.calls).toContain("getSession:ses_remote1");
+    expect(client?.calls.filter((c) => c.startsWith("createSession"))).toHaveLength(2);
+  } finally {
+    h.close();
+  }
+});
+
+test("resumeSession: ditolak bila masih running / session tidak ada", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const running = await h.sm.resumeSession(sid);
+    expect(running.ok).toBe(false);
+    expect(running.error).toBe("SESSION_ALREADY_RUNNING");
+
+    const missing = await h.sm.resumeSession("tidak-ada");
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toBe("SESSION_NOT_FOUND");
+  } finally {
+    h.close();
+  }
+});
+
+test("resumeSession crashed: reconcileOnStartup lalu resume -> running kembali", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    h.sm.reconcileOnStartup();
+    expect(statusOf(h.store, sid)).toBe("crashed");
+
+    const res = await h.sm.resumeSession(sid);
+    expect(res.ok).toBe(true);
+    expect(statusOf(h.store, sid)).toBe("running");
+  } finally {
+    h.close();
+  }
+});
+
+test("resumeSession: input bebas kembali berfungsi setelah resume", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    expect(h.sm.stopSession(sid).ok).toBe(true);
+    await h.sm.resumeSession(sid);
+
+    const res = await h.sm.sendFreeTextInput(sid, "halo lagi");
+    expect(res.ok).toBe(true);
+    await flush();
+    const client = h.fake.clients.get("p1");
+    expect(client?.calls).toContain("promptAsync:halo lagi");
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Pemilihan model (sesuai pilihan model di opencode)
+// ---------------------------------------------------------------------------
+
+const MODEL = { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" };
+
+test("createSession dengan model valid -> tersimpan di Session & tervalidasi", async () => {
+  const h = freshHarness();
+  try {
+    const res = await h.sm.createSession({ agentType: "opencode", projectId: "p1", model: MODEL });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("createSession gagal");
+    expect(res.session.model).toEqual(MODEL);
+    const stored = h.store.getSession(res.session.id);
+    expect(stored.ok && stored.data.model).toEqual(MODEL);
+    // Validasi memakai daftar provider server.
+    const client = h.fake.clients.get("p1");
+    expect(client?.calls).toContain("listModels");
+  } finally {
+    h.close();
+  }
+});
+
+test("createSession dengan model tidak dikenal -> MODEL_NOT_FOUND, tanpa sesi remote", async () => {
+  const h = freshHarness();
+  try {
+    const res = await h.sm.createSession({
+      agentType: "opencode",
+      projectId: "p1",
+      model: { providerID: "kcgrouter", modelID: "model-tidak-ada" },
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("harusnya ditolak");
+    expect(res.error).toBe("MODEL_NOT_FOUND");
+    const client = h.fake.clients.get("p1");
+    // createSession remote tidak boleh terpanggil.
+    expect(client?.calls.filter((c) => c.startsWith("createSession"))).toHaveLength(0);
+    expect(h.store.listSessions()).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("createSession tanpa model -> null (default opencode), listModels tak dipanggil", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const stored = h.store.getSession(sid);
+    expect(stored.ok && stored.data.model).toBeNull();
+    const client = h.fake.clients.get("p1");
+    expect(client?.calls).not.toContain("listModels");
+    // promptAsync dikirim tanpa model.
+    await h.sm.sendFreeTextInput(sid, "hai");
+    await flush();
+    expect(client?.promptModels).toEqual([null]);
+  } finally {
+    h.close();
+  }
+});
+
+test("createSession: listModels gagal -> error diteruskan, tanpa sesi remote", async () => {
+  const h = freshHarness();
+  try {
+    const client = h.fake.clients.get("p1") ?? makeFakeClient();
+    client.listModelsResult = { ok: false, error: "OC_LIST_MODELS_FAILED(500)" };
+    h.fake.clients.set("p1", client);
+    const res = await h.sm.createSession({ agentType: "opencode", projectId: "p1", model: MODEL });
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("harusnya gagal");
+    expect(res.error).toContain("OC_LIST_MODELS_FAILED");
+  } finally {
+    h.close();
+  }
+});
+
+test("promptAsync selalu membawa model Session yang tersimpan", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await h.sm
+      .createSession({ agentType: "opencode", projectId: "p1", model: MODEL })
+      .then((r) => (r.ok ? r.session.id : ""));
+    expect(sid).not.toBe("");
+
+    await h.sm.sendFreeTextInput(sid, "pesan pertama");
+    await flush();
+    await h.sm.sendFreeTextInput(sid, "pesan kedua");
+    await flush();
+    const client = h.fake.clients.get("p1");
+    expect(client?.promptModels).toEqual([
+      "kcgrouter/kiro/claude-opus-5",
+      "kcgrouter/kiro/claude-opus-5",
+    ]);
+  } finally {
+    h.close();
+  }
+});
+
+test("setSessionModel: ganti model -> prompt berikutnya memakai model baru", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const baru = { providerID: "kcgrouter", modelID: "mimo/mimo-v2.5" };
+    const client = h.fake.clients.get("p1");
+    if (client) {
+      client.availableModels = [
+        ...client.availableModels,
+        { providerID: "kcgrouter", providerName: "kcgrouter", modelID: baru.modelID, name: "Mimo" },
+      ];
+    }
+
+    const res = h.sm.setSessionModel(sid, baru);
+    expect(res.ok).toBe(true);
+    const stored = h.store.getSession(sid);
+    expect(stored.ok && stored.data.model).toEqual(baru);
+    // Status tidak berubah akibat penggantian model.
+    expect(stored.ok && stored.data.status).toBe("running");
+
+    await h.sm.sendFreeTextInput(sid, "setelah ganti model");
+    await flush();
+    expect(client?.promptModels).toEqual(["kcgrouter/mimo/mimo-v2.5"]);
+  } finally {
+    h.close();
+  }
+});
+
+test("setSessionModel(null) -> kembali default; session tak dikenal -> SESSION_NOT_FOUND", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await h.sm
+      .createSession({ agentType: "opencode", projectId: "p1", model: MODEL })
+      .then((r) => (r.ok ? r.session.id : ""));
+
+    expect(h.sm.setSessionModel(sid, null).ok).toBe(true);
+    const stored = h.store.getSession(sid);
+    expect(stored.ok && stored.data.model).toBeNull();
+
+    const missing = h.sm.setSessionModel("tidak-ada", MODEL);
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toBe("SESSION_NOT_FOUND");
+  } finally {
+    h.close();
+  }
+});
+
+test("listModels(projectId) -> daftar model dari server headless Project", async () => {
+  const h = freshHarness();
+  try {
+    const res = await h.sm.listModels("p1");
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error("listModels gagal");
+    expect(res.data).toEqual([
+      {
+        providerID: "kcgrouter",
+        providerName: "kcgrouter",
+        modelID: "kiro/claude-opus-5",
+        name: "Claude Opus 5",
+      },
+    ]);
+    // Server di-ensure dengan path Project.
+    expect(h.fake.ensureCalls).toContainEqual({ projectId: "p1", projectPath: h.project.path });
+
+    const missing = await h.sm.listModels("project-tidak-ada");
+    expect(missing.ok).toBe(false);
+    if (missing.ok) throw new Error("harusnya gagal");
+    expect(missing.error).toBe("PROJECT_NOT_FOUND");
+  } finally {
+    h.close();
+  }
+});
+
+test("model bertahan setelah stop + resume (riwayat & pilihan utuh)", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await h.sm
+      .createSession({ agentType: "opencode", projectId: "p1", model: MODEL })
+      .then((r) => (r.ok ? r.session.id : ""));
+    expect(h.sm.stopSession(sid).ok).toBe(true);
+    expect(await h.sm.resumeSession(sid)).toEqual({ ok: true });
+
+    const stored = h.store.getSession(sid);
+    expect(stored.ok && stored.data.model).toEqual(MODEL);
+    await h.sm.sendFreeTextInput(sid, "lanjut");
+    await flush();
+    expect(h.fake.clients.get("p1")?.promptModels).toEqual(["kcgrouter/kiro/claude-opus-5"]);
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// deleteSession (hapus permanen: remote opencode + lokal)
+// ---------------------------------------------------------------------------
+
+test("deleteSession: remote dihapus + lokal bersih (messages, prompts, history)", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const ocId = h.store.getSession(sid).ok ? "ses_remote1" : null;
+    await h.sm.sendFreeTextInput(sid, "pesan sebelum hapus");
+    await flush();
+
+    const res = await h.sm.deleteSession(sid);
+    expect(res.ok).toBe(true);
+    const client = h.fake.clients.get("p1");
+    expect(client?.calls).toContain(`deleteSession:${ocId}`);
+    // Semua jejak lokal hilang.
+    expect(h.store.getSession(sid).ok).toBe(false);
+    expect(h.store.getMessages(sid).ok).toBe(false);
+    expect(h.store.listSessions()).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession: server headless menolak -> error diteruskan, data lokal utuh", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = h.fake.clients.get("p1");
+    if (client) client.deleteSessionResult = { ok: false, error: "OC_DELETE_SESSION_FAILED(500)" };
+
+    const res = await h.sm.deleteSession(sid);
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("harusnya gagal");
+    expect(res.error).toContain("OC_DELETE_SESSION_FAILED");
+    // Data tidak setengah terhapus.
+    expect(h.store.getSession(sid).ok).toBe(true);
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession: server headless sudah mati -> tetap hapus lokal", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    // Simulasi server project sudah tidak hidup.
+    h.fake.clients.delete("p1");
+
+    const res = await h.sm.deleteSession(sid);
+    expect(res.ok).toBe(true);
+    expect(h.store.getSession(sid).ok).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession: session masih running -> di-stop dulu lalu dihapus", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const res = await h.sm.deleteSession(sid);
+    expect(res.ok).toBe(true);
+    const client = h.fake.clients.get("p1");
+    expect(client?.calls).toContain("abortSession:ses_remote1");
+    expect(h.store.getSession(sid).ok).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession: session tidak ada -> SESSION_NOT_FOUND", async () => {
+  const h = freshHarness();
+  try {
+    const res = await h.sm.deleteSession("tidak-ada");
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("harusnya gagal");
+    expect(res.error).toBe("SESSION_NOT_FOUND");
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession: onDeleted terpanggil (broadcast ke subscriber WS)", async () => {
+  let deletedId: string | undefined;
+  // Manager kedua dengan hook onDeleted — store & fake manager dipakai bersama.
+  const h = freshHarnessWithHooks({ onDeleted: (id) => (deletedId = id) });
+  try {
+    const created = await h.sm.createSession({ agentType: "opencode", projectId: h.project.id });
+    if (!created.ok) throw new Error("create gagal");
+    const res = await h.sm.deleteSession(created.session.id);
+    expect(res.ok).toBe(true);
+    expect(deletedId).toBe(created.session.id);
   } finally {
     h.close();
   }

@@ -27,8 +27,9 @@
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
+import path from "node:path";
 import type { SessionStore } from "./db";
-import type { OpenCodeClient, OpenCodeEvent } from "./opencode-client";
+import type { ModelOption, OpenCodeClient, OpenCodeEvent } from "./opencode-client";
 import type { OpenCodeServerManager } from "./opencode-server";
 import type {
   AgentType,
@@ -38,7 +39,9 @@ import type {
   Result,
   Session,
   SessionMessage,
+  SessionModel,
   SessionStatus,
+  SimpleResult,
 } from "./types";
 
 /** Satu turn balasan yang sedang di-stream (SSE `message.part.updated`). */
@@ -69,11 +72,13 @@ export const SUPPORTED_AGENT_TYPES: readonly AgentType[] = ["opencode"];
 export interface CreateSessionRequest {
   agentType: AgentType;
   projectId: string;
+  /** Model pilihan user; null/undefined = model default opencode. */
+  model?: SessionModel | null;
 }
 
 export type CreateSessionResult = { ok: true; session: Session } | { ok: false; error: string };
 
-export type SimpleResult = { ok: boolean; error?: string };
+export type { SimpleResult };
 
 export interface SessionManagerOptions {
   store: SessionStore;
@@ -94,6 +99,8 @@ export interface SessionManagerOptions {
   onPrompt?: (prompt: InteractivePrompt) => void;
   /** Hook perubahan status Session — disambungkan ke WebSocket_Gateway. */
   onStatusChange?: (sessionId: string, status: SessionStatus) => void;
+  /** Hook Session dihapus permanen — disambungkan ke WebSocket_Gateway. */
+  onDeleted?: (sessionId: string) => void;
   /** Hook error asinkron (mis. balasan model gagal) — disambungkan ke gateway. */
   onError?: (sessionId: string, message: string) => void;
 }
@@ -103,7 +110,24 @@ export interface SessionManager {
   listSessions(): Session[];
   getSession(sessionId: string): Result<Session>;
   stopSession(sessionId: string): SimpleResult;
-  sendFreeTextInput(sessionId: string, text: string): Promise<SimpleResult>;
+  /**
+   * Hapus Session permanen: di server headless opencode (beserta riwayat
+   * pesannya di sana) lalu di Session_Store (pesan, prompt, riwayat status).
+   */
+  deleteSession(sessionId: string): Promise<SimpleResult>;
+  /**
+   * Menghidupkan kembali Session yang `stopped`/`crashed` — memakai ocSessionId
+   * lama bila masih dikenal server headless, memakai sesi remote baru bila
+   * tidak, lalu status kembali `running`.
+   */
+  resumeSession(sessionId: string): Promise<SimpleResult>;
+  /** Daftar model yang tersedia pada server headless milik Project. */
+  listModels(projectId: string): Promise<Result<ModelOption[]>>;
+  /** Cari file project untuk autocomplete `@file` di composer. */
+  findFiles(projectId: string, query: string): Promise<Result<string[]>>;
+  /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
+  setSessionModel(sessionId: string, model: SessionModel | null): SimpleResult;
+  sendFreeTextInput(sessionId: string, text: string, files?: string[]): Promise<SimpleResult>;
   resolvePrompt(
     sessionId: string,
     promptId: string,
@@ -206,6 +230,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const onMessage = opts.onMessage;
   const onPrompt = opts.onPrompt;
   const onStatusChange = opts.onStatusChange;
+  const onDeleted = opts.onDeleted;
   const onError = opts.onError;
 
   /**
@@ -219,8 +244,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const ocToSession = new Map<string, string>();
   /** Kebalikan `ocToSession`: id Session lokal -> seluruh ocSessionId miliknya. */
   const sessionOcIds = new Map<string, Set<string>>();
-  /** Project yang event SSE-nya sudah disubscribe. */
-  const subscribedProjects = new Set<string>();
+  /** Project yang event SSE-nya sudah disubscribe (subscription aktif). */
+  const activeSubscriptions = new Map<string, { active: boolean; unsubscribe: () => void }>();
   /** Serialisasi kirim pesan per Session agar turn tidak tumpang tindih. */
   const inflight = new Map<string, Promise<void>>();
   /** Project yang sudah diproses saat server-nya keluar (hindari duplikasi). */
@@ -398,7 +423,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     }
   }
 
-  /** Pastikan server Project hidup; subscribe event SSE sekali per Project. */
+  /** Pastikan server Project hidup; subscribe event SSE bila belum aktif. */
   async function ensureServerFor(
     projectId: string,
     projectPath: string,
@@ -406,9 +431,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const res = await servers.ensureServer(projectId, projectPath);
     if (!res.ok) return { ok: false, error: res.error };
     const handle = res.data;
-    if (!subscribedProjects.has(projectId)) {
-      subscribedProjects.add(projectId);
-      handle.client.subscribeEvents((ev) => handleEvent(projectId, ev));
+    // Server headless dapat diganti (crash lalu ensure ulang, atau resume):
+    // subscribe ulang SSE bila instance aktif belum punya subscription aktif.
+    if (!activeSubscriptions.get(projectId)?.active) {
+      const prev = activeSubscriptions.get(projectId);
+      prev?.unsubscribe();
+      const unsubscribe = handle.client.subscribeEvents((ev) => handleEvent(projectId, ev));
+      activeSubscriptions.set(projectId, { active: true, unsubscribe });
     }
     // Server baru (atau hasil restart) — izinkan event exit berikutnya diproses.
     exitNotified.delete(projectId);
@@ -444,9 +473,23 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     // (4) pastikan server headless untuk Project (spawn bila perlu)
     const serverRes = await ensureServerFor(project.id, project.path);
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
+    const client = serverRes.data.client;
 
-    // (5) buat Session di server headless
-    const created = await serverRes.data.client.createSession({
+    // (5) validasi model pilihan terhadap daftar provider server (Req: pilih
+    //     model). `null` = pakai default opencode. Daftar provider gagal
+    //     diambil -> ditolak agar Session tidak lahir dengan model mati.
+    const model: SessionModel | null = req.model ?? null;
+    if (model) {
+      const models = await client.listModels();
+      if (!models.ok) return { ok: false, error: models.error };
+      const known = models.data.some(
+        (m) => m.providerID === model.providerID && m.modelID === model.modelID,
+      );
+      if (!known) return { ok: false, error: "MODEL_NOT_FOUND" };
+    }
+
+    // (6) buat Session di server headless
+    const created = await client.createSession({
       title: "KCG Bridge Session",
     });
     if (!created.ok) return { ok: false, error: created.error };
@@ -460,13 +503,14 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       cwd: project.path,
       status: "running",
       ocSessionId: created.data.id,
+      model,
       createdAt,
       updatedAt: createdAt,
     };
     const ins = store.insertSession(session);
     if (!ins.ok) {
       // Abort session remote agar tidak jadi yatim bila persistensi gagal.
-      void serverRes.data.client.abortSession(created.data.id);
+      void client.abortSession(created.data.id);
       return ins;
     }
     mapOcSession(created.data.id, sessionId);
@@ -498,7 +542,141 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     return { ok: true };
   }
 
-  async function sendFreeTextInput(sessionId: string, text: string): Promise<SimpleResult> {
+  /**
+   * Menghidupkan kembali Session yang `stopped`/`crashed` dengan riwayat
+   * percakapan utuh:
+   *
+   * 1. Server headless Project di-ensure (spawn ulang bila sudah mati) —
+   *    storage session opencode bertahan di disk project, sehingga ocSessionId
+   *    lama biasanya masih dikenal server baru.
+   * 2. ocSessionId diverifikasi via `GET /session/{id}`. Bila masih ada,
+   *    dipakai lagi (riwayat server opencode tetap nyambung). Bila tidak,
+   *    dibuat sesi remote baru dan `oc_session_id` di DB diperbarui — pesan
+   *    lama di Session_Store tidak tersentuh.
+   * 3. Pemetaan SSE diaktifkan kembali lalu status -> `running`.
+   */
+  async function resumeSession(sessionId: string): Promise<SimpleResult> {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    if (cur.data.status === "running") return { ok: false, error: "SESSION_ALREADY_RUNNING" };
+    const project = store.getProjectById(cur.data.projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+
+    // (1) Pastikan server headless Project hidup (spawn ulang bila perlu).
+    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    if (!serverRes.ok) return { ok: false, error: serverRes.error };
+
+    // (2) Verifikasi ocSessionId lama; bila tidak dikenal -> sesi remote baru.
+    let ocSessionId = cur.data.ocSessionId;
+    if (ocSessionId) {
+      const remote = await serverRes.data.client.getSession(ocSessionId);
+      if (remote.ok) {
+        mapOcSession(ocSessionId, sessionId);
+      } else {
+        ocSessionId = null;
+      }
+    }
+    if (!ocSessionId) {
+      const created = await serverRes.data.client.createSession({
+        title: "KCG Bridge Session (resumed)",
+      });
+      if (!created.ok) return { ok: false, error: created.error };
+      ocSessionId = created.data.id;
+      mapOcSession(ocSessionId, sessionId);
+      const upd = store.updateSessionOcId(sessionId, ocSessionId);
+      if (!upd.ok) return { ok: false, error: upd.error };
+    }
+
+    // (3) Status kembali running.
+    updateStatus(sessionId, "running", now());
+    return { ok: true };
+  }
+
+  /**
+   * Daftar model yang tersedia untuk Project — server headless Project
+   * di-ensure lebih dulu (spawn bila perlu) karena provider/model dibaca dari
+   * konfigurasi opencode pada direktori Project.
+   */
+  async function listModels(projectId: string): Promise<Result<ModelOption[]>> {
+    const project = store.getProjectById(projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    if (!serverRes.ok) return { ok: false, error: serverRes.error };
+    return serverRes.data.client.listModels();
+  }
+
+  /**
+   * Cari file di Project untuk autocomplete `@file` — index pencarian
+   * milik server headless opencode (sesuai perilaku `@` di opencode TUI).
+   * `query` kosong juga valid (mengembalikan daftar awal).
+   */
+  async function findFiles(projectId: string, query: string): Promise<Result<string[]>> {
+    const project = store.getProjectById(projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    if (!serverRes.ok) return { ok: false, error: serverRes.error };
+    return serverRes.data.client.findFiles(query);
+  }
+
+  /**
+   * Ganti model pilihan Session. Berlaku untuk prompt berikutnya (prompt_async
+   * selalu mengirim model tersimpan di Session), jadi tidak perlu restart.
+   */
+  function setSessionModel(sessionId: string, model: SessionModel | null): SimpleResult {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    const upd = store.updateSessionModel(sessionId, model);
+    return upd.ok ? { ok: true } : { ok: false, error: upd.error };
+  }
+
+  /**
+   * Hapus Session permanen:
+   *
+   * 1. Turn yang sedang stream difinalisasi & pemetaan SSE dilepas.
+   * 2. `DELETE /session/{id}` ke server headless bila masih hidup — data
+   *    session (termasuk seluruh pesan) ikut dihapus di sisi opencode.
+   *    Bila server tidak hidup, langkah ini dilewati: data remote jadi yatim
+   *    tapi bridge tidak lagi merujuknya (menghindari spawn server hanya
+   *    untuk menghapus).
+   * 3. Baris Session + seluruh baris anaknya dihapus dari Session_Store.
+   *
+   * Kegagalan hapus remote tidak membatalkan penghapusan lokal bila server
+   * sudah tidak ada; bila server hidup tapi menolak, error diteruskan agar
+   * user tahu datanya masih ada di opencode dan bisa mencoba lagi.
+   */
+  async function deleteSession(sessionId: string): Promise<SimpleResult> {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+
+    finalizeTurn(sessionId);
+    // Bila masih running, abort turn remote agar model berhenti dieksekusi.
+    if (cur.data.status === "running" && cur.data.ocSessionId) {
+      const runningHandle = servers.getServer(cur.data.projectId);
+      void runningHandle?.client.abortSession(cur.data.ocSessionId);
+    }
+    unmapOcSessions(sessionId);
+
+    // (2) Hapus di server headless (best effort — hanya bila server hidup).
+    const ocSessionId = cur.data.ocSessionId;
+    if (ocSessionId) {
+      const handle = servers.getServer(cur.data.projectId);
+      if (handle) {
+        const remote = await handle.client.deleteSession(ocSessionId);
+        if (!remote.ok) return { ok: false, error: remote.error };
+      }
+    }
+
+    // (3) Hapus lokal (transaksional: messages, prompts, history, session).
+    const res = store.deleteSession(sessionId);
+    if (res.ok) onDeleted?.(sessionId);
+    return res;
+  }
+
+  async function sendFreeTextInput(
+    sessionId: string,
+    text: string,
+    files: string[] = [],
+  ): Promise<SimpleResult> {
     if (text.length < 1 || text.trim().length === 0) {
       return { ok: false, error: "TEXT_EMPTY" };
     }
@@ -516,11 +694,20 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!handle) return { ok: false, error: "SESSION_NOT_ACTIVE" };
 
     // Echo pesan user (disimpan + dikirim ke Client) sebelum menunggu balasan.
+    // Referensi @file ikut di-echo sebagai part `file`. Path relatif project
+    // diubah ke file URL absolut — opencode mem-parse `url` dengan URL()
+    // sehingga `file://rel/path` (host=rel) ditolak di Linux; host kosong
+    // (`file:///abs/path`) valid.
+    const fileUrls = files.map((f) => `file://${path.resolve(cur.data.cwd, f)}`);
+    const userParts: MessagePart[] = [{ type: "text", text }];
+    for (const [i, filename] of files.entries()) {
+      userParts.push({ type: "file", mime: "text/plain", filename, url: fileUrls[i] });
+    }
     const userMessage: SessionMessage = {
       id: `usr_${randomUUID()}`,
       sessionId,
       role: "user",
-      parts: [{ type: "text", text } as MessagePart],
+      parts: userParts,
       createdAt: now(),
     };
     if (!store.insertMessage(userMessage).ok) return { ok: false, error: "MESSAGE_WRITE_FAILED" };
@@ -550,7 +737,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       try {
         // `prompt_async` balas 204 begitu prompt diterima; hasil turn tiba
         // lewat SSE dan ditutup oleh `session.idle`.
-        const res = await handle.client.promptAsync(ocSessionId, text);
+        const res = await handle.client.promptAsync(ocSessionId, text, cur.data.model, fileUrls);
         if (!res.ok) {
           onError?.(sessionId, res.error);
           if (streamingTurns.get(sessionId) === turn) {
@@ -668,6 +855,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     listSessions,
     getSession,
     stopSession,
+    resumeSession,
+    deleteSession,
+    listModels,
+    setSessionModel,
+    findFiles,
     sendFreeTextInput,
     resolvePrompt,
     reconcileOnStartup,

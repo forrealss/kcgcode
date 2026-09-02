@@ -24,7 +24,9 @@ import type {
   Result,
   Session,
   SessionMessage,
+  SessionModel,
   SessionStatus,
+  SimpleResult,
   StatusHistoryEntry,
 } from "./types";
 
@@ -45,6 +47,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   cwd TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('running','stopped','crashed')),
   oc_session_id TEXT,
+  model TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -109,9 +112,18 @@ export interface SessionStore {
     status: SessionStatus,
     changedAt?: number,
   ): Result<Session>;
+  /** Perbarui ocSessionId tanpa mengubah status (dipakai resumeSession). */
+  updateSessionOcId(sessionId: string, ocSessionId: string | null): Result<Session>;
+  /** Perbarui model pilihan Session; `null` = kembali ke default opencode. */
+  updateSessionModel(sessionId: string, model: SessionModel | null): Result<Session>;
   getSession(sessionId: string): Result<Session>;
   getSessionByOcId(ocSessionId: string): Result<Session>;
   listSessions(): Session[];
+  /**
+   * Hapus Session beserta seluruh baris anaknya (messages, prompts,
+   * status history) dalam satu transaksi. `ok: false` bila tidak ada.
+   */
+  deleteSession(sessionId: string): SimpleResult;
 
   // ---- Projects (CRUD) ----
   insertProject(project: Project): Result<Project>;
@@ -147,6 +159,7 @@ interface SessionRow {
   cwd: string;
   status: string;
   oc_session_id: string | null;
+  model: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -175,6 +188,23 @@ function mapProject(r: ProjectRow): Project {
   return { id: r.id, name: r.name, path: r.path, createdAt: r.created_at };
 }
 
+/**
+ * Parse kolom `sessions.model` (JSON) -> SessionModel.
+ * Nilai NULL/korup/tidak lengkap dianggap "pakai model default" (null).
+ */
+function parseModel(raw: string | null): SessionModel | null {
+  if (raw === null || raw === "") return null;
+  try {
+    const obj = JSON.parse(raw) as { providerID?: unknown; modelID?: unknown } | null;
+    if (obj && typeof obj.providerID === "string" && typeof obj.modelID === "string") {
+      return { providerID: obj.providerID, modelID: obj.modelID };
+    }
+  } catch {
+    /* data korup -> default */
+  }
+  return null;
+}
+
 function mapSession(r: SessionRow): Session {
   return {
     id: r.id,
@@ -183,6 +213,7 @@ function mapSession(r: SessionRow): Session {
     cwd: r.cwd,
     status: r.status as SessionStatus,
     ocSessionId: r.oc_session_id,
+    model: parseModel(r.model),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -240,6 +271,8 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     "ALTER TABLE prompts ADD COLUMN kind TEXT NOT NULL DEFAULT 'permission'",
   );
   ensureColumn(db, "prompts", "title", "ALTER TABLE prompts ADD COLUMN title TEXT");
+  // Model pilihan per Session (JSON `{providerID, modelID}`), NULL = default.
+  ensureColumn(db, "sessions", "model", "ALTER TABLE sessions ADD COLUMN model TEXT");
 
   // Prepared statements
   const q = {
@@ -253,12 +286,20 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     listProjects: db.query("SELECT * FROM projects ORDER BY created_at ASC, name ASC"),
 
     insertSession: db.query(
-      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getSession: db.query("SELECT * FROM sessions WHERE id = ?"),
     getSessionByOcId: db.query("SELECT * FROM sessions WHERE oc_session_id = ?"),
     listSessions: db.query("SELECT * FROM sessions ORDER BY created_at ASC, id ASC"),
     updateSession: db.query("UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?"),
+    updateSessionOcId: db.query(
+      "UPDATE sessions SET oc_session_id = ?, updated_at = ? WHERE id = ?",
+    ),
+    updateSessionModel: db.query("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?"),
+    deleteSessionMessages: db.query("DELETE FROM messages WHERE session_id = ?"),
+    deleteSessionPrompts: db.query("DELETE FROM prompts WHERE session_id = ?"),
+    deleteSessionHistory: db.query("DELETE FROM session_status_history WHERE session_id = ?"),
+    deleteSessionRow: db.query("DELETE FROM sessions WHERE id = ?"),
 
     insertMessage: db.query(
       "INSERT INTO messages (session_id, message_id, role, parts_json, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -356,6 +397,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
           session.cwd,
           session.status,
           session.ocSessionId,
+          session.model ? JSON.stringify(session.model) : null,
           session.createdAt,
           session.updatedAt,
         );
@@ -374,6 +416,39 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
           q.insertHistory.run(sessionId, status, changedAt);
         });
         tx();
+        const updated = mapSession(q.getSession.get(sessionId) as SessionRow);
+        return { ok: true, data: updated };
+      } catch (e) {
+        return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);
+      }
+    },
+
+    /**
+     * Perbarui `oc_session_id` tanpa mengubah status — dipakai `resumeSession`
+     * saat Session lama menunjuk oc session yang sudah tidak dikenal server
+     * (mis. storage opencode dibersihkan) dan perlu memakai sesi remote baru.
+     */
+    updateSessionOcId(sessionId: string, ocSessionId: string | null): Result<Session> {
+      try {
+        const existing = q.getSession.get(sessionId) as SessionRow | null;
+        if (!existing) return errResult("SESSION_NOT_FOUND");
+        q.updateSessionOcId.run(ocSessionId, Date.now(), sessionId);
+        const updated = mapSession(q.getSession.get(sessionId) as SessionRow);
+        return { ok: true, data: updated };
+      } catch (e) {
+        return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);
+      }
+    },
+
+    /**
+     * Perbarui model pilihan Session tanpa mengubah status — dipakai rute
+     * `PUT /api/sessions/:id/model`. `null` berarti kembali ke default opencode.
+     */
+    updateSessionModel(sessionId: string, model: SessionModel | null): Result<Session> {
+      try {
+        const existing = q.getSession.get(sessionId) as SessionRow | null;
+        if (!existing) return errResult("SESSION_NOT_FOUND");
+        q.updateSessionModel.run(model ? JSON.stringify(model) : null, Date.now(), sessionId);
         const updated = mapSession(q.getSession.get(sessionId) as SessionRow);
         return { ok: true, data: updated };
       } catch (e) {
@@ -403,6 +478,28 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
 
     listSessions(): Session[] {
       return (q.listSessions.all() as SessionRow[]).map(mapSession);
+    },
+
+    /**
+     * Hapus Session beserta seluruh baris anaknya (messages, prompts,
+     * riwayat status) dalam satu transaksi. Gagal di tengah jalan di-rollback
+     * agar data tidak setengah terhapus.
+     */
+    deleteSession(sessionId: string): SimpleResult {
+      try {
+        const existing = q.getSession.get(sessionId) as SessionRow | null;
+        if (!existing) return errResult("SESSION_NOT_FOUND");
+        const tx = db.transaction(() => {
+          q.deleteSessionMessages.run(sessionId);
+          q.deleteSessionPrompts.run(sessionId);
+          q.deleteSessionHistory.run(sessionId);
+          q.deleteSessionRow.run(sessionId);
+        });
+        tx();
+        return { ok: true };
+      } catch (e) {
+        return errResult(`SESSION_DELETE_FAILED: ${(e as Error).message}`);
+      }
     },
 
     // ---------------- Projects (CRUD) ----------------

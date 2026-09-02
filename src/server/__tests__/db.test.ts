@@ -22,6 +22,7 @@ function makeSession(id = "s1", status: SessionStatus = "running"): Session {
     cwd: "/sandbox/proj",
     status,
     ocSessionId: id === "s1" ? "ses_1" : null,
+    model: id === "s1" ? { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" } : null,
     createdAt: 1,
     updatedAt: 1,
   };

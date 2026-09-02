@@ -17,7 +17,7 @@ import type {
 /** Pesan Client -> Server. */
 export type ClientMessage =
   | { type: "attach"; sessionId: string }
-  | { type: "input"; sessionId: string; text: string }
+  | { type: "input"; sessionId: string; text: string; files?: string[] }
   | { type: "prompt_response"; sessionId: string; promptId: string; response: PromptResponse }
   | { type: "stop"; sessionId: string };
 
@@ -35,6 +35,8 @@ export type ServerMessage =
   | { type: "prompt"; sessionId: string; prompt: InteractivePrompt }
   | { type: "prompt_resolved"; sessionId: string; promptId: string }
   | { type: "session_status"; sessionId: string; status: SessionStatus }
+  /** Session dihapus permanen — subscriber harus meninggalkan halamannya. */
+  | { type: "session_deleted"; sessionId: string }
   | { type: "error"; code: string; message: string };
 
 /** Kode error umum pada pesan `error`. */

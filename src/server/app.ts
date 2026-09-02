@@ -27,7 +27,7 @@ import { openSessionStore, type SessionStore } from "./db";
 import { createOpenCodeServerManager, type OpenCodeServerManager } from "./opencode-server";
 import { createProjectManager, type ProjectManager } from "./project-manager";
 import { createSessionManager, type SessionManager } from "./session-manager";
-import type { AgentType } from "./types";
+import type { AgentType, SessionModel } from "./types";
 import {
   bunWsSubscriber,
   createWebSocketGateway,
@@ -86,6 +86,7 @@ function errorStatus(code: string): number {
     case "INVALID_PATH_CHARS":
     case "UNSUPPORTED_AGENT_TYPE":
     case "INVALID_SIZE":
+    case "MODEL_NOT_FOUND":
       return 400;
     case "PROJECT_NOT_FOUND":
     case "PROJECT_DIR_NOT_FOUND":
@@ -96,7 +97,11 @@ function errorStatus(code: string): number {
     case "PATH_TAKEN":
     case "SESSION_NOT_RUNNING":
     case "SESSION_NOT_ACTIVE":
+    case "SESSION_ALREADY_RUNNING":
       return 409;
+    // Server headless menolak operasi (mis. hapus session remote gagal).
+    case "OC_DELETE_SESSION_FAILED":
+      return 502;
     default:
       return 500;
   }
@@ -112,6 +117,18 @@ async function readJson(req: Request): Promise<{ ok: true; data: unknown } | { o
   } catch {
     return { ok: false };
   }
+}
+
+/**
+ * Body `model` pada POST/PUT Session: `{ providerID, modelID }` atau `null`
+ * (artinya pakai model default opencode). Bentuk lain dianggap null.
+ */
+function parseModelBody(raw: unknown): SessionModel | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const { providerID, modelID } = raw as { providerID?: unknown; modelID?: unknown };
+  if (typeof providerID !== "string" || providerID === "") return null;
+  if (typeof modelID !== "string" || modelID === "") return null;
+  return { providerID, modelID };
 }
 
 /**
@@ -157,6 +174,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       gateway.notifyMessagePart(sessionId, messageId, part),
     onPrompt: (prompt) => gateway.notifyPrompt(prompt.sessionId, prompt),
     onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
+    onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
   });
   gateway = createWebSocketGateway({ store, sessionManager });
@@ -232,6 +250,19 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
         }),
       },
 
+      // ---- Daftar model yang tersedia pada server headless Project ----
+      "/api/projects/:id/models": {
+        GET: guard(async (req: BunRequest<"/api/projects/:id/models">) => {
+          try {
+            const res = await sessionManager.listModels(req.params.id);
+            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+            return json({ models: res.data });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+      },
+
       // ---- Session (Requirement 1, 4) ----
       "/api/sessions": {
         GET: guard(() => {
@@ -245,13 +276,15 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
           try {
             const body = await readJson(req);
             if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-            const { agentType, projectId } = body.data as {
+            const { agentType, projectId, model } = body.data as {
               agentType?: unknown;
               projectId?: unknown;
+              model?: unknown;
             };
             const res = await sessionManager.createSession({
               agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
               projectId: typeof projectId === "string" ? projectId : "",
+              model: parseModelBody(model),
             });
             if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
             return json({ session: res.session }, 201);
@@ -262,7 +295,82 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       },
 
       "/api/sessions/:id": {
-        DELETE: guard((req: BunRequest<"/api/sessions/:id">) => {
+        /**
+         * Hapus Session permanen — juga menghapus session (dan riwayat
+         * pesannya) di server headless opencode bila server masih hidup.
+         */
+        DELETE: guard(async (req: BunRequest<"/api/sessions/:id">) => {
+          try {
+            const res = await sessionManager.deleteSession(req.params.id);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
+            return json({ ok: true });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+        /**
+         * Resume Session yang stopped/crashed (tombol "Start" di UI).
+         * Memakai ocSessionId lama bila masih dikenal server headless;
+         * bila tidak, sesi remote baru dibuat & disimpan ke Session.
+         */
+        POST: guard(async (req: BunRequest<"/api/sessions/:id">) => {
+          try {
+            const res = await sessionManager.resumeSession(req.params.id);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
+            const cur = sessionManager.getSession(req.params.id);
+            return json({ session: cur.ok ? cur.data : undefined, ok: true });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+        /**
+         * Ganti model pilihan Session — body `{ model: {providerID, modelID} }`
+         * atau `{ model: null }` untuk kembali ke default opencode. Berlaku
+         * pada prompt berikutnya tanpa perlu restart Session.
+         */
+        PUT: guard(async (req: BunRequest<"/api/sessions/:id">) => {
+          try {
+            const body = await readJson(req);
+            if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
+            const raw = (body.data as { model?: unknown }).model;
+            const model = raw === null ? null : parseModelBody(raw);
+            const res = sessionManager.setSessionModel(req.params.id, model);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
+            const cur = sessionManager.getSession(req.params.id);
+            return json({ session: cur.ok ? cur.data : undefined, ok: true });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+      },
+
+      // ---- Cari file Project (autocomplete referensi @file di composer) ----
+      "/api/sessions/:id/files": {
+        GET: guard(async (req: BunRequest<"/api/sessions/:id/files">) => {
+          try {
+            const url = new URL(req.url);
+            const query = (url.searchParams.get("q") ?? "").slice(0, 200);
+            const cur = sessionManager.getSession(req.params.id);
+            if (!cur.ok)
+              return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
+            const res = await sessionManager.findFiles(cur.data.projectId, query);
+            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+            return json({ files: res.data });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+      },
+
+      // ---- Stop Session (abort turn + status stopped, data tetap ada) ----
+      "/api/sessions/:id/stop": {
+        POST: guard((req: BunRequest<"/api/sessions/:id/stop">) => {
           try {
             const res = sessionManager.stopSession(req.params.id);
             if (!res.ok) {

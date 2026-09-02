@@ -16,16 +16,18 @@ import {
   BotIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  FileIcon,
+  PlayIcon,
   SendHorizontalIcon,
   SquareIcon,
   WrenchIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ModelPicker } from "@/components/model-picker";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
 import { Message, MessageContent, MessageFooter, MessageHeader } from "@/components/ui/message";
 import {
   MessageScroller,
@@ -35,8 +37,10 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import { Spinner } from "@/components/ui/spinner";
+import { useFileMention } from "@/hooks/use-mention";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/use-websocket";
-import { getAuthToken } from "@/lib/api";
+import { apiFetch, getAuthToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
   InteractivePrompt,
@@ -44,6 +48,7 @@ import type {
   PromptResponse,
   Session,
   SessionMessage,
+  SessionModel,
   SessionStatus,
 } from "@/server/types";
 import type { ServerMessage } from "@/server/ws-protocol";
@@ -184,8 +189,30 @@ export function SessionView({ session, onBack }: SessionViewProps) {
   const [collapsible, setCollapsible] = useState<CollapsibleState>({});
   const [prompts, setPrompts] = useState<InteractivePrompt[]>([]);
   const [status, setStatus] = useState<SessionStatus>(session.status);
+  /** Model pilihan Session — dapat diganti live; null = default opencode. */
+  const [model, setModel] = useState<SessionModel | null>(session.model);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");
+  /**
+   * Autocomplete `@file`: deteksi token @query di sekitar kursor + daftar
+   * saran dari server (index file milik opencode, seperti `@` di TUI-nya).
+   */
+  const mention = useFileMention({ endpoint: `/api/sessions/${session.id}/files` });
+  /**
+   * Terapkan teks hasil pemilihan saran (keyboard maupun mouse) ke state
+   * input + kembalikan fokus ke textarea.
+   */
+  const applyPicked = useCallback((next: string) => {
+    setText(next);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+  useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h). */
+  const autoResize = (el: HTMLTextAreaElement) => {
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  };
   /**
    * Id pesan assistant final yang baru tiba -> kandidat efek mengetik.
    * Hanya fallback: bila teks sudah ter-stream live, pesan dirender penuh.
@@ -269,11 +296,22 @@ export function SessionView({ session, onBack }: SessionViewProps) {
       case "session_status":
         setStatus(msg.status);
         break;
+      case "session_deleted":
+        // Session dihapus dari tempat lain — kembali ke daftar Session.
+        onBackRef.current();
+        break;
       case "error":
         setError(msg.message);
         break;
     }
   }, []);
+
+  /**
+   * `onBack` dibaca lewat ref agar handler WS tidak perlu dibuat ulang
+   * (dan koneksi WebSocket tidak di-attach ulang) tiap callback berubah.
+   */
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
 
   const {
     status: wsStatus,
@@ -297,15 +335,49 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     [send, session.id],
   );
 
+  /** Cache path yang pernah disarankan autocomplete (validitas @ref saat kirim). */
+  const suggestedCacheRef = useRef<Set<string>>(new Set());
+  if (mention.suggestions.length > 0) {
+    for (const s of mention.suggestions) suggestedCacheRef.current.add(s);
+  }
+
   const submitText = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (text.trim() === "") return;
-    send({ type: "input", sessionId: session.id, text });
+    /**
+     * Referensi @path yang dikenal diekstrak menjadi daftar `files` — tapi
+     * teks TIDAK diubah. Teks asli tetap tampil di bubble chat (termasuk
+     * `@path`-nya); part `file` di prompt opencode hanya penanda tambahan
+     * agar isi file benar-benar dibaca.
+     */
+    const files: string[] = [];
+    for (const match of text.matchAll(/(^|\s)@([^\s]+)/g)) {
+      const path = match[2] ?? "";
+      if (path.length > 0 && (suggestedCacheRef.current.has(path) || path.includes("/"))) {
+        files.push(path);
+      }
+    }
+    send({ type: "input", sessionId: session.id, text: text.trim(), files });
     setText("");
+    mention.close();
   };
 
   const stop = () => {
     send({ type: "stop", sessionId: session.id });
+  };
+
+  /** Resume via API langsung — hasil status baru tiba via WS `session_status`. */
+  const [starting, setStarting] = useState(false);
+  const start = async () => {
+    setStarting(true);
+    try {
+      await apiFetch(`/api/sessions/${session.id}`, { method: "POST" });
+      // Status baru dikirim gateway ke semua subscriber; tak perlu setState di sini.
+    } catch {
+      // Kegagalan dibiarkan: badge status tidak berubah, user bisa coba lagi.
+    } finally {
+      setStarting(false);
+    }
   };
 
   const canInput = wsStatus === "connected" && status === "running";
@@ -401,16 +473,37 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     );
   };
 
-  const renderUserMessage = (m: SessionMessage) => (
-    <Message key={m.id} align="end">
-      <MessageContent>
-        <Bubble>
-          <BubbleContent className="whitespace-pre-wrap">{textOf(m.parts)}</BubbleContent>
-        </Bubble>
-        <MessageFooter>{formatTime(m.createdAt)}</MessageFooter>
-      </MessageContent>
-    </Message>
-  );
+  const renderUserMessage = (m: SessionMessage) => {
+    const attachedFiles = m.parts
+      .map((p) => ({ part: p, filename: p.filename }))
+      .filter(
+        (x): x is { part: MessagePart; filename: string } =>
+          x.part.type === "file" && typeof x.filename === "string",
+      );
+    return (
+      <Message key={m.id} align="end">
+        <MessageContent>
+          <Bubble>
+            <BubbleContent className="whitespace-pre-wrap">{textOf(m.parts)}</BubbleContent>
+            {attachedFiles.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap gap-1">
+                {attachedFiles.map(({ filename }) => (
+                  <span
+                    key={filename}
+                    className="inline-flex max-w-full items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                  >
+                    <FileIcon className="size-3 shrink-0" />
+                    <span className="truncate">{filename}</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </Bubble>
+          <MessageFooter>{formatTime(m.createdAt)}</MessageFooter>
+        </MessageContent>
+      </Message>
+    );
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -428,10 +521,22 @@ export function SessionView({ session, onBack }: SessionViewProps) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {status === "running" && (
+          {status === "running" ? (
             <Button type="button" variant="outline" size="sm" onClick={stop} aria-label="Hentikan">
               <SquareIcon data-icon="inline-start" />
               Stop
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={start}
+              disabled={starting}
+              aria-label="Hidupkan kembali"
+            >
+              {starting ? <Spinner className="size-3.5" /> : <PlayIcon data-icon="inline-start" />}
+              Start
             </Button>
           )}
           <Badge variant={wsStatus === "connected" ? "default" : "secondary"}>
@@ -482,13 +587,74 @@ export function SessionView({ session, onBack }: SessionViewProps) {
 
       {/* Input bebas */}
       <footer className="border-t px-3 py-2">
-        <form onSubmit={submitText} className="flex items-center gap-2">
-          <Input
+        <div className="mb-2">
+          <ModelPicker
+            projectId={session.projectId}
+            sessionId={session.id}
+            model={model}
+            onChanged={setModel}
+          />
+        </div>
+        <form onSubmit={submitText} className="relative flex items-end gap-2">
+          {/* Dropdown saran @file (muncul di atas input saat token @ aktif).
+              Wrapper rounded + overflow-hidden memotong scrollbar sesuai
+              lengkungan, elemen di dalamnya yang men-scroll (Req kartu rounded). */}
+          {mention.mention !== null && (mention.suggestions.length > 0 || mention.loading) && (
+            <div className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-md border bg-popover shadow-md">
+              <div className="max-h-56 overflow-y-auto">
+                {mention.loading && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">Mencari file…</div>
+                )}
+                {!mention.loading && mention.error && (
+                  <div className="px-3 py-2 text-xs text-destructive">{mention.error}</div>
+                )}
+                {mention.suggestions.map((file, i) => (
+                  <button
+                    key={file}
+                    type="button"
+                    className={`block w-full truncate px-3 py-2 text-left font-mono text-xs ${
+                      i === mention.highlighted ? "bg-accent text-accent-foreground" : ""
+                    }`}
+                    onMouseDown={(e) => {
+                      // mousedown (bukan click) agar textarea tidak blur duluan.
+                      e.preventDefault();
+                      const next = mention.pick(i);
+                      if (next !== null) applyPicked(next);
+                    }}
+                  >
+                    {file}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={canInput ? "Ketik pesan ke CLI_Agent…" : "Session tidak aktif"}
+            onChange={(e) => {
+              setText(e.target.value);
+              mention.onInputChange(
+                e.target.value,
+                e.target.selectionStart ?? e.target.value.length,
+              );
+              autoResize(e.target);
+            }}
+            onKeyDown={(e) => {
+              // Dropdown aktif: panah/enter/tab/escape dikelola autocomplete.
+              if (mention.handleKeyDown(e)) return;
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                e.currentTarget.form?.requestSubmit();
+              }
+            }}
+            onBlur={() => mention.close()}
+            placeholder={
+              canInput ? "Ketik pesan… ketik @ untuk referensi file" : "Session tidak aktif"
+            }
             aria-label="Input bebas"
             disabled={!canInput}
+            rows={1}
+            className="max-h-40 min-h-9 w-full flex-1 resize-none rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
           />
           <Button
             type="submit"

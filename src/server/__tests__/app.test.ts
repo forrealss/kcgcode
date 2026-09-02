@@ -29,6 +29,9 @@ interface FakeClient extends OpenCodeClient {
   sendMessageCalls: string[];
   replyPermissionCalls: [string, string][];
   abortCalls: string[];
+  deleteCalls: string[];
+  /** Apakah `getSession` melaporkan session remote masih ada (default: ya). */
+  getSessionOk: boolean;
 }
 
 function makeFakeClient(projectId: string): FakeClient {
@@ -37,8 +40,33 @@ function makeFakeClient(projectId: string): FakeClient {
     sendMessageCalls: [],
     replyPermissionCalls: [],
     abortCalls: [],
+    deleteCalls: [],
+    getSessionOk: true,
     async createSession() {
       return { ok: true, data: { id: `ses_${projectId}`, directory: "/proj" } };
+    },
+    async getSession(_sessionId) {
+      return client.getSessionOk ? { ok: true } : { ok: false, error: "OC_SESSION_NOT_FOUND" };
+    },
+    async deleteSession(sessionId) {
+      client.deleteCalls.push(sessionId);
+      return { ok: true };
+    },
+    async findFiles(query) {
+      return { ok: true, data: query ? ["src/App.tsx"] : [] };
+    },
+    async listModels() {
+      return {
+        ok: true,
+        data: [
+          {
+            providerID: "kcgrouter",
+            providerName: "kcgrouter",
+            modelID: "kiro/claude-opus-5",
+            name: "Claude Opus 5",
+          },
+        ],
+      };
     },
     async sendMessage(_sessionId, text) {
       client.sendMessageCalls.push(text);
@@ -271,9 +299,9 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     await waitFor(() => msgs.some((m) => m.type === "prompt_resolved"), 3000, "prompt_resolved");
     expect(client.replyPermissionCalls).toContainEqual(["per_1", "once"]);
 
-    // ---- stopSession (Requirement 1.6) ----
-    const delRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
-    expect(delRes.status).toBe(200);
+    // ---- stopSession (Requirement 1.6) — POST /stop, data tetap ada ----
+    const stopRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}/stop`, { method: "POST" });
+    expect(stopRes.status).toBe(200);
     expect(client.abortCalls).toContain(`ses_${projBody.project.id}`);
     await waitFor(
       () => msgs.some((m) => m.type === "session_status" && m.status === "stopped"),
@@ -285,6 +313,39 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     const listBody = (await listRes.json()) as { sessions: Session[] };
     const listed = listBody.sessions.find((s) => s.id === sessionId);
     expect(listed?.status).toBe("stopped");
+
+    // ---- resume session stopped (ocSessionId dipertahankan) ----
+    const resumeRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "POST" });
+    expect(resumeRes.status).toBe(200);
+    const resumeBody = (await resumeRes.json()) as { session: Session; ok: boolean };
+    expect(resumeBody.ok).toBe(true);
+    expect(resumeBody.session.status).toBe("running");
+    // ocSessionId lama masih dikenal fake server -> tidak diganti.
+    expect(resumeBody.session.ocSessionId).toBe(`ses_${projBody.project.id}`);
+    // Input kembali berfungsi setelah resume (via WebSocket).
+    ws.send(JSON.stringify({ type: "input", sessionId, text: "setelah resume" }));
+    await waitFor(
+      () => msgs.filter((m) => m.type === "message" && m.message.role === "user").length === 2,
+      3000,
+      "echo user setelah resume",
+    );
+
+    // Resume kedua kali -> konflik 409.
+    const resumeRes2 = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "POST" });
+    expect(resumeRes2.status).toBe(409);
+
+    // ---- deleteSession: hapus permanen (remote + lokal) ----
+    const delRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
+    expect(delRes.status).toBe(200);
+    expect(client.deleteCalls).toContain(`ses_${projBody.project.id}`);
+    // Session hilang dari daftar.
+    const afterDel = (await (await fetch(`${baseUrl()}/api/sessions`)).json()) as {
+      sessions: Session[];
+    };
+    expect(afterDel.sessions.find((s) => s.id === sessionId)).toBeUndefined();
+    // Session sudah tidak ada -> hapus lagi -> 404.
+    const delRes2 = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
+    expect(delRes2.status).toBe(404);
 
     ws.close();
   });
@@ -341,6 +402,105 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     });
     expect(sessRes.status).toBe(400);
     expect(((await sessRes.json()) as { error: string }).error).toBe("INVALID_JSON");
+  });
+
+  test("model: GET /api/projects/:id/models + create dengan model + PUT ganti model", async () => {
+    mkdirSync(path.join(root, "proj-model"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "model-proj", path: "proj-model" }),
+      })
+    ).json()) as { project: Project };
+
+    // ---- daftar model tersedia ----
+    const modelsRes = await fetch(`${baseUrl()}/api/projects/${proj.project.id}/models`);
+    expect(modelsRes.status).toBe(200);
+    const modelsBody = (await modelsRes.json()) as {
+      models: { providerID: string; modelID: string; name: string }[];
+    };
+    expect(modelsBody.models[0]).toMatchObject({
+      providerID: "kcgrouter",
+      modelID: "kiro/claude-opus-5",
+    });
+
+    // ---- create Session dengan model pilihan ----
+    const sess = (await (
+      await fetch(`${baseUrl()}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          agentType: "opencode",
+          projectId: proj.project.id,
+          model: { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" },
+        }),
+      })
+    ).json()) as { session: Session };
+    expect(sess.session.model).toEqual({
+      providerID: "kcgrouter",
+      modelID: "kiro/claude-opus-5",
+    });
+
+    // ---- model tidak dikenal -> 400 MODEL_NOT_FOUND ----
+    const badRes = await fetch(`${baseUrl()}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        agentType: "opencode",
+        projectId: proj.project.id,
+        model: { providerID: "kcgrouter", modelID: "tidak-ada" },
+      }),
+    });
+    expect(badRes.status).toBe(400);
+    expect(((await badRes.json()) as { error: string }).error).toBe("MODEL_NOT_FOUND");
+
+    // ---- ganti model via PUT ----
+    const putRes = await fetch(`${baseUrl()}/api/sessions/${sess.session.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: null }),
+    });
+    expect(putRes.status).toBe(200);
+    const putBody = (await putRes.json()) as { session: Session };
+    expect(putBody.session.model).toBeNull();
+
+    // Session tak dikenal -> 404
+    const missing = await fetch(`${baseUrl()}/api/sessions/tidak-ada`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: null }),
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  test("@file: GET /api/sessions/:id/files mencari via server headless", async () => {
+    mkdirSync(path.join(root, "proj-files"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "files-proj", path: "proj-files" }),
+      })
+    ).json()) as { project: Project };
+
+    const sess = (await (
+      await fetch(`${baseUrl()}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentType: "opencode", projectId: proj.project.id }),
+      })
+    ).json()) as { session: Session };
+
+    // Query mencocokkan file dari fake client (availableFiles).
+    const found = await fetch(`${baseUrl()}/api/sessions/${sess.session.id}/files?q=App`);
+    expect(found.status).toBe(200);
+    const foundBody = (await found.json()) as { files: string[] };
+    expect(foundBody.files).toContain("src/App.tsx");
+
+    // Session tak dikenal -> 404.
+    const missing = await fetch(`${baseUrl()}/api/sessions/tidak-ada/files?q=x`);
+    expect(missing.status).toBe(404);
   });
 });
 

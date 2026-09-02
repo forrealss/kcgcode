@@ -43,7 +43,7 @@ export interface WebSocketGatewayOptions {
 
 export interface WebSocketGateway {
   attach(sub: Subscriber, sessionId: string): void;
-  input(sub: Subscriber, sessionId: string, text: string): void;
+  input(sub: Subscriber, sessionId: string, text: string, files?: string[]): void;
   promptResponse(
     sub: Subscriber,
     sessionId: string,
@@ -55,6 +55,7 @@ export interface WebSocketGateway {
   notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
   notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
   notifySessionStatus(sessionId: string, status: SessionStatus): void;
+  notifySessionDeleted(sessionId: string): void;
   notifyPromptResolved(sessionId: string, promptId: string): void;
   notifyError(sessionId: string, code: string, message: string): void;
   detach(sub: Subscriber): void;
@@ -118,9 +119,9 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     subs.set(sub, { sessionId });
   }
 
-  function input(sub: Subscriber, sessionId: string, text: string): void {
+  function input(sub: Subscriber, sessionId: string, text: string, files?: string[]): void {
     void sessionManager
-      .sendFreeTextInput(sessionId, text)
+      .sendFreeTextInput(sessionId, text, files ?? [])
       .then((res) => {
         if (!res.ok) {
           const code = toErrorCode(res.error ?? "");
@@ -184,6 +185,11 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     broadcast(sessionId, () => ({ type: "session_status", sessionId, status }));
   }
 
+  /** Beri tahu subscriber bahwa Session sudah dihapus permanen. */
+  function notifySessionDeleted(sessionId: string): void {
+    broadcast(sessionId, () => ({ type: "session_deleted", sessionId }));
+  }
+
   function notifyPromptResolved(sessionId: string, promptId: string): void {
     broadcast(sessionId, () => ({ type: "prompt_resolved", sessionId, promptId }));
   }
@@ -213,6 +219,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifyMessagePart,
     notifyPrompt,
     notifySessionStatus,
+    notifySessionDeleted,
     notifyPromptResolved,
     notifyError,
     detach,
@@ -276,8 +283,13 @@ export function dispatchClientMessage(
       else invalidMessage(sub, "attach membutuhkan sessionId string");
       break;
     case "input":
-      if (typeof msg.sessionId === "string" && typeof msg.text === "string") {
-        gateway.input(sub, msg.sessionId, msg.text);
+      if (
+        typeof msg.sessionId === "string" &&
+        typeof msg.text === "string" &&
+        (msg.files === undefined ||
+          (Array.isArray(msg.files) && msg.files.every((f) => typeof f === "string")))
+      ) {
+        gateway.input(sub, msg.sessionId, msg.text, msg.files);
       } else {
         invalidMessage(sub, "input membutuhkan sessionId dan text string");
       }
