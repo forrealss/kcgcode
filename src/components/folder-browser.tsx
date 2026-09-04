@@ -103,7 +103,7 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
       </div>
 
       {/* Daftar sub-direktori */}
-      <div className="flex flex-col gap-1 rounded-lg border bg-card p-2">
+      <div className="max-h-64 overflow-y-auto rounded-lg border bg-card p-2">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Spinner className="size-4" />
@@ -114,7 +114,7 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
         ) : entries.length === 0 ? (
           <p className="px-2 py-4 text-sm text-muted-foreground">Tidak ada sub-direktori.</p>
         ) : (
-          <>
+          <div className="flex flex-col gap-1">
             {cwd !== "" && (
               <Button
                 type="button"
@@ -140,7 +140,7 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
                 <span className="truncate">{name}</span>
               </Button>
             ))}
-          </>
+          </div>
         )}
       </div>
 

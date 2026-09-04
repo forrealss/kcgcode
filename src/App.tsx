@@ -12,7 +12,7 @@
  * - `SessionView` di-`key` per `session.id` agar remount saat pindah Session.
  */
 
-import { KeyRoundIcon } from "lucide-react";
+import { KeyRoundIcon, SparklesIcon } from "lucide-react";
 import { useState } from "react";
 import { ProjectList } from "@/components/project-list";
 import { ProjectSessionsPage } from "@/components/project-sessions-page";
@@ -41,28 +41,48 @@ export function App() {
     setTokenOpen(false);
   };
 
+  const isHome = route.name === "projects";
+
   return (
-    <div className="mx-auto flex h-dvh w-full max-w-2xl flex-col bg-background">
+    <div
+      className={
+        isHome
+          ? "relative flex h-dvh w-full flex-col bg-background"
+          : "relative mx-auto flex h-dvh w-full max-w-5xl flex-col bg-background shadow-sm sm:border-x"
+      }
+    >
       {/* Header */}
-      <header className="flex shrink-0 items-center justify-between gap-2 border-b px-3 py-2.5">
-        <a
-          href={projectsPath()}
-          onClick={(e) => {
-            e.preventDefault();
-            navigate(projectsPath());
-          }}
-          className="flex min-w-0 items-center gap-2"
-          aria-label="Kembali ke daftar Project"
-        >
-          <img src={logo} alt="KCG Bridge" className="size-7" />
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-semibold leading-tight">KCG Bridge</span>
-            <span className="truncate text-[11px] leading-tight text-muted-foreground">
-              Kontrol CLI_Agent dari HP
+      <header
+        className={
+          isHome
+            ? "mx-auto flex w-full max-w-xl shrink-0 justify-end px-4 py-3 sm:px-6"
+            : "flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
+        }
+      >
+        {!isHome && (
+          <a
+            href={projectsPath()}
+            onClick={(e) => {
+              e.preventDefault();
+              navigate(projectsPath());
+            }}
+            className="flex min-w-0 items-center gap-2"
+            aria-label="Kembali ke daftar Project"
+          >
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-sm">
+              <img src={logo} alt="" className="size-full" />
             </span>
-          </div>
-        </a>
-        <div className="flex shrink-0 items-center gap-1">
+            <div className="flex min-w-0 flex-col">
+              <span className="truncate text-sm font-semibold leading-tight tracking-tight">
+                KCG Bridge
+              </span>
+              <span className="hidden truncate text-[11px] leading-tight text-muted-foreground sm:block">
+                Kontrol CLI_Agent dari mana saja
+              </span>
+            </div>
+          </a>
+        )}
+        <div className="flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 p-0.5">
           <Button
             type="button"
             variant="ghost"
@@ -82,7 +102,7 @@ export function App() {
       {tokenOpen && (
         <form
           onSubmit={saveToken}
-          className="flex shrink-0 items-center gap-2 border-b bg-muted/40 px-3 py-2"
+          className="flex shrink-0 flex-col gap-2 border-b bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:px-6"
         >
           <Input
             value={token}
@@ -91,10 +111,11 @@ export function App() {
             aria-label="Token otentikasi"
             type="password"
             autoComplete="off"
-            className="h-8"
+            className="h-9 sm:h-8"
           />
-          <Button type="submit" size="sm">
-            Simpan
+          <Button type="submit" size="sm" className="w-full sm:w-auto">
+            <SparklesIcon data-icon="inline-start" />
+            Simpan token
           </Button>
         </form>
       )}
@@ -107,8 +128,14 @@ export function App() {
           sessionId={route.sessionId}
         />
       ) : (
-        <main className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto w-full max-w-2xl p-4 pb-12">
+        <main className="min-h-0 flex-1 overflow-y-auto bg-background">
+          <div
+            className={
+              isHome
+                ? "flex min-h-full items-center justify-center px-4 py-10 sm:px-6 sm:py-12"
+                : "mx-auto w-full p-4 pb-12 sm:p-6 sm:pb-16 lg:p-8"
+            }
+          >
             {route.name === "projects" && (
               <ProjectList onOpenProject={(project) => openProject(project.id)} />
             )}

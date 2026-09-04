@@ -1,18 +1,20 @@
 /**
- * Daftar & pembuatan Project (Requirement 10.4-10.8).
+ * Homepage: branding, aksi pembuatan Project, dan daftar Project terbaru.
  *
- * - `GET /api/projects` untuk daftar (Requirement 10.8).
- * - Form nama Project + Folder_Browser untuk memilih path dalam Sandbox_Root
- *   (Requirement 10.2-10.4); `POST /api/projects` untuk membuat (10.4).
- * - Error validasi (nama/path duplikat, di luar sandbox, dst.) ditampilkan
- *   lewat Alert (10.5, 10.6, 10.7).
+ * Form pembuatan tetap tersedia, tetapi disembunyikan sampai pengguna memilih
+ * aksi "Project baru" agar root page tetap fokus dan tidak ramai.
  */
 
-import { FolderPlusIcon, RefreshCwIcon, XIcon } from "lucide-react";
+import {
+  ArrowRightIcon,
+  FolderIcon,
+  FolderPlusIcon,
+  FoldersIcon,
+  RefreshCwIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Empty,
   EmptyContent,
@@ -21,12 +23,20 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { Project } from "@/server/types";
-import { FolderBrowser } from "./folder-browser";
+import logo from "../logo.svg";
+import { NewProjectDialog } from "./new-project-dialog";
+
+/** Format singkat tanggal dibuat, konsisten dengan `session-list.tsx`. */
+function formatDate(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
 
 export interface ProjectListProps {
   /** Navigasi ke daftar Session milik Project yang dipilih. */
@@ -37,13 +47,7 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-
-  const [name, setName] = useState("");
-  const [path, setPath] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-  /** Form pembuatan disembunyikan secara default — dibuka lewat tombol. */
-  const [formOpen, setFormOpen] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -60,65 +64,63 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
   }, []);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
-  const create = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setCreating(true);
-    setFormError(null);
-    try {
-      await apiFetch("/api/projects", { method: "POST", body: JSON.stringify({ name, path }) });
-      setName("");
-      setPath("");
-      setFormOpen(false);
-      await refresh();
-    } catch (e) {
-      setFormError(e instanceof ApiError ? e.message : "Gagal membuat Project");
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const openForm = () => {
-    setFormError(null);
-    setFormOpen(true);
-  };
-
-  const closeForm = () => {
-    setFormOpen(false);
-    setFormError(null);
-    setName("");
-    setPath("");
-  };
-
   return (
-    <div className="flex flex-col gap-6">
-      {/* Daftar Project — selalu tampil di halaman `/` */}
-      <div className="flex flex-col gap-3">
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-8 px-0 lg:max-w-2xl lg:gap-10">
+      <section className="relative flex flex-col items-center gap-5 overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/10 via-card to-card px-6 py-10 text-center shadow-sm sm:py-12">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 [background-image:radial-gradient(circle_at_1px_1px,var(--color-border)_1px,transparent_0)] [background-size:20px_20px] opacity-40"
+        />
+        <span className="relative flex size-16 shrink-0 items-center justify-center rounded-2xl bg-foreground p-3 shadow-lg dark:bg-card">
+          <img src={logo} alt="" className="size-full" />
+        </span>
+        <div className="relative flex flex-col gap-1.5">
+          <h1 className="text-3xl font-semibold tracking-tight">KCG Bridge</h1>
+          <p className="text-sm text-muted-foreground">Kontrol CLI_Agent dari mana saja</p>
+        </div>
+        <Button
+          type="button"
+          size="lg"
+          onClick={() => setDialogOpen(true)}
+          className="relative mt-1 w-full max-w-xs shadow-md"
+        >
+          <FolderPlusIcon data-icon="inline-start" />
+          Project baru
+        </Button>
+      </section>
+
+      <NewProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={refresh} />
+
+      <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted-foreground">Project ({projects.length})</h2>
-          <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={refresh}
-              aria-label="Muat ulang"
-            >
-              <RefreshCwIcon data-icon="inline-start" />
-            </Button>
-            <Button type="button" size="sm" onClick={openForm}>
-              <FolderPlusIcon data-icon="inline-start" />
-              Project Baru
-            </Button>
+          <div className="flex items-center gap-2">
+            <h2 className="text-base font-medium">Project terbaru</h2>
+            {!loading && !loadError && projects.length > 0 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {projects.length}
+              </span>
+            )}
           </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void refresh()}
+            aria-label="Muat ulang project"
+            title="Muat ulang"
+            disabled={loading}
+          >
+            <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
+          </Button>
         </div>
 
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-            <Spinner className="size-4" />
-            Memuat…
+          <div className="flex items-center justify-center rounded-xl border bg-card py-10 text-sm text-muted-foreground">
+            <Spinner className="mr-2 size-4" />
+            Memuat project…
           </div>
         ) : loadError ? (
           <Alert variant="destructive">
@@ -126,20 +128,19 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
         ) : projects.length === 0 ? (
-          <Empty>
+          <Empty className="rounded-xl border border-dashed bg-card">
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <FolderPlusIcon />
+                <FoldersIcon />
               </EmptyMedia>
-              <EmptyTitle>Belum ada Project</EmptyTitle>
+              <EmptyTitle>Belum ada project</EmptyTitle>
               <EmptyDescription>
-                Tambahkan Project untuk mulai menjalankan CLI_Agent — atau gunakan tombol "Project
-                Baru" di atas.
+                Buat project pertama untuk mulai mengontrol CLI_Agent.
               </EmptyDescription>
               <EmptyContent>
-                <Button type="button" size="sm" onClick={openForm}>
+                <Button type="button" onClick={() => setDialogOpen(true)}>
                   <FolderPlusIcon data-icon="inline-start" />
-                  Project Baru
+                  Project baru
                 </Button>
               </EmptyContent>
             </EmptyHeader>
@@ -147,81 +148,31 @@ export function ProjectList({ onOpenProject }: ProjectListProps) {
         ) : (
           <div className="flex flex-col gap-2">
             {projects.map((project) => (
-              <Card key={project.id} className="gap-3 py-4">
-                <CardContent className="flex items-center justify-between gap-3 px-4">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="truncate font-medium">{project.name}</span>
-                    <span className="truncate font-mono text-xs text-muted-foreground">
-                      {project.path}
-                    </span>
-                  </div>
-                  <Button type="button" size="sm" onClick={() => onOpenProject(project)}>
-                    Buka
-                  </Button>
-                </CardContent>
-              </Card>
+              <button
+                key={project.id}
+                type="button"
+                onClick={() => onOpenProject(project)}
+                className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md"
+                aria-label={`Buka project ${project.name}`}
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <FolderIcon />
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm font-medium group-hover:text-primary">
+                    {project.name}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">{project.path}</span>
+                </span>
+                <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
+                  {formatDate(project.createdAt)}
+                </span>
+                <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+              </button>
             ))}
           </div>
         )}
-      </div>
-
-      {/* Form pembuatan Project — muncul saat tombol "Project Baru" ditekan */}
-      {formOpen && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <FolderPlusIcon className="size-4" data-icon="inline-start" />
-              Project Baru
-            </CardTitle>
-            <CardDescription>
-              Pilih direktori kerja di dalam Sandbox_Root, lalu beri nama Project.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={create} className="flex flex-col gap-4">
-              <FieldGroup>
-                <Field>
-                  <FieldLabel htmlFor="project-name">Nama Project</FieldLabel>
-                  <Input
-                    id="project-name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="mis. web-app"
-                    maxLength={120}
-                    autoFocus
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel>Direktori Kerja</FieldLabel>
-                  <FolderBrowser selectedPath={path} onPick={setPath} />
-                </Field>
-              </FieldGroup>
-              <div className="flex justify-end gap-2">
-                <Button type="button" variant="ghost" onClick={closeForm} disabled={creating}>
-                  <XIcon data-icon="inline-start" />
-                  Batal
-                </Button>
-                <Button type="submit" disabled={creating || name.trim() === ""}>
-                  {creating ? (
-                    <>
-                      <Spinner data-icon="inline-start" />
-                      Membuat…
-                    </>
-                  ) : (
-                    "Buat Project"
-                  )}
-                </Button>
-              </div>
-            </form>
-            {formError && (
-              <Alert variant="destructive" className="mt-4">
-                <AlertTitle>Gagal membuat Project</AlertTitle>
-                <AlertDescription>{formError}</AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-        </Card>
-      )}
+      </section>
     </div>
   );
 }
