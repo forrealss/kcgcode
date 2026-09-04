@@ -2,41 +2,39 @@
  * Folder_Browser (Requirement 10.2, 10.3).
  *
  * Menjelajah direktori di dalam Sandbox_Root via `GET /api/fs?path=...`:
- * breadcrumb path saat ini, daftar sub-direktori, dan tombol "Pilih" untuk
- * menetapkan path Project baru (Requirement 10.4). Path di luar sandbox
- * ditolak server dan ditampilkan sebagai error.
+ * breadcrumb path saat ini dan daftar sub-direktori. Fully controlled —
+ * direktori yang sedang dijelajahi (`path`) adalah direktori yang otomatis
+ * aktif/terpilih (Requirement 10.4); tidak ada tombol "Pilih" terpisah.
  */
 
-import { CheckIcon, ChevronRightIcon, FolderIcon, Undo2Icon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { ChevronRightIcon, FolderIcon, Undo2Icon } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { ApiError, apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export interface FolderBrowserProps {
-  /** Path relatif yang sedang dipilih ("" = Sandbox_Root). */
-  selectedPath: string;
-  /** Dipanggil saat tombol "Pilih" ditekan. */
-  onPick: (path: string) => void;
+  /** Path relatif yang sedang aktif/dijelajahi ("" = Sandbox_Root). */
+  path: string;
+  /** Dipanggil setiap kali pengguna berpindah direktori. */
+  onNavigate: (path: string) => void;
 }
 
 function joinDir(base: string, name: string): string {
   return base === "" ? name : `${base}/${name}`;
 }
 
-export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
-  const [cwd, setCwd] = useState("");
+export function FolderBrowser({ path, onNavigate }: FolderBrowserProps) {
   const [entries, setEntries] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (path: string) => {
+  const load = useCallback(async (p: string) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await apiFetch(`/api/fs?path=${encodeURIComponent(path)}`);
+      const res = await apiFetch(`/api/fs?path=${encodeURIComponent(p)}`);
       const body = (await res.json()) as { entries: string[] };
       setEntries(body.entries);
     } catch (e) {
@@ -48,32 +46,21 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
   }, []);
 
   useEffect(() => {
-    load(cwd);
-  }, [cwd, load]);
+    load(path);
+  }, [path, load]);
 
-  // Saat path terpilih di-reset eksternal (mis. usai Project dibuat),
-  // kembalikan tampilan browser ke posisi yang sesuai (root).
-  const prevSelectedPath = useRef(selectedPath);
-  useEffect(() => {
-    if (selectedPath === "" && prevSelectedPath.current !== "") {
-      setCwd("");
-    }
-    prevSelectedPath.current = selectedPath;
-  }, [selectedPath]);
-
-  const segments = cwd === "" ? [] : cwd.split("/");
-  const isSelected = cwd === selectedPath;
+  const segments = path === "" ? [] : path.split("/");
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex h-full min-h-0 flex-col gap-2">
       {/* Breadcrumb */}
-      <div className="flex flex-wrap items-center gap-1 text-sm">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 text-sm">
         <Button
           type="button"
           variant="ghost"
           size="sm"
-          className={cn("h-7 px-2 font-medium", cwd === "" && "text-foreground")}
-          onClick={() => setCwd("")}
+          className={cn("h-7 px-2 font-medium", path === "" && "text-foreground")}
+          onClick={() => onNavigate("")}
         >
           Sandbox
         </Button>
@@ -93,7 +80,7 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
                   "h-7 px-2 font-medium",
                   i === segments.length - 1 && "text-foreground",
                 )}
-                onClick={() => setCwd(target)}
+                onClick={() => onNavigate(target)}
               >
                 {seg}
               </Button>
@@ -103,7 +90,7 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
       </div>
 
       {/* Daftar sub-direktori */}
-      <div className="max-h-64 overflow-y-auto rounded-lg border bg-card p-2">
+      <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border bg-card p-2">
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Spinner className="size-4" />
@@ -115,13 +102,13 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
           <p className="px-2 py-4 text-sm text-muted-foreground">Tidak ada sub-direktori.</p>
         ) : (
           <div className="flex flex-col gap-1">
-            {cwd !== "" && (
+            {path !== "" && (
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="h-8 justify-start gap-2 px-2 text-muted-foreground"
-                onClick={() => setCwd(segments.slice(0, -1).join("/"))}
+                onClick={() => onNavigate(segments.slice(0, -1).join("/"))}
               >
                 <Undo2Icon data-icon="inline-start" />
                 Kembali
@@ -134,7 +121,7 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
                 variant="ghost"
                 size="sm"
                 className="h-8 justify-start gap-2 px-2"
-                onClick={() => setCwd(joinDir(cwd, name))}
+                onClick={() => onNavigate(joinDir(path, name))}
               >
                 <FolderIcon data-icon="inline-start" />
                 <span className="truncate">{name}</span>
@@ -144,19 +131,11 @@ export function FolderBrowser({ selectedPath, onPick }: FolderBrowserProps) {
         )}
       </div>
 
-      {/* Path terpilih + tombol Pilih */}
-      <div className="flex items-center justify-between gap-2">
-        <span className="flex min-w-0 items-center gap-1.5 text-sm">
-          <span className="truncate font-mono text-muted-foreground">{cwd === "" ? "/" : cwd}</span>
-          {isSelected && (
-            <Badge variant="secondary" className="shrink-0">
-              <CheckIcon /> terpilih
-            </Badge>
-          )}
-        </span>
-        <Button type="button" size="sm" onClick={() => onPick(cwd)} disabled={loading}>
-          Pilih
-        </Button>
+      {/* Path aktif saat ini — selalu nempel di bawah, tidak ikut naik saat
+          daftar sub-direktori pendek. */}
+      <div className="flex min-w-0 shrink-0 items-center gap-1.5 text-sm">
+        <span className="shrink-0 text-muted-foreground">Direktori aktif:</span>
+        <span className="min-w-0 flex-1 truncate font-mono">{path === "" ? "/" : path}</span>
       </div>
     </div>
   );

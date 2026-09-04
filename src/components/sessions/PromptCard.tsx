@@ -76,7 +76,9 @@ export function PromptCard({ prompt, onResolve }: PromptCardProps) {
             <Badge variant={isMenu ? "secondary" : "outline"}>{prompt.type}</Badge>
             <Badge variant="ghost">{prompt.kind}</Badge>
           </span>
-          {prompt.title && <span className="font-mono">{prompt.title}</span>}
+          {/* wrap-anywhere: path file panjang tanpa spasi tidak boleh
+              meluapkan kartu di layar sempit (bug mobile). */}
+          {prompt.title && <span className="wrap-anywhere font-mono">{prompt.title}</span>}
           {isMenu ? "Pilih salah satu opsi" : "Setujui atau tolak permintaan CLI_Agent"}
         </CardDescription>
       </CardHeader>

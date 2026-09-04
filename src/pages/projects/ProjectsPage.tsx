@@ -66,7 +66,7 @@ export function ProjectsPage() {
   }, [refresh]);
 
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-8 px-0 lg:max-w-2xl lg:gap-10">
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-8 px-0 sm:my-auto lg:max-w-2xl lg:gap-10">
       <section className="relative flex flex-col items-center gap-5 overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/10 via-card to-card px-6 py-10 text-center shadow-sm sm:py-12">
         <div
           aria-hidden

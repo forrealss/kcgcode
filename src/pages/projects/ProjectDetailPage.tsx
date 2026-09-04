@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SessionList } from "@/components/sessions/SessionList";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
 import { projectsPath, sessionPath } from "@/lib/routes";
@@ -54,8 +55,16 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
 
   if (state.phase === "loading") {
     return (
-      <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-        Memuat…
+      <div className="flex flex-col gap-6">
+        <Skeleton className="h-[68px] w-full rounded-xl" />
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-5 w-20" />
+            <Skeleton className="h-8 w-28 rounded-md" />
+          </div>
+          <Skeleton className="h-[68px] w-full rounded-xl" />
+          <Skeleton className="h-[68px] w-full rounded-xl" />
+        </div>
       </div>
     );
   }

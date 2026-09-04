@@ -9,11 +9,23 @@
  * - `POST /api/sessions/:id/stop` menghentikan Session (Requirement 1.6);
  *   `DELETE /api/sessions/:id` menghapus permanen (termasuk di opencode);
  *   `POST /api/sessions/:id` menghidupkan kembali (resume).
+ * - Hapus Session dikonfirmasi lewat `AlertDialog` (bukan `window.confirm`)
+ *   agar konsisten dengan komponen shadcn/ui lain di aplikasi.
  */
 
-import { PlayIcon, RefreshCwIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { BotIcon, PlayIcon, RefreshCwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +48,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ApiError, apiFetch } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/server/services/opencode-client";
 import type { AgentType, Project, Session, SessionModel, SessionStatus } from "@/types";
 
@@ -87,10 +101,25 @@ function groupModels(
   return [...byProvider.values()];
 }
 
-function statusVariant(status: SessionStatus): "default" | "secondary" | "destructive" {
-  if (status === "running") return "default";
-  if (status === "crashed") return "destructive";
-  return "secondary";
+const STATUS_LABEL: Record<SessionStatus, string> = {
+  running: "Berjalan",
+  stopped: "Berhenti",
+  crashed: "Crash",
+};
+
+const STATUS_DOT: Record<SessionStatus, string> = {
+  running: "bg-emerald-500",
+  stopped: "bg-muted-foreground/50",
+  crashed: "bg-destructive",
+};
+
+function StatusBadge({ status }: { status: SessionStatus }) {
+  return (
+    <Badge variant="outline" className="gap-1.5 font-normal">
+      <span className={cn("size-1.5 rounded-full", STATUS_DOT[status])} />
+      {STATUS_LABEL[status]}
+    </Badge>
+  );
 }
 
 function formatTime(ts: number): string {
@@ -117,6 +146,8 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
   const [starting, setStarting] = useState<string | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  /** Session yang akan dihapus, dikonfirmasi lewat `AlertDialog` sebelum eksekusi. */
+  const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
   /** Form pembuatan disembunyikan secara default — dibuka lewat tombol. */
   const [formOpen, setFormOpen] = useState(false);
 
@@ -218,20 +249,17 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
 
   /**
    * Hapus Session permanen — menghapus juga session (dan riwayat pesannya)
-   * di server headless opencode. Konfirmasi dulu karena tidak bisa dibatalkan.
+   * di server headless opencode. Dikonfirmasi via `AlertDialog` sebelum
+   * eksekusi karena tidak bisa dibatalkan.
    */
-  const remove = async (sessionId: string) => {
-    if (
-      !window.confirm(
-        "Hapus Session ini permanen?\n\nRiwayat percakapan di server opencode juga ikut dihapus.",
-      )
-    ) {
-      return;
-    }
-    setDeleting(sessionId);
+  const confirmRemove = async () => {
+    const session = pendingDelete;
+    if (!session) return;
+    setDeleting(session.id);
     setStartError(null);
     try {
-      await apiFetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+      await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+      setPendingDelete(null);
       await refresh();
     } catch (e) {
       setStartError(e instanceof ApiError ? e.message : "Gagal menghapus Session");
@@ -242,12 +270,18 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h2 className="truncate font-semibold">{project.name}</h2>
-          <p className="truncate font-mono text-xs text-muted-foreground">{project.path}</p>
+      {/* Header Project */}
+      <div className="flex items-start justify-between gap-3 rounded-xl border bg-card px-4 py-4 sm:px-5">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+            <BotIcon />
+          </span>
+          <div className="min-w-0">
+            <h1 className="truncate text-base font-semibold">{project.name}</h1>
+            <p className="truncate font-mono text-xs text-muted-foreground">{project.path}</p>
+          </div>
         </div>
-        <Button type="button" variant="ghost" size="sm" onClick={onBack}>
+        <Button type="button" variant="ghost" size="sm" onClick={onBack} className="shrink-0">
           Kembali
         </Button>
       </div>
@@ -255,17 +289,30 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
       {/* Daftar Session — tampil duluan; form dibuka lewat tombol */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-medium text-muted-foreground">Session ({sessions.length})</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium text-muted-foreground">Session</h2>
+            {!loading && !loadError && sessions.length > 0 && (
+              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                {sessions.length}
+              </span>
+            )}
+          </div>
           <div className="flex shrink-0 items-center gap-1">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={refresh}
-              aria-label="Muat ulang"
-            >
-              <RefreshCwIcon data-icon="inline-start" />
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  onClick={refresh}
+                  aria-label="Muat ulang daftar Session"
+                  disabled={loading}
+                >
+                  <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Muat ulang</TooltipContent>
+            </Tooltip>
             <Button type="button" size="sm" onClick={openForm}>
               <PlayIcon data-icon="inline-start" />
               Session Baru
@@ -284,15 +331,14 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
         ) : sessions.length === 0 ? (
-          <Empty>
+          <Empty className="rounded-xl border border-dashed bg-card">
             <EmptyHeader>
               <EmptyMedia variant="icon">
                 <PlayIcon />
               </EmptyMedia>
               <EmptyTitle>Belum ada Session</EmptyTitle>
               <EmptyDescription>
-                Buat Session untuk menjalankan CLI_Agent di Project ini — atau gunakan tombol
-                "Session Baru" di atas.
+                Buat Session untuk menjalankan CLI_Agent di Project ini.
               </EmptyDescription>
               <EmptyContent>
                 <Button type="button" size="sm" onClick={openForm}>
@@ -311,70 +357,82 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
               </Alert>
             )}
             {sessions.map((session) => (
-              <Card key={session.id} className="gap-3 py-4">
-                <CardContent className="flex items-center justify-between gap-3 px-4">
-                  <div className="flex min-w-0 flex-col gap-1.5">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium">{session.agentType}</span>
-                      <Badge variant={statusVariant(session.status)}>{session.status}</Badge>
-                    </div>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {session.model ? session.model.modelID : "model default"} · dibuat{" "}
-                      {formatTime(session.createdAt)}
-                    </span>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {session.status === "running" ? (
+              <div
+                key={session.id}
+                className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-sm transition-all hover:border-primary/40 hover:shadow-md"
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <BotIcon />
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col gap-1">
+                  <span className="flex items-center gap-2">
+                    <span className="truncate text-sm font-medium">{session.agentType}</span>
+                    <StatusBadge status={session.status} />
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {session.model ? session.model.modelID : "model default"} · dibuat{" "}
+                    {formatTime(session.createdAt)}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1">
+                  {session.status === "running" ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => stop(session.id)}
+                          disabled={stopping === session.id}
+                          aria-label={`Hentikan session ${session.agentType}`}
+                        >
+                          {stopping === session.id ? (
+                            <Spinner className="size-4" />
+                          ) : (
+                            <SquareIcon />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Hentikan</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => start(session.id)}
+                          disabled={starting === session.id}
+                          aria-label={`Hidupkan session ${session.agentType}`}
+                        >
+                          {starting === session.id ? <Spinner className="size-4" /> : <PlayIcon />}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>Hidupkan</TooltipContent>
+                    </Tooltip>
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
                       <Button
                         type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => stop(session.id)}
-                        disabled={stopping === session.id}
-                        aria-label={`Hentikan session ${session.agentType}`}
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setPendingDelete(session)}
+                        disabled={deleting === session.id}
+                        aria-label={`Hapus session ${session.agentType}`}
+                        className="text-muted-foreground hover:text-destructive"
                       >
-                        {stopping === session.id ? (
-                          <Spinner className="size-3.5" />
-                        ) : (
-                          <SquareIcon data-icon="inline-start" />
-                        )}
-                        Stop
+                        {deleting === session.id ? <Spinner className="size-4" /> : <Trash2Icon />}
                       </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => start(session.id)}
-                        disabled={starting === session.id}
-                        aria-label={`Hidupkan session ${session.agentType}`}
-                      >
-                        {starting === session.id ? (
-                          <Spinner className="size-3.5" />
-                        ) : (
-                          <PlayIcon data-icon="inline-start" />
-                        )}
-                        Start
-                      </Button>
-                    )}
-                    <Button type="button" size="sm" onClick={() => onOpenSession(session)}>
-                      Buka
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => remove(session.id)}
-                      disabled={deleting === session.id}
-                      aria-label={`Hapus session ${session.agentType}`}
-                      title="Hapus permanen"
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      {deleting === session.id ? <Spinner className="size-4" /> : <Trash2Icon />}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
+                    </TooltipTrigger>
+                    <TooltipContent>Hapus permanen</TooltipContent>
+                  </Tooltip>
+                  <Button type="button" size="sm" onClick={() => onOpenSession(session)}>
+                    Buka
+                  </Button>
+                </span>
+              </div>
             ))}
           </div>
         )}
@@ -473,6 +531,44 @@ export function SessionList({ project, onOpenSession, onBack }: SessionListProps
           </CardContent>
         </Card>
       )}
+
+      {/* Konfirmasi hapus Session permanen */}
+      <AlertDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Hapus Session ini?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Riwayat percakapan di server opencode juga ikut terhapus permanen. Aksi ini tidak bisa
+              dibatalkan.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting !== null}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmRemove();
+              }}
+              disabled={deleting !== null}
+            >
+              {deleting !== null ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Menghapus…
+                </>
+              ) : (
+                "Hapus permanen"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

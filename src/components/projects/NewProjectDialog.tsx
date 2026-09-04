@@ -43,7 +43,7 @@ function basename(path: string): string {
 
 export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDialogProps) {
   const [step, setStep] = useState<Step>(1);
-  const [path, setPath] = useState<string | null>(null);
+  const [path, setPath] = useState("");
   const [name, setName] = useState("");
   const [nameTouched, setNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -51,7 +51,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
 
   const reset = () => {
     setStep(1);
-    setPath(null);
+    setPath("");
     setName("");
     setNameTouched(false);
     setFormError(null);
@@ -63,14 +63,9 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
     onOpenChange(next);
   };
 
-  const pickFolder = (picked: string) => {
-    setPath(picked);
-    if (!nameTouched) setName(basename(picked));
-  };
-
   const goToNaming = () => {
-    if (path === null) return;
     setFormError(null);
+    if (!nameTouched) setName(basename(path));
     setStep(2);
   };
 
@@ -81,7 +76,6 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
 
   const create = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (path === null) return;
     setCreating(true);
     setFormError(null);
     try {
@@ -97,7 +91,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="flex max-h-[85vh] flex-col overflow-y-auto sm:max-w-lg">
+      <DialogContent className="flex h-[560px] max-h-[85vh] flex-col sm:max-w-lg">
         <DialogHeader>
           <div className="mt-4 flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
@@ -126,58 +120,62 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
 
         {step === 1 ? (
           <>
-            <FolderBrowser selectedPath={path ?? ""} onPick={pickFolder} />
+            <div className="min-h-0 flex-1">
+              <FolderBrowser path={path} onNavigate={setPath} />
+            </div>
             <DialogFooter>
-              <Button type="button" onClick={goToNaming} disabled={path === null}>
+              <Button type="button" onClick={goToNaming}>
                 Lanjut
                 <ArrowRightIcon data-icon="inline-end" />
               </Button>
             </DialogFooter>
           </>
         ) : (
-          <form onSubmit={create} className="flex flex-col gap-4">
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="project-name">Nama project</FieldLabel>
-                <Input
-                  id="project-name"
-                  value={name}
-                  onChange={(e) => {
-                    setName(e.target.value);
-                    setNameTouched(true);
-                  }}
-                  placeholder="mis. web-app"
-                  maxLength={120}
-                  autoFocus
-                />
-              </Field>
-              <Field>
-                <FieldLabel>Direktori kerja</FieldLabel>
-                <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
-                  <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
-                    {path === "" ? "/" : path}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 shrink-0 px-2"
-                    onClick={backToFolder}
-                    disabled={creating}
-                  >
-                    Ganti
-                  </Button>
-                </div>
-              </Field>
-            </FieldGroup>
+          <form onSubmit={create} className="flex min-h-0 flex-1 flex-col gap-4">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="project-name">Nama project</FieldLabel>
+                  <Input
+                    id="project-name"
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      setNameTouched(true);
+                    }}
+                    placeholder="mis. web-app"
+                    maxLength={120}
+                    autoFocus
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel>Direktori kerja</FieldLabel>
+                  <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                    <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
+                      {path === "" ? "/" : path}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 shrink-0 px-2"
+                      onClick={backToFolder}
+                      disabled={creating}
+                    >
+                      Ganti
+                    </Button>
+                  </div>
+                </Field>
+              </FieldGroup>
 
-            {formError && (
-              <Alert variant="destructive">
-                <AlertTitle>Gagal membuat Project</AlertTitle>
-                <AlertDescription>{formError}</AlertDescription>
-              </Alert>
-            )}
+              {formError && (
+                <Alert variant="destructive">
+                  <AlertTitle>Gagal membuat Project</AlertTitle>
+                  <AlertDescription>{formError}</AlertDescription>
+                </Alert>
+              )}
+            </div>
 
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={backToFolder} disabled={creating}>

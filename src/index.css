@@ -5,8 +5,16 @@
     @apply font-sans;
   }
 
+  html {
+    @apply overflow-x-hidden;
+  }
+
+  /* Tanpa display: grid — auto track grid mengikuti max-content item
+     terlebar sehingga di layar HP seluruh halaman ikut selebar konten
+     terlebar lalu terpotong (overflow horizontal 414px -> 465px pada bug
+     #25.1). Shell app sudah h-dvh w-full, jadi body cukup block biasa. */
   body {
-    @apply grid place-items-center min-w-[320px] min-h-screen relative m-0 bg-background text-foreground;
+    @apply block relative m-0 min-h-screen min-w-[320px] bg-background text-foreground overflow-x-hidden;
   }
 }
 
