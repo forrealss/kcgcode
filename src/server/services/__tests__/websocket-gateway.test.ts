@@ -129,6 +129,9 @@ function makeFakeSessionManager(): FakeSessionManager {
     async deleteSession() {
       return { ok: false, error: "not-used" };
     },
+    async releaseProject() {
+      return { ok: false, error: "not-used" };
+    },
     async findFiles() {
       return { ok: false, error: "not-used" };
     },

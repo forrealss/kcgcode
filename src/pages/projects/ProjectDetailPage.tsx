@@ -93,6 +93,9 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
       project={state.project}
       onOpenSession={(session) => navigate(sessionPath(projectId, session.id))}
       onBack={() => navigate(projectsPath())}
+      // Project sudah tidak ada — halaman ini tak punya data lagi untuk
+      // ditampilkan, jadi langsung kembali ke daftar Project.
+      onDeleted={() => navigate(projectsPath())}
     />
   );
 }

@@ -10,13 +10,21 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync } from "node:fs";
 import type { SessionStore } from "../../db";
 import type { Project } from "../../types";
-import type { Result } from "../result";
+import type { Result, SimpleResult } from "../result";
 import { resolveWithinSandbox } from "./sandbox";
 
 export interface ProjectManager {
   listDirectory(relativePath: string): Result<{ entries: string[] }>;
   createProject(name: string, relativePath: string): Result<Project>;
   listProjects(): Project[];
+  getProject(projectId: string): Result<Project>;
+  /**
+   * Hapus registrasi Project dari Session_Store. Direktori kerja di
+   * filesystem TIDAK disentuh — Project hanyalah pendaftaran sebuah folder,
+   * jadi menghapusnya tidak boleh menghapus kode/pekerjaan pengguna.
+   * Menolak bila masih ada Session miliknya (`PROJECT_HAS_SESSIONS`).
+   */
+  deleteProject(projectId: string): SimpleResult;
 }
 
 /** Peta hasil validasi sandbox -> pesan error publik. */
@@ -84,5 +92,18 @@ export function createProjectManager(sandboxRoot: string, store: SessionStore): 
     return store.listProjects();
   }
 
-  return { listDirectory, createProject, listProjects };
+  function getProject(projectId: string): Result<Project> {
+    return store.getProjectById(projectId);
+  }
+
+  /**
+   * Hapus pendaftaran Project. Direktori kerjanya dibiarkan utuh: Project
+   * adalah referensi ke sebuah folder Sandbox, bukan pemiliknya — menghapus
+   * folder berisi kode pengguna jauh melampaui maksud aksi ini.
+   */
+  function deleteProject(projectId: string): SimpleResult {
+    return store.deleteProject(projectId);
+  }
+
+  return { listDirectory, createProject, listProjects, getProject, deleteProject };
 }

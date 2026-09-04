@@ -86,6 +86,8 @@ export function SessionPage({ projectId, sessionId }: SessionPageProps) {
         key={state.session.id}
         session={state.session}
         onBack={() => navigate(projectPath(projectId))}
+        // Session sudah tidak ada — kembali ke daftar Session Project.
+        onDeleted={() => navigate(projectPath(projectId))}
       />
     </main>
   );

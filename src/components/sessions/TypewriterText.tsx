@@ -25,9 +25,13 @@ export const TYPEWRITER_TARGET_MS = 2400;
 /**
  * Timing typewriter (murni, diuji): interval tick tetap, jumlah karakter per
  * tick dihitung agar seluruh teks selesai kira-kira dalam `TYPEWRITER_TARGET_MS`.
+ *
+ * `tickMs` 33 (~30fps), bukan 16: teks yang direveal kini dirender sebagai
+ * Markdown, sehingga setiap tick memicu satu parse ulang. Menyetengahkan
+ * jumlah tick memotong biaya parse tanpa terasa tersendat.
  */
 export function typewriterTiming(textLength: number): { tickMs: number; charsPerTick: number } {
-  const tickMs = 16;
+  const tickMs = 33;
   if (textLength <= 0) return { tickMs, charsPerTick: 1 };
   const ticks = Math.max(1, Math.floor(TYPEWRITER_TARGET_MS / tickMs));
   const charsPerTick = Math.max(1, Math.ceil(textLength / ticks));
@@ -39,9 +43,16 @@ export interface TypewriterTextProps {
   /** Aktifkan animasi mengetik (pesan baru). Pesan lama dirender penuh. */
   active: boolean;
   className?: string;
+  /**
+   * Render potongan teks yang sudah terungkap. Dipakai agar pemanggil dapat
+   * merender Markdown (bukan teks polos) sambil animasi berjalan; `typing`
+   * menandai animasi masih berlangsung sehingga kursor dapat ditempel.
+   * Tanpa ini, teks dirender apa adanya di dalam `<span>`.
+   */
+  children?: (shown: string, typing: boolean) => React.ReactNode;
 }
 
-export function TypewriterText({ text, active, className }: TypewriterTextProps) {
+export function TypewriterText({ text, active, className, children }: TypewriterTextProps) {
   // Hormati prefers-reduced-motion: teks langsung penuh, tanpa animasi.
   const [reducedMotion] = useState(
     () =>
@@ -81,6 +92,9 @@ export function TypewriterText({ text, active, className }: TypewriterTextProps)
   }, [text, active, reducedMotion]);
 
   const typing = active && shown.length < text.length;
+
+  // Render kustom (mis. Markdown) bila disediakan pemanggil.
+  if (children) return <>{children(shown, typing)}</>;
 
   return (
     <span className={className}>

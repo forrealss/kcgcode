@@ -144,6 +144,13 @@ export interface SessionManager {
    * tidak, lalu status kembali `running`.
    */
   resumeSession(sessionId: string): Promise<SimpleResult>;
+  /**
+   * Lepaskan seluruh sumber daya milik satu Project sebelum Project dihapus:
+   * hapus tiap Session-nya (termasuk sesi remote opencode & lampiran) lalu
+   * hentikan server headless Project. Gagal pada salah satu Session ->
+   * error diteruskan tanpa melanjutkan, agar tidak ada sesi yatim.
+   */
+  releaseProject(projectId: string): Promise<SimpleResult>;
   /** Daftar model yang tersedia pada server headless milik Project. */
   listModels(projectId: string): Promise<Result<ModelOption[]>>;
   /** Cari file project untuk autocomplete `@file` di composer. */
@@ -780,6 +787,34 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
+   * Lepaskan seluruh sumber daya milik satu Project — dipakai rute
+   * `DELETE /api/projects/:id` sebelum baris Project dihapus:
+   *
+   * 1. Setiap Session milik Project dihapus lewat `deleteSession` sehingga
+   *    sesi remote opencode, lampiran gambar, dan baris anaknya ikut bersih.
+   *    Kegagalan menghentikan proses (error diteruskan) supaya tidak ada
+   *    session opencode yatim — user bisa mencoba lagi.
+   * 2. Server headless Project dihentikan; tanpa Session ia tidak lagi
+   *    dipakai dan tidak perlu terus memakan memori.
+   */
+  async function releaseProject(projectId: string): Promise<SimpleResult> {
+    if (!store.getProjectById(projectId).ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    for (const session of store.listProjectSessions(projectId)) {
+      const res = await deleteSession(session.id);
+      if (!res.ok) return res;
+    }
+    await servers.stopServer(projectId);
+    // Subscription SSE ikut dilepas — server-nya sudah tidak ada.
+    const sub = activeSubscriptions.get(projectId);
+    if (sub) {
+      sub.unsubscribe();
+      activeSubscriptions.delete(projectId);
+    }
+    exitNotified.delete(projectId);
+    return { ok: true };
+  }
+
+  /**
    * Daftar model yang tersedia untuk Project — server headless Project
    * di-ensure lebih dulu (spawn bila perlu) karena provider/model dibaca dari
    * konfigurasi opencode pada direktori Project.
@@ -1076,6 +1111,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     interruptSession,
     resumeSession,
     deleteSession,
+    releaseProject,
     listModels,
     setSessionModel,
     findFiles,

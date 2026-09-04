@@ -40,6 +40,7 @@ export function errorStatus(code: string): number {
     case "SESSION_NOT_RUNNING":
     case "SESSION_NOT_ACTIVE":
     case "SESSION_ALREADY_RUNNING":
+    case "PROJECT_HAS_SESSIONS":
       return 409;
     // Server headless menolak operasi (mis. hapus session remote gagal).
     case "OC_DELETE_SESSION_FAILED":

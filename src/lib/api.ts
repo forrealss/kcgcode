@@ -66,6 +66,8 @@ export function apiErrorMessage(code: string): string {
       return "Project tidak ditemukan.";
     case "PROJECT_DIR_NOT_FOUND":
       return "Direktori Project tidak ditemukan di server.";
+    case "PROJECT_HAS_SESSIONS":
+      return "Project masih punya Session. Hapus Session-nya lebih dulu.";
     case "UNSUPPORTED_AGENT_TYPE":
       return "Tipe CLI_Agent tidak didukung.";
     case "SESSION_NOT_FOUND":

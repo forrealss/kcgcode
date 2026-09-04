@@ -244,6 +244,35 @@ test("5.1: CRUD projects — insert, get by name/path, list", () => {
   store.close();
 });
 
+test("deleteProject: menolak selama masih ada Session, sukses setelah Session dihapus", () => {
+  const store = makeMemoryStore();
+  expect(store.insertSession(makeSession("s1")).ok).toBe(true);
+
+  expect(store.listProjectSessions("p1").map((s) => s.id)).toEqual(["s1"]);
+
+  // Session harus dibersihkan lewat SessionManager lebih dulu — jalur ini
+  // menolak agar sesi remote opencode tidak jadi yatim.
+  const blocked = store.deleteProject("p1");
+  expect(blocked.ok).toBe(false);
+  if (!blocked.ok) expect(blocked.error).toBe("PROJECT_HAS_SESSIONS");
+  expect(store.getProjectById("p1").ok).toBe(true);
+
+  expect(store.deleteSession("s1").ok).toBe(true);
+  expect(store.deleteProject("p1").ok).toBe(true);
+  expect(store.getProjectById("p1").ok).toBe(false);
+  expect(store.listProjects()).toHaveLength(0);
+  store.close();
+});
+
+test("deleteProject: id tak dikenal -> PROJECT_NOT_FOUND", () => {
+  const store = makeMemoryStore();
+  const res = store.deleteProject("tidak-ada");
+  expect(res.ok).toBe(false);
+  if (!res.ok) expect(res.error).toBe("PROJECT_NOT_FOUND");
+  expect(store.listProjectSessions("tidak-ada")).toEqual([]);
+  store.close();
+});
+
 test("migrasi: DB lama (skema PTY) dibuka dengan store baru -> kolom & tabel ditambah", () => {
   const dir = mkdtempSync(path.join(tmpdir(), "kcg-mig-"));
   const dbPath = path.join(dir, "legacy.sqlite");

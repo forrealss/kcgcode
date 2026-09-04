@@ -1,18 +1,26 @@
 /**
- * Homepage: branding, aksi pembuatan Project, dan daftar Project terbaru.
+ * Homepage (`/`): daftar Project sebagai fokus utama.
  *
- * Form pembuatan tetap tersedia, tetapi disembunyikan sampai pengguna memilih
- * aksi "Project baru" agar root page tetap fokus dan tidak ramai.
+ * Pengguna datang ke sini untuk melanjutkan pekerjaan, jadi daftar Project
+ * tampil lebih dulu dan setiap baris dapat langsung diklik. Bila Project sudah
+ * punya Session, tombol "Lanjutkan" melompat ke Session yang terakhir
+ * disentuh tanpa mampir ke halaman Project. Bila belum ada Project sama
+ * sekali, empty state mengarahkan ke pembuatan Project (`NewProjectDialog`).
+ *
+ * Ringkasan per Project (jumlah Session, Session berjalan, aktivitas
+ * terakhir) dihitung `lib/project-overview.ts` dari `GET /api/projects` +
+ * `GET /api/sessions` — logika murni dan teruji, komponen ini hanya merender.
  */
 
 import {
   ArrowRightIcon,
-  FolderIcon,
   FolderPlusIcon,
   FoldersIcon,
   RefreshCwIcon,
+  SearchIcon,
+  SearchXIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { NewProjectDialog } from "@/components/projects/NewProjectDialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -24,37 +32,50 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "@/components/ui/empty";
-import { Spinner } from "@/components/ui/spinner";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiFetch } from "@/lib/api";
-import { projectPath } from "@/lib/routes";
-import type { Project } from "@/types";
+import {
+  buildProjectOverviews,
+  filterProjectOverviews,
+  formatRelativeTime,
+  type ProjectOverview,
+  totalRunningSessions,
+} from "@/lib/project-overview";
+import { projectPath, sessionPath } from "@/lib/routes";
+import type { Project, Session } from "@/types";
 import logo from "../../logo.svg";
 
-/** Format singkat tanggal dibuat, konsisten dengan `SessionList.tsx`. */
-function formatDate(ts: number): string {
-  return new Date(ts).toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+/** Ambang jumlah Project sebelum kolom pencarian ditampilkan. */
+const SEARCH_THRESHOLD = 5;
 
 export function ProjectsPage() {
   const { navigate } = useRouter();
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [overviews, setOverviews] = useState<ProjectOverview[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [query, setQuery] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
-      const res = await apiFetch("/api/projects");
-      const body = (await res.json()) as { projects: Project[] };
-      setProjects(body.projects);
+      // Session dimuat bersamaan supaya tiap baris bisa menampilkan status &
+      // target "Lanjutkan" tanpa request tambahan per Project.
+      const [projectsRes, sessionsRes] = await Promise.all([
+        apiFetch("/api/projects"),
+        apiFetch("/api/sessions"),
+      ]);
+      const [{ projects }, { sessions }] = (await Promise.all([
+        projectsRes.json(),
+        sessionsRes.json(),
+      ])) as [{ projects: Project[] }, { sessions: Session[] }];
+      setOverviews(buildProjectOverviews(projects, sessions));
     } catch (e) {
+      setOverviews([]);
       setLoadError(e instanceof ApiError ? e.message : "Gagal memuat daftar Project");
     } finally {
       setLoading(false);
@@ -65,67 +86,92 @@ export function ProjectsPage() {
     void refresh();
   }, [refresh]);
 
+  const visible = useMemo(() => filterProjectOverviews(overviews, query), [overviews, query]);
+  const running = totalRunningSessions(overviews);
+  const showSearch = overviews.length >= SEARCH_THRESHOLD;
+
+  /** Buka Session terakhir bila ada, jika tidak ke halaman Project. */
+  const resume = (overview: ProjectOverview) => {
+    const { project, lastSession } = overview;
+    navigate(
+      lastSession === null ? projectPath(project.id) : sessionPath(project.id, lastSession.id),
+    );
+  };
+
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-8 px-0 sm:my-auto lg:max-w-2xl lg:gap-10">
-      <section className="relative flex flex-col items-center gap-5 overflow-hidden rounded-3xl border bg-gradient-to-br from-primary/10 via-card to-card px-6 py-10 text-center shadow-sm sm:py-12">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 [background-image:radial-gradient(circle_at_1px_1px,var(--color-border)_1px,transparent_0)] [background-size:20px_20px] opacity-40"
-        />
-        <span className="relative flex size-16 shrink-0 items-center justify-center rounded-2xl bg-foreground p-3 shadow-lg dark:bg-card">
-          <img src={logo} alt="" className="size-full" />
-        </span>
-        <div className="relative flex flex-col gap-1.5">
-          <h1 className="text-3xl font-semibold tracking-tight">KCG Bridge</h1>
-          <p className="text-sm text-muted-foreground">Kontrol CLI_Agent dari mana saja</p>
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-6 lg:max-w-2xl">
+      {/* Branding ringkas — daftar Project yang jadi fokus, bukan hero besar */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-foreground p-2 shadow-sm dark:bg-card dark:ring-1 dark:ring-border">
+            <img src={logo} alt="" className="size-full" />
+          </span>
+          <div className="flex min-w-0 flex-col">
+            <h1 className="truncate text-lg font-semibold tracking-tight">KCG Bridge</h1>
+            <p className="truncate text-xs text-muted-foreground">
+              {running > 0
+                ? `${running} session sedang berjalan`
+                : "Kontrol CLI_Agent dari mana saja"}
+            </p>
+          </div>
         </div>
-        <Button
-          type="button"
-          size="lg"
-          onClick={() => setDialogOpen(true)}
-          className="relative mt-1 w-full max-w-xs shadow-md"
-        >
+        <Button type="button" onClick={() => setDialogOpen(true)} className="shrink-0 shadow-sm">
           <FolderPlusIcon data-icon="inline-start" />
-          Project baru
+          <span className="hidden sm:inline">Project baru</span>
+          <span className="sm:hidden">Baru</span>
         </Button>
-      </section>
+      </div>
 
       <NewProjectDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={refresh} />
 
       <section className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-base font-medium">Project terbaru</h2>
-            {!loading && !loadError && projects.length > 0 && (
+            <h2 className="text-sm font-medium text-muted-foreground">Project</h2>
+            {!loading && !loadError && overviews.length > 0 && (
               <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-                {projects.length}
+                {overviews.length}
               </span>
             )}
           </div>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void refresh()}
-            aria-label="Muat ulang project"
-            title="Muat ulang"
-            disabled={loading}
-          >
-            <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void refresh()}
+                aria-label="Muat ulang daftar Project"
+                disabled={loading}
+              >
+                <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Muat ulang</TooltipContent>
+          </Tooltip>
         </div>
 
-        {loading ? (
-          <div className="flex items-center justify-center rounded-xl border bg-card py-10 text-sm text-muted-foreground">
-            <Spinner className="mr-2 size-4" />
-            Memuat project…
+        {showSearch && (
+          <div className="relative">
+            <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Cari nama atau path project…"
+              aria-label="Cari project"
+              className="pl-9"
+            />
           </div>
+        )}
+
+        {loading ? (
+          <ProjectListSkeleton />
         ) : loadError ? (
           <Alert variant="destructive">
             <AlertTitle>Gagal memuat Project</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
-        ) : projects.length === 0 ? (
+        ) : overviews.length === 0 ? (
           <Empty className="rounded-xl border border-dashed bg-card">
             <EmptyHeader>
               <EmptyMedia variant="icon">
@@ -133,44 +179,119 @@ export function ProjectsPage() {
               </EmptyMedia>
               <EmptyTitle>Belum ada project</EmptyTitle>
               <EmptyDescription>
-                Buat project pertama untuk mulai mengontrol CLI_Agent.
+                Tambah project dulu — pilih direktori kerja di Sandbox, lalu jalankan CLI_Agent di
+                dalamnya.
               </EmptyDescription>
               <EmptyContent>
                 <Button type="button" onClick={() => setDialogOpen(true)}>
                   <FolderPlusIcon data-icon="inline-start" />
-                  Project baru
+                  Tambah project
+                </Button>
+              </EmptyContent>
+            </EmptyHeader>
+          </Empty>
+        ) : visible.length === 0 ? (
+          <Empty className="rounded-xl border border-dashed bg-card">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <SearchXIcon />
+              </EmptyMedia>
+              <EmptyTitle>Tidak ada yang cocok</EmptyTitle>
+              <EmptyDescription>
+                Tidak ada project dengan nama atau path “{query.trim()}”.
+              </EmptyDescription>
+              <EmptyContent>
+                <Button type="button" variant="outline" onClick={() => setQuery("")}>
+                  Hapus pencarian
                 </Button>
               </EmptyContent>
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="flex flex-col gap-2">
-            {projects.map((project) => (
-              <button
-                key={project.id}
-                type="button"
-                onClick={() => navigate(projectPath(project.id))}
-                className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md"
-                aria-label={`Buka project ${project.name}`}
-              >
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <FolderIcon />
-                </span>
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm font-medium group-hover:text-primary">
-                    {project.name}
-                  </span>
-                  <span className="truncate text-xs text-muted-foreground">{project.path}</span>
-                </span>
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:block">
-                  {formatDate(project.createdAt)}
-                </span>
-                <ArrowRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-              </button>
+          <ul className="flex flex-col gap-2">
+            {visible.map((overview) => (
+              <li key={overview.project.id}>
+                <ProjectRow overview={overview} onOpen={() => resume(overview)} />
+              </li>
             ))}
-          </div>
+          </ul>
         )}
       </section>
+    </div>
+  );
+}
+
+interface ProjectRowProps {
+  overview: ProjectOverview;
+  onOpen: () => void;
+}
+
+/**
+ * Satu baris Project. Seluruh baris adalah tombol tunggal (bukan tombol di
+ * dalam tombol) agar target sentuh besar di layar HP dan tetap dapat diakses
+ * lewat keyboard.
+ */
+function ProjectRow({ overview, onOpen }: ProjectRowProps) {
+  const { project, sessionCount, runningCount, lastSession, lastActivityAt } = overview;
+  const hasSession = lastSession !== null;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+      aria-label={
+        hasSession
+          ? `Lanjutkan session terakhir project ${project.name}`
+          : `Buka project ${project.name}`
+      }
+    >
+      <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary uppercase">
+        {project.name.trim().charAt(0) || "?"}
+        {runningCount > 0 && (
+          <span
+            className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card"
+            aria-hidden
+          />
+        )}
+      </span>
+
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-sm font-medium group-hover:text-primary">
+          {project.name}
+        </span>
+        <span className="truncate font-mono text-xs text-muted-foreground">{project.path}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {sessionCount === 0 ? "Belum ada session" : `${sessionCount} session`}
+          {runningCount > 0 && ` · ${runningCount} berjalan`}
+          {" · "}
+          {formatRelativeTime(lastActivityAt)}
+        </span>
+      </span>
+
+      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-primary">
+        <span className="hidden sm:inline">{hasSession ? "Lanjutkan" : "Buka"}</span>
+        <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+      </span>
+    </button>
+  );
+}
+
+/** Placeholder daftar saat memuat — menjaga tinggi konten agar tidak melompat. */
+function ProjectListSkeleton() {
+  return (
+    <div className="flex flex-col gap-2" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3">
+          <Skeleton className="size-10 shrink-0 rounded-lg" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-3 w-48" />
+            <Skeleton className="h-3 w-24" />
+          </div>
+          <Skeleton className="size-4 shrink-0 rounded" />
+        </div>
+      ))}
     </div>
   );
 }

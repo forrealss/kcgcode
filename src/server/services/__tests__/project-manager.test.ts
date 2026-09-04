@@ -142,6 +142,40 @@ test("8.3: listDirectory path tidak ditemukan -> PATH_NOT_FOUND", () => {
   if (!res.ok) expect(res.error).toBe("PATH_NOT_FOUND");
 });
 
+test("deleteProject: pendaftaran hilang tapi direktori kerja tetap ada", () => {
+  const { store, pm } = freshManager();
+  const created = pm.createProject("hapus-saya", "hapus-saya");
+  expect(created.ok).toBe(true);
+  if (!created.ok) return;
+
+  expect(pm.deleteProject(created.data.id).ok).toBe(true);
+  expect(pm.listProjects().some((p) => p.id === created.data.id)).toBe(false);
+  // Project hanyalah referensi ke folder — isinya milik pengguna, jangan dihapus.
+  expect(existsSync(created.data.path)).toBe(true);
+  store.close();
+});
+
+test("deleteProject: id tak dikenal -> PROJECT_NOT_FOUND", () => {
+  const { store, pm } = freshManager();
+  const res = pm.deleteProject("tidak-ada");
+  expect(res.ok).toBe(false);
+  if (!res.ok) expect(res.error).toBe("PROJECT_NOT_FOUND");
+  store.close();
+});
+
+test("getProject: mengembalikan Project yang baru dibuat", () => {
+  const { store, pm } = freshManager();
+  const created = pm.createProject("ambil-saya", "ambil-saya");
+  expect(created.ok).toBe(true);
+  if (!created.ok) return;
+
+  const got = pm.getProject(created.data.id);
+  expect(got.ok).toBe(true);
+  if (got.ok) expect(got.data.name).toBe("ambil-saya");
+  expect(pm.getProject("tidak-ada").ok).toBe(false);
+  store.close();
+});
+
 test("8.3: listDirectory hanya mengembalikan direktori (bukan file)", () => {
   const { pm } = freshManager();
   const sub = mkdtempSync(path.join(root, "listtest-"));

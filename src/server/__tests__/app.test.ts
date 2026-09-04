@@ -10,7 +10,7 @@
  * hanya komponen opencode headless yang di-mock.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openSessionStore, type SessionStore } from "../../db";
@@ -712,6 +712,58 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     // Session tak dikenal -> 404.
     const missing = await fetch(`${baseUrl()}/api/sessions/tidak-ada/files?q=x`);
     expect(missing.status).toBe(404);
+  });
+
+  test("hapus Project: Session ikut dibersihkan, server headless dihentikan, direktori utuh", async () => {
+    const dir = path.join(root, "proj-hapus");
+    mkdirSync(dir, { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "hapus-proj", path: "proj-hapus" }),
+      })
+    ).json()) as { project: Project };
+
+    const sess = (await (
+      await fetch(`${baseUrl()}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentType: "opencode", projectId: proj.project.id }),
+      })
+    ).json()) as { session: Session };
+    const client = servers.clients.get(proj.project.id);
+    expect(client).toBeDefined();
+
+    const del = await fetch(`${baseUrl()}/api/projects/${proj.project.id}`, { method: "DELETE" });
+    expect(del.status).toBe(200);
+
+    // Session lokal + sesi remote opencode ikut terhapus.
+    expect(store.getSession(sess.session.id).ok).toBe(false);
+    expect(client?.deleteCalls).toContain(sess.session.ocSessionId ?? "");
+    // Server headless Project dihentikan (tidak lagi memakan memori).
+    expect(servers.stopped).toContain(proj.project.id);
+    // Project hilang dari daftar, tapi direktori kerjanya TIDAK dihapus.
+    expect(store.listProjects().some((p) => p.id === proj.project.id)).toBe(false);
+    expect(existsSync(dir)).toBe(true);
+  });
+
+  test("hapus Project tanpa Session -> 200; id tak dikenal -> 404", async () => {
+    mkdirSync(path.join(root, "proj-kosong"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "kosong-proj", path: "proj-kosong" }),
+      })
+    ).json()) as { project: Project };
+
+    const del = await fetch(`${baseUrl()}/api/projects/${proj.project.id}`, { method: "DELETE" });
+    expect(del.status).toBe(200);
+
+    const missing = await fetch(`${baseUrl()}/api/projects/tidak-ada`, { method: "DELETE" });
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as { error: string }).error).toBe("PROJECT_NOT_FOUND");
   });
 });
 

@@ -41,6 +41,12 @@ export function AppShell() {
   };
 
   const isHome = route.name === "projects";
+  /**
+   * Session view punya header sendiri (back, nama model, play/stop, menu aksi
+   * berisi tema & hapus), jadi chrome shell disembunyikan di sana — dua header
+   * bertumpuk memakan tinggi layar HP tanpa menambah informasi.
+   */
+  const isSession = route.name === "session";
 
   return (
     <TooltipProvider>
@@ -51,55 +57,57 @@ export function AppShell() {
             : "relative mx-auto flex h-dvh w-full max-w-5xl flex-col overflow-x-hidden bg-background shadow-sm sm:border-x"
         }
       >
-        {/* Header */}
-        <header
-          className={
-            isHome
-              ? "mx-auto flex w-full max-w-xl shrink-0 justify-end px-4 py-3 sm:px-6"
-              : "flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
-          }
-        >
-          {!isHome && (
-            <a
-              href={projectsPath()}
-              onClick={(e) => {
-                e.preventDefault();
-                navigate(projectsPath());
-              }}
-              className="flex min-w-0 items-center gap-2"
-              aria-label="Kembali ke daftar Project"
-            >
-              <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-sm">
-                <img src={logo} alt="" className="size-full" />
-              </span>
-              <div className="flex min-w-0 flex-col">
-                <span className="truncate text-sm font-semibold leading-tight tracking-tight">
-                  KCG Bridge
+        {/* Header (kecuali Session view yang membawa header sendiri) */}
+        {!isSession && (
+          <header
+            className={
+              isHome
+                ? "mx-auto flex w-full max-w-xl shrink-0 justify-end px-4 py-3 sm:px-6"
+                : "flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
+            }
+          >
+            {!isHome && (
+              <a
+                href={projectsPath()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate(projectsPath());
+                }}
+                className="flex min-w-0 items-center gap-2"
+                aria-label="Kembali ke daftar Project"
+              >
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-sm">
+                  <img src={logo} alt="" className="size-full" />
                 </span>
-                <span className="hidden truncate text-[11px] leading-tight text-muted-foreground sm:block">
-                  Kontrol CLI_Agent dari mana saja
-                </span>
-              </div>
-            </a>
-          )}
-          <div className="flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 p-0.5">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              onClick={() => setTokenOpen((o) => !o)}
-              aria-label="Pengaturan token otentikasi"
-              title="Token otentikasi"
-              data-active={tokenOpen}
-            >
-              <KeyRoundIcon data-icon="inline-start" />
-            </Button>
-            <ThemeToggle />
-          </div>
-        </header>
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate text-sm font-semibold leading-tight tracking-tight">
+                    KCG Bridge
+                  </span>
+                  <span className="hidden truncate text-[11px] leading-tight text-muted-foreground sm:block">
+                    Kontrol CLI_Agent dari mana saja
+                  </span>
+                </div>
+              </a>
+            )}
+            <div className="flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 p-0.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setTokenOpen((o) => !o)}
+                aria-label="Pengaturan token otentikasi"
+                title="Token otentikasi"
+                data-active={tokenOpen}
+              >
+                <KeyRoundIcon data-icon="inline-start" />
+              </Button>
+              <ThemeToggle />
+            </div>
+          </header>
+        )}
 
         {/* Input token (opsional, Requirement 9.2/9.3) */}
-        {tokenOpen && (
+        {!isSession && tokenOpen && (
           <form
             onSubmit={saveToken}
             className="flex shrink-0 flex-col gap-2 border-b bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:px-6"
@@ -132,12 +140,11 @@ export function AppShell() {
             <div
               className={
                 isHome
-                  ? /* Tanpa items/justify-center: di layar HP konten rata atas
-                       (tidak ada gap atas besar), dan saat daftar project lebih
-                       tinggi dari layar tidak ada bagian yang terpotong tak
-                       bisa di-scroll (centering overflow). Pemusatan desktop
-                       lewat `sm:my-auto` di root ProjectsPage. */
-                    "flex min-h-full flex-col px-4 py-6 sm:px-6 sm:py-12"
+                  ? /* Homepage rata atas (bukan center): daftar Project adalah
+                       fokus, jadi baris pertama langsung terlihat tanpa gap
+                       atas besar — dan daftar yang lebih tinggi dari layar
+                       tetap bisa di-scroll seluruhnya. */
+                    "flex min-h-full flex-col px-4 py-6 sm:px-6 sm:py-10"
                   : "mx-auto w-full p-4 pb-12 sm:p-6 sm:pb-16 lg:p-8"
               }
             >

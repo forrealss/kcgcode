@@ -136,6 +136,15 @@ export interface SessionStore {
   getProjectByName(name: string): Result<Project>;
   getProjectByPath(filePath: string): Result<Project>;
   listProjects(): Project[];
+  /** Session milik satu Project (dipakai sebelum menghapus Project). */
+  listProjectSessions(projectId: string): Session[];
+  /**
+   * Hapus baris Project. Menolak (`PROJECT_HAS_SESSIONS`) bila masih ada
+   * Session yang menunjuk Project ini — Session harus dihapus lebih dulu
+   * lewat `SessionManager.deleteSession` agar sesi remote opencode dan
+   * lampirannya ikut dibersihkan, bukan ditinggal yatim.
+   */
+  deleteProject(projectId: string): SimpleResult;
 
   // ---- Prompts (CRUD) ----
   insertPrompt(prompt: InteractivePrompt): Result<InteractivePrompt>;
@@ -289,6 +298,10 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     getProjectByName: db.query("SELECT * FROM projects WHERE name = ?"),
     getProjectByPath: db.query("SELECT * FROM projects WHERE path = ?"),
     listProjects: db.query("SELECT * FROM projects ORDER BY created_at ASC, name ASC"),
+    listProjectSessions: db.query(
+      "SELECT * FROM sessions WHERE project_id = ? ORDER BY created_at ASC, id ASC",
+    ),
+    deleteProjectRow: db.query("DELETE FROM projects WHERE id = ?"),
 
     insertSession: db.query(
       "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -540,6 +553,29 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
 
     listProjects(): Project[] {
       return (q.listProjects.all() as ProjectRow[]).map(mapProject);
+    },
+
+    listProjectSessions(projectId: string): Session[] {
+      return (q.listProjectSessions.all(projectId) as SessionRow[]).map(mapSession);
+    },
+
+    /**
+     * Hapus baris Project. Session milik Project harus sudah dihapus lebih
+     * dulu: `sessions.project_id` punya foreign key ke `projects(id)`, dan
+     * menghapus Session lewat jalur ini akan melewatkan pembersihan sesi
+     * remote opencode + lampiran gambarnya.
+     */
+    deleteProject(projectId: string): SimpleResult {
+      try {
+        const existing = q.getProjectById.get(projectId) as ProjectRow | null;
+        if (!existing) return errResult("PROJECT_NOT_FOUND");
+        const sessions = q.listProjectSessions.all(projectId) as SessionRow[];
+        if (sessions.length > 0) return errResult("PROJECT_HAS_SESSIONS");
+        q.deleteProjectRow.run(projectId);
+        return { ok: true };
+      } catch (e) {
+        return errResult(`PROJECT_DELETE_FAILED: ${(e as Error).message}`);
+      }
     },
 
     // ---------------- Prompts (CRUD) ----------------

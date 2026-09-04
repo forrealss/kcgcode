@@ -23,18 +23,40 @@ import {
   CircleAlertIcon,
   FileIcon,
   ImagePlusIcon,
+  MoonIcon,
+  MoreVerticalIcon,
   PlayIcon,
   SendHorizontalIcon,
   SquareIcon,
+  SunIcon,
+  Trash2Icon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { MarkdownContent } from "@/components/sessions/MarkdownContent";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Message, MessageContent, MessageFooter, MessageHeader } from "@/components/ui/message";
 import {
   MessageScroller,
@@ -45,7 +67,9 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
 import { Spinner } from "@/components/ui/spinner";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
+import { useTheme } from "@/hooks/useTheme";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
 import {
   ApiError,
@@ -55,6 +79,7 @@ import {
   attachmentUrl,
   getAuthToken,
 } from "@/lib/api";
+import { composerPlaceholder } from "@/lib/composer";
 import { cn } from "@/lib/utils";
 import type {
   InteractivePrompt,
@@ -79,6 +104,12 @@ import { TypewriterText } from "./TypewriterText";
 export interface SessionViewProps {
   session: Session;
   onBack: () => void;
+  /**
+   * Dipanggil setelah Session dihapus dari menu aksi header. Bila tidak
+   * diberikan, `onBack` dipakai — halaman ini tidak punya data lagi untuk
+   * ditampilkan setelah Session hilang.
+   */
+  onDeleted?: () => void;
 }
 
 function wsStatusLabel(status: WsConnectionStatus): string {
@@ -99,6 +130,13 @@ function statusVariant(status: SessionStatus): "default" | "secondary" | "destru
   if (status === "crashed") return "destructive";
   return "secondary";
 }
+
+/** Warna titik status Session di header HP (sepadan dengan `SessionList`). */
+const STATUS_DOT: Record<SessionStatus, string> = {
+  running: "bg-emerald-500",
+  stopped: "bg-muted-foreground/50",
+  crashed: "bg-destructive",
+};
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(undefined, {
@@ -198,7 +236,12 @@ export function upsertMessage(
   return messages.map((m, i) => (i === idx ? message : m));
 }
 
-export function SessionView({ session, onBack }: SessionViewProps) {
+export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
+  /** Layar sempit: placeholder composer dipendekkan agar tidak terpotong. */
+  const isMobile = useIsMobile();
+  /** Toggle tema dari menu aksi header (sebelumnya hanya ada di AppShell). */
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === "dark";
   const [messages, setMessages] = useState<SessionMessage[]>([]);
   const [collapsible, setCollapsible] = useState<CollapsibleState>({});
   const [prompts, setPrompts] = useState<InteractivePrompt[]>([]);
@@ -462,13 +505,48 @@ export function SessionView({ session, onBack }: SessionViewProps) {
   const [starting, setStarting] = useState(false);
   const start = async () => {
     setStarting(true);
+    setError(null);
     try {
       await apiFetch(`/api/sessions/${session.id}`, { method: "POST" });
       // Status baru dikirim gateway ke semua subscriber; tak perlu setState di sini.
-    } catch {
-      // Kegagalan dibiarkan: badge status tidak berubah, user bisa coba lagi.
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Gagal menghidupkan Session");
     } finally {
       setStarting(false);
+    }
+  };
+
+  /**
+   * Hentikan Session (bukan hanya balasan model): status -> `stopped`.
+   * Berbeda dari tombol Stop di composer yang hanya meng-interrupt turn.
+   */
+  const [stopping, setStopping] = useState(false);
+  const stopSession = async () => {
+    setStopping(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/sessions/${session.id}/stop`, { method: "POST" });
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Gagal menghentikan Session");
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  /** Hapus Session permanen dari menu aksi header (dikonfirmasi lebih dulu). */
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const confirmDelete = async () => {
+    setDeleting(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+      setDeleteOpen(false);
+      (onDeleted ?? onBack)();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Gagal menghapus Session");
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -540,15 +618,25 @@ export function SessionView({ session, onBack }: SessionViewProps) {
             );
           })}
           {body !== "" && (
-            <Bubble variant="secondary">
-              <BubbleContent>
+            // `max-w-full`: bubble balasan boleh selebar kolom percakapan —
+            // tabel & blok kode butuh ruang, dan keduanya punya scroll sendiri.
+            <Bubble variant="secondary" className="max-w-full">
+              <BubbleContent className="w-full">
                 <TypewriterText
                   text={body}
                   // Efek mengetik hanya fallback: teks yang sudah ter-stream
                   // live (bertambah bertahap) dirender penuh apa adanya.
                   active={shouldTypewrite(m.id, typingIds, liveTextIds)}
-                  className="whitespace-pre-wrap"
-                />
+                >
+                  {(shown, typing) => (
+                    <>
+                      {/* Markdown di-parse ulang tiap tick; parser remark
+                          recoverable sehingga sintaks setengah jadi aman. */}
+                      <MarkdownContent>{shown}</MarkdownContent>
+                      {typing && <span className="animate-pulse">▍</span>}
+                    </>
+                  )}
+                </TypewriterText>
               </BubbleContent>
             </Bubble>
           )}
@@ -656,55 +744,135 @@ export function SessionView({ session, onBack }: SessionViewProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Header */}
-      <header className="flex items-center justify-between gap-2 border-b px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button type="button" variant="ghost" size="icon" onClick={onBack} aria-label="Kembali">
+      {/*
+        Header ala aplikasi chat mobile: back — nama model (pembuka picker) —
+        aksi. Nama model jadi judul karena itulah informasi yang paling sering
+        dilihat & diganti; identitas Session (agentType + id) turun ke baris
+        kedua yang hanya tampil di layar lebar.
+
+        Tiga tombol saja di HP supaya lega: back, play/stop, dan menu aksi.
+      */}
+      <header className="shrink-0 border-b">
+        {/* Garis border membentang penuh, isinya sejajar kolom percakapan. */}
+        <div className="mx-auto flex w-full max-w-3xl items-center gap-1 px-1.5 py-1.5 sm:gap-2 sm:px-3 sm:py-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            onClick={onBack}
+            aria-label="Kembali"
+            className="size-10 shrink-0 sm:size-9"
+          >
             <ChevronLeftIcon data-icon="inline-start" />
           </Button>
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-medium">{session.agentType}</span>
-            <span className="truncate font-mono text-[11px] text-muted-foreground">
-              {session.id.slice(0, 8)}
+
+          {/* Judul = nama model, sekaligus pembuka dialog pemilihan model.
+            Ikon chevron memberi tahu bahwa ini dapat diganti. */}
+          <div className="flex min-w-0 flex-1 flex-col items-start">
+            <ModelPicker
+              projectId={session.projectId}
+              sessionId={session.id}
+              model={model}
+              onChanged={setModel}
+              variant="heading"
+            />
+            <span className="hidden truncate px-2 font-mono text-[11px] text-muted-foreground sm:block">
+              {session.agentType} · {session.id.slice(0, 8)}
+              {wsStatus !== "connected" && ` · ${wsStatusLabel(wsStatus)}`}
             </span>
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {/* Session non-running: tombol hidupkan kembali. Saat running, stop
-              balasan model ada di composer (berubah jadi tombol Stop). */}
-          {status !== "running" && (
+
+          {/* Play/stop Session — aksi paling sering dipakai, jadi tetap di luar
+            menu. Stop hanya untuk Session yang berjalan; saat model sedang
+            merespon, penghentian balasan ada di composer (tombol Stop). */}
+          {status === "running" ? (
             <Button
               type="button"
-              variant="outline"
-              size="sm"
-              onClick={start}
-              disabled={starting}
-              aria-label="Hidupkan kembali"
+              variant="ghost"
+              size="icon"
+              onClick={() => void stopSession()}
+              disabled={stopping}
+              aria-label="Hentikan Session"
+              title="Hentikan Session"
+              className="size-10 shrink-0 sm:size-9"
             >
-              {starting ? <Spinner className="size-3.5" /> : <PlayIcon data-icon="inline-start" />}
-              Start
+              {stopping ? <Spinner className="size-4" /> : <SquareIcon />}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={() => void start()}
+              disabled={starting}
+              aria-label="Hidupkan Session"
+              title="Hidupkan Session"
+              className="size-10 shrink-0 sm:size-9"
+            >
+              {starting ? <Spinner className="size-4" /> : <PlayIcon />}
             </Button>
           )}
-          <Badge variant={wsStatus === "connected" ? "default" : "secondary"}>
-            {wsStatusLabel(wsStatus)}
+
+          {/* Status Session sebagai titik berwarna di HP (badge teks memakan
+            lebar); badge penuh muncul dari breakpoint sm. */}
+          <span
+            role="status"
+            className="flex shrink-0 items-center sm:hidden"
+            title={`Session ${status}`}
+          >
+            <span className={cn("size-2 rounded-full", STATUS_DOT[status])} aria-hidden />
+            <span className="sr-only">Session {status}</span>
+          </span>
+          <Badge variant={statusVariant(status)} className="hidden shrink-0 sm:inline-flex">
+            {status}
           </Badge>
-          <Badge variant={statusVariant(status)}>{status}</Badge>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Aksi session"
+                className="size-10 shrink-0 sm:size-9"
+              >
+                <MoreVerticalIcon />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={toggleTheme}>
+                {isDark ? <SunIcon /> : <MoonIcon />}
+                {isDark ? "Mode terang" : "Mode gelap"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
+                <Trash2Icon />
+                Hapus session
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
-      {/* Percakapan terstruktur */}
+      {/* Percakapan terstruktur.
+          Padding horizontal ada di Content (bukan Viewport) supaya scrollbar
+          tetap menempel di tepi, sementara bubble & footer waktu punya jarak
+          dari pinggir layar — di HP sebelumnya keduanya mepet ke tepi. */}
       <MessageScrollerProvider autoScroll>
         <MessageScroller className="min-h-0 flex-1">
           <MessageScrollerViewport>
-            <MessageScrollerContent>
+            {/* `max-w-3xl mx-auto`: di layar lebar baris teks yang membentang
+                penuh sulit dibaca; kolom percakapan dibatasi dan dipusatkan
+                seperti aplikasi chat lain, sementara scrollbar tetap di tepi. */}
+            <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-6 px-3 py-4 sm:gap-8 sm:px-4">
               {error && (
                 <MessageScrollerItem messageId="error">
-                  <p className="px-3 text-sm text-destructive">{error}</p>
+                  <p className="text-sm text-destructive">{error}</p>
                 </MessageScrollerItem>
               )}
               {messages.length === 0 && prompts.length === 0 ? (
                 <MessageScrollerItem messageId="empty">
-                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+                  <p className="py-8 text-center text-sm text-muted-foreground">
                     Belum ada percakapan. Kirim pesan pertama untuk mulai.
                   </p>
                 </MessageScrollerItem>
@@ -720,7 +888,7 @@ export function SessionView({ session, onBack }: SessionViewProps) {
               ))}
               {status !== "running" && messages.length > 0 && (
                 <MessageScrollerItem messageId="status-note">
-                  <p className="px-3 text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground">
                     Session {status}. Input dinonaktifkan.
                   </p>
                 </MessageScrollerItem>
@@ -731,17 +899,16 @@ export function SessionView({ session, onBack }: SessionViewProps) {
         </MessageScroller>
       </MessageScrollerProvider>
 
-      {/* Input bebas */}
-      <footer className="border-t px-3 py-2">
-        <div className="mb-2">
-          <ModelPicker
-            projectId={session.projectId}
-            sessionId={session.id}
-            model={model}
-            onChanged={setModel}
-          />
-        </div>
-        <form onSubmit={submitText} className="relative flex items-end gap-2">
+      {/* Input bebas. `pb-[env(safe-area-inset-bottom)]` menjaga composer tidak
+          tertutup home indicator saat dipasang sebagai PWA di HP. */}
+      <footer className="shrink-0 border-t px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
+        {/* Pemilih model kini jadi judul header — composer fokus ke input saja
+            supaya area mengetik di HP tidak terpotong baris tambahan. */}
+        {/* Composer sejajar dengan kolom percakapan di layar lebar. */}
+        <form
+          onSubmit={submitText}
+          className="relative mx-auto flex w-full max-w-3xl items-end gap-2"
+        >
           {/* Dropdown saran @file (muncul di atas input saat token @ aktif).
               Wrapper rounded + overflow-hidden memotong scrollbar sesuai
               lengkungan, elemen di dalamnya yang men-scroll (Req kartu rounded). */}
@@ -795,18 +962,18 @@ export function SessionView({ session, onBack }: SessionViewProps) {
             }}
             onPaste={handlePaste}
             onBlur={() => mention.close()}
-            placeholder={
-              busy
-                ? "Model sedang merespon…"
-                : canInput
-                  ? "Ketik pesan… ketik @ untuk referensi file, atau tempel gambar"
-                  : "Session tidak aktif"
-            }
+            placeholder={composerPlaceholder({ busy, canInput, compact: isMobile })}
             aria-label="Input bebas"
             disabled={!canInput}
             rows={1}
-            className="max-h-40 min-h-9 w-full flex-1 resize-none rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
+            /**
+             * `min-h-11` di HP: tinggi 36px sebelumnya memotong placeholder
+             * satu baris. `text-base` mencegah Safari iOS auto-zoom saat
+             * fokus (terjadi di bawah 16px).
+             */
+            className="max-h-40 min-h-11 w-full flex-1 resize-none rounded-md border bg-transparent px-3 py-2.5 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9 sm:py-2 sm:text-sm"
           />
+          {/* Tombol setinggi textarea (44px di HP) agar sebaris rapi. */}
           <Button
             type="button"
             variant="ghost"
@@ -815,6 +982,7 @@ export function SessionView({ session, onBack }: SessionViewProps) {
             disabled={!canInput}
             aria-label="Lampirkan gambar"
             title="Lampirkan gambar (PNG/JPEG/GIF/WebP, maks 20 MiB)"
+            className="size-11 sm:size-9"
           >
             <ImagePlusIcon data-icon="inline-start" />
           </Button>
@@ -841,12 +1009,18 @@ export function SessionView({ session, onBack }: SessionViewProps) {
               disabled={wsStatus !== "connected"}
               aria-label="Hentikan balasan"
               title="Hentikan balasan model"
-              className="border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              className="size-11 border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive sm:size-9"
             >
               <SquareIcon className="size-4" />
             </Button>
           ) : (
-            <Button type="submit" size="icon" disabled={!canSubmit} aria-label="Kirim">
+            <Button
+              type="submit"
+              size="icon"
+              disabled={!canSubmit}
+              aria-label="Kirim"
+              className="size-11 sm:size-9"
+            >
               {sending ? (
                 <Spinner className="size-4" />
               ) : (
@@ -857,7 +1031,7 @@ export function SessionView({ session, onBack }: SessionViewProps) {
         </form>
         {/* Pratinjau gambar yang akan dilampirkan (bisa dihapus sebelum kirim). */}
         {pendingImages.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="mx-auto mt-2 flex w-full max-w-3xl flex-wrap gap-1.5">
             {pendingImages.map((img) => (
               <div key={img.key} className="group relative">
                 <img
@@ -878,6 +1052,44 @@ export function SessionView({ session, onBack }: SessionViewProps) {
           </div>
         )}
       </footer>
+
+      {/* Konfirmasi hapus Session dari menu aksi header */}
+      <AlertDialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          if (!deleting) setDeleteOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Hapus Session ini?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Riwayat percakapan di server opencode juga ikut terhapus permanen. Aksi ini tidak bisa
+              dibatalkan.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={(e) => {
+                e.preventDefault();
+                void confirmDelete();
+              }}
+              disabled={deleting}
+            >
+              {deleting ? (
+                <>
+                  <Spinner data-icon="inline-start" />
+                  Menghapus…
+                </>
+              ) : (
+                "Hapus permanen"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
