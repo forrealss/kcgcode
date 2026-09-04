@@ -94,18 +94,22 @@ interface FakeSessionManager extends SessionManager {
   inputs: [string, string][];
   promptReplies: [string, string, PromptResponse][];
   stops: string[];
+  interrupts: string[];
   inputResult: { ok: boolean; error?: string };
   resolveResult: { ok: boolean; error?: string };
   stopResult: { ok: boolean; error?: string };
+  interruptResult: { ok: boolean; error?: string };
 }
 function makeFakeSessionManager(): FakeSessionManager {
   const sm: FakeSessionManager = {
     inputs: [],
     promptReplies: [],
     stops: [],
+    interrupts: [],
     inputResult: { ok: true },
     resolveResult: { ok: true },
     stopResult: { ok: true },
+    interruptResult: { ok: true },
     async createSession() {
       return { ok: false, error: "not-used" };
     },
@@ -114,6 +118,10 @@ function makeFakeSessionManager(): FakeSessionManager {
     stopSession(sessionId) {
       sm.stops.push(sessionId);
       return sm.stopResult;
+    },
+    interruptSession(sessionId) {
+      sm.interrupts.push(sessionId);
+      return sm.interruptResult;
     },
     async resumeSession() {
       return { ok: false, error: "not-used" };
@@ -317,6 +325,27 @@ test("stop diteruskan; session tidak running -> error SESSION_NOT_RUNNING", () =
   }
 });
 
+test("interrupt diteruskan ke interruptSession; gagal -> error dikirim", () => {
+  const h = freshHarness();
+  try {
+    const sub = makeSub("c1");
+    h.gw.attach(sub, "s1");
+
+    h.gw.interrupt(sub, "s1");
+    expect(h.sm.interrupts).toEqual(["s1"]);
+
+    h.sm.interruptResult = { ok: false, error: "SESSION_NOT_FOUND" };
+    h.gw.interrupt(sub, "s1");
+    const err = sub.sent.find((m): m is Extract<ServerMessage, { type: "error" }> => {
+      return m.type === "error";
+    });
+    expect(err).toBeDefined();
+    if (err) expect(err.code).toBe(ErrorCodes.SESSION_NOT_FOUND);
+  } finally {
+    h.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Broadcast & isolasi kegagalan
 // ---------------------------------------------------------------------------
@@ -341,11 +370,11 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
     h.gw.attach(subs[0], "s1");
     h.gw.attach(subs[1], "s1");
     h.gw.attach(subs[2], "s2");
-
     h.gw.notifyMessage("s1", makeMessage("s1", "m1", "assistant"));
     h.gw.notifyMessagePart("s1", "m1", { type: "text", id: "prt_1", text: "stream" });
     h.gw.notifyPrompt("s1", makePrompt("s1", "pr1", "permission"));
     h.gw.notifySessionStatus("s1", "stopped");
+    h.gw.notifyTurnActive("s1", true);
     h.gw.notifyPromptResolved("s1", "pr1");
     h.gw.notifyError("s1", "AGENT_ERROR", "gagal");
 
@@ -359,6 +388,11 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
         expect(part.messageId).toBe("m1");
         expect(part.part).toEqual({ type: "text", id: "prt_1", text: "stream" });
       }
+      const turn = s.sent.find(
+        (m): m is Extract<ServerMessage, { type: "turn_active" }> => m.type === "turn_active",
+      );
+      expect(turn).toBeDefined();
+      if (turn) expect(turn.active).toBe(true);
       expect(s.sent.filter((m) => m.type === "prompt")).toHaveLength(1);
       expect(s.sent.filter((m) => m.type === "session_status")).toHaveLength(1);
       expect(s.sent.filter((m) => m.type === "prompt_resolved")).toHaveLength(1);
@@ -451,6 +485,13 @@ test("dispatchClientMessage mengarahkan attach/input/prompt_response/stop/error"
 
     dispatchClientMessage(h.gw, sub, JSON.stringify({ type: "stop", sessionId: "s1" }));
     expect(h.sm.stops).toEqual(["s1"]);
+
+    dispatchClientMessage(h.gw, sub, JSON.stringify({ type: "interrupt", sessionId: "s1" }));
+    expect(h.sm.interrupts).toEqual(["s1"]);
+
+    // interrupt tanpa sessionId -> INVALID_MESSAGE.
+    dispatchClientMessage(h.gw, makeSub("d4"), JSON.stringify({ type: "interrupt" }));
+    expect(h.sm.interrupts).toEqual(["s1"]);
 
     // JSON rusak / tipe tak dikenal
     const sub2 = makeSub("d2");

@@ -5,22 +5,29 @@
  * - Pesan datang sebagai `SessionMessage` terstruktur (`role` + `parts`):
  *   text, reasoning (collapsible per part), tool/step.
  * - Interactive_Prompt (permission/question) dirender via `prompt-card.tsx`.
- * - Tidak ada `resize` PTY; ada aksi Stop (kirim `{ type: "stop" }`).
+ * - Saat model merespon (`turn_active` true / pesan streaming) tombol kirim
+ *   berubah jadi tombol Stop (kirim `{ type: "interrupt" }`) — menghentikan
+ *   balasan saja ala opencode, Session tetap berjalan. `{ type: "stop" }`
+ *   (menonaktifkan Session) tetap ada lewat daftar Session / HTTP.
  *
  * Konsumen `use-websocket.ts`:
  * - `history` (reattach) berisi `messages` + `prompts` pending.
  * - `message` menambah pesan baru; `prompt`/`prompt_resolved` mengelola kartu.
- * - `session_status` memperbarui badge; `error` ditampilkan.
+ * - `session_status` memperbarui badge; `turn_active` status model merespon;
+ *   `error` ditampilkan.
  */
 import {
   BotIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CircleAlertIcon,
   FileIcon,
+  ImagePlusIcon,
   PlayIcon,
   SendHorizontalIcon,
   SquareIcon,
   WrenchIcon,
+  XIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ModelPicker } from "@/components/model-picker";
@@ -40,7 +47,14 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { useFileMention } from "@/hooks/use-mention";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/use-websocket";
-import { apiFetch, getAuthToken } from "@/lib/api";
+import {
+  ApiError,
+  apiErrorMessage,
+  apiFetch,
+  apiUploadImage,
+  attachmentUrl,
+  getAuthToken,
+} from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type {
   InteractivePrompt,
@@ -192,7 +206,21 @@ export function SessionView({ session, onBack }: SessionViewProps) {
   /** Model pilihan Session — dapat diganti live; null = default opencode. */
   const [model, setModel] = useState<SessionModel | null>(session.model);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Turn aktif dari server (`turn_active`): model sedang merespon. Fallback
+   * klien: pesan assistant `streaming` (lihat `busy`).
+   */
+  const [turnActive, setTurnActive] = useState(false);
   const [text, setText] = useState("");
+  /**
+   * Gambar yang akan dilampirkan ke pesan berikutnya (belum di-upload).
+   * Preferensi thumbnail memakai object URL lokal; upload terjadi saat kirim.
+   */
+  const [pendingImages, setPendingImages] = useState<
+    { key: string; file: File; previewUrl: string }[]
+  >([]);
+  /** Upload lampiran sedang berjalan — cegah kirim ganda. */
+  const [sending, setSending] = useState(false);
   /**
    * Autocomplete `@file`: deteksi token @query di sekitar kursor + daftar
    * saran dari server (index file milik opencode, seperti `@` di TUI-nya).
@@ -207,6 +235,7 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
   useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h). */
   const autoResize = (el: HTMLTextAreaElement) => {
@@ -229,9 +258,10 @@ export function SessionView({ session, onBack }: SessionViewProps) {
         setError(null);
         setMessages(msg.messages);
         setPrompts(msg.prompts);
-        // Pesan lama tampil penuh tanpa efek mengetik; reset status live.
+        // Pesan lama tampil penuh tanpa efek mengetik; reset status live & turn.
         setTypingIds(new Set());
         setLiveTextIds(new Set());
+        setTurnActive(false);
         partLenRef.current.clear();
         // Reasoning tampil collapsed (baris "Thinking"), bisa di-expand per part.
         // Key berbasis part.id agar stabil walau parts bertambah saat streaming.
@@ -295,6 +325,11 @@ export function SessionView({ session, onBack }: SessionViewProps) {
         break;
       case "session_status":
         setStatus(msg.status);
+        // Session non-running -> tidak mungkin ada model yang merespon.
+        if (msg.status !== "running") setTurnActive(false);
+        break;
+      case "turn_active":
+        setTurnActive(msg.active);
         break;
       case "session_deleted":
         // Session dihapus dari tempat lain — kembali ke daftar Session.
@@ -341,29 +376,86 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     for (const s of mention.suggestions) suggestedCacheRef.current.add(s);
   }
 
-  const submitText = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (text.trim() === "") return;
-    /**
-     * Referensi @path yang dikenal diekstrak menjadi daftar `files` — tapi
-     * teks TIDAK diubah. Teks asli tetap tampil di bubble chat (termasuk
-     * `@path`-nya); part `file` di prompt opencode hanya penanda tambahan
-     * agar isi file benar-benar dibaca.
-     */
-    const files: string[] = [];
-    for (const match of text.matchAll(/(^|\s)@([^\s]+)/g)) {
-      const path = match[2] ?? "";
-      if (path.length > 0 && (suggestedCacheRef.current.has(path) || path.includes("/"))) {
-        files.push(path);
+  /** Ukuran maksimum gambar yang diterima (mengikuti limit opencode 20 MiB). */
+  const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
+
+  /**
+   * Terima file gambar dari file picker / paste, validasi, lalu simpan ke
+   * antrean lampiran. Format non-gambar / terlalu besar ditolak dengan pesan.
+   */
+  const addImages = useCallback((files: Iterable<File>) => {
+    const picked: { key: string; file: File; previewUrl: string }[] = [];
+    for (const file of files) {
+      if (!file.type.startsWith("image/")) {
+        setError(`"${file.name}" bukan gambar.`);
+        continue;
       }
+      if (file.size > MAX_IMAGE_BYTES) {
+        setError(`"${file.name}" melebihi batas 20 MiB.`);
+        continue;
+      }
+      picked.push({ key: crypto.randomUUID(), file, previewUrl: URL.createObjectURL(file) });
     }
-    send({ type: "input", sessionId: session.id, text: text.trim(), files });
-    setText("");
-    mention.close();
+    if (picked.length > 0) setPendingImages((prev) => [...prev, ...picked]);
+  }, []);
+
+  const removeImage = useCallback((key: string) => {
+    setPendingImages((prev) => {
+      const target = prev.find((p) => p.key === key);
+      if (target) URL.revokeObjectURL(target.previewUrl);
+      return prev.filter((p) => p.key !== key);
+    });
+  }, []);
+
+  const submitText = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!canInput || sending) return;
+    if (text.trim() === "" && pendingImages.length === 0) return;
+    setSending(true);
+    try {
+      /**
+       * Referensi @path yang dikenal diekstrak menjadi daftar `files` — tapi
+       * teks TIDAK diubah. Teks asli tetap tampil di bubble chat (termasuk
+       * `@path`-nya); part `file` di prompt opencode hanya penanda tambahan
+       * agar isi file benar-benar dibaca.
+       */
+      const files: string[] = [];
+      for (const match of text.matchAll(/(^|\s)@([^\s]+)/g)) {
+        const path = match[2] ?? "";
+        if (path.length > 0 && (suggestedCacheRef.current.has(path) || path.includes("/"))) {
+          files.push(path);
+        }
+      }
+      // Upload gambar dulu; id lampiran dipakai pesan WS berikutnya.
+      const images: string[] = [];
+      for (const img of pendingImages) {
+        const up = await apiUploadImage(`/api/sessions/${session.id}/uploads`, img.file);
+        images.push(up.id);
+      }
+      send({ type: "input", sessionId: session.id, text: text.trim(), files, images });
+      for (const img of pendingImages) URL.revokeObjectURL(img.previewUrl);
+      setPendingImages([]);
+      setText("");
+      mention.close();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : apiErrorMessage("ERROR"));
+    } finally {
+      setSending(false);
+    }
   };
 
-  const stop = () => {
-    send({ type: "stop", sessionId: session.id });
+  /** Lampirkan gambar yang di-paste (mis. screenshot) ke pesan berikutnya. */
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+      if (files.length > 0) addImages(files);
+    },
+    [addImages],
+  );
+
+  /** Hentikan balasan model (interrupt ala opencode) — Session tetap aktif. */
+  const interrupt = () => {
+    send({ type: "interrupt", sessionId: session.id });
   };
 
   /** Resume via API langsung — hasil status baru tiba via WS `session_status`. */
@@ -380,7 +472,16 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     }
   };
 
-  const canInput = wsStatus === "connected" && status === "running";
+  /**
+   * Model sedang merespon: server melaporkan turn aktif (`turn_active`), atau
+   * masih ada pesan assistant `streaming` yang belum digantikan versi final
+   * (fallback saat reattach di tengah turn).
+   */
+  const busy = turnActive || messages.some((m) => m.role === "assistant" && m.streaming === true);
+  const generating = busy && status === "running";
+  // Saat model merespon input dinonaktifkan — satu-satunya aksi adalah Stop.
+  const canInput = wsStatus === "connected" && status === "running" && !sending && !busy;
+  const canSubmit = canInput && (text.trim() !== "" || pendingImages.length > 0);
 
   const toggleMessage = (key: string) => {
     setCollapsible((s) => toggleCollapsible(s, key));
@@ -393,6 +494,9 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     const tools = m.parts.filter(
       (p) => p.type === "tool" || p.type === "shell" || p.type === "file",
     );
+    // Part `type: "error"` (pesan gagal turn dari session-manager) dirender
+    // sebagai bubble destructive — beda dari balasan normal.
+    const errors = m.parts.filter((p) => p.type === "error");
     const body = textOf(m.parts);
 
     return (
@@ -448,6 +552,25 @@ export function SessionView({ session, onBack }: SessionViewProps) {
               </BubbleContent>
             </Bubble>
           )}
+          {errors.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              {errors.map((p) => (
+                <Bubble key={p.id ?? `${m.id}-err`} variant="destructive">
+                  <BubbleContent>
+                    <div className="flex gap-2">
+                      <CircleAlertIcon
+                        className="mt-0.5 size-4 shrink-0"
+                        data-icon="inline-start"
+                      />
+                      <span className="whitespace-pre-wrap">
+                        {partText(p) ?? "Terjadi kesalahan saat memproses prompt."}
+                      </span>
+                    </div>
+                  </BubbleContent>
+                </Bubble>
+              ))}
+            </div>
+          )}
           {m.streaming && (
             <span className="animate-pulse px-3 text-xs text-muted-foreground">
               sedang mengetik…
@@ -473,18 +596,44 @@ export function SessionView({ session, onBack }: SessionViewProps) {
     );
   };
 
+  /** Part `file` yang merupakan gambar lampiran (punya attachmentId + mime image). */
+  const isImageAttachment = (
+    p: MessagePart,
+  ): p is MessagePart & { mime: string; attachmentId: string } => {
+    return (
+      p.type === "file" &&
+      typeof p.mime === "string" &&
+      p.mime.startsWith("image/") &&
+      typeof p.attachmentId === "string"
+    );
+  };
+
   const renderUserMessage = (m: SessionMessage) => {
+    const images = m.parts.filter(isImageAttachment);
     const attachedFiles = m.parts
       .map((p) => ({ part: p, filename: p.filename }))
       .filter(
         (x): x is { part: MessagePart; filename: string } =>
-          x.part.type === "file" && typeof x.filename === "string",
+          x.part.type === "file" && !isImageAttachment(x.part) && typeof x.filename === "string",
       );
     return (
       <Message key={m.id} align="end">
         <MessageContent>
           <Bubble>
             <BubbleContent className="whitespace-pre-wrap">{textOf(m.parts)}</BubbleContent>
+            {images.length > 0 && (
+              <div className="mt-1.5 grid max-w-xs grid-cols-2 gap-1.5">
+                {images.map((p) => (
+                  <img
+                    key={p.attachmentId}
+                    src={attachmentUrl(m.sessionId, p.attachmentId)}
+                    alt={p.filename ?? "gambar lampiran"}
+                    className="max-h-40 w-full rounded-md border object-contain"
+                    loading="lazy"
+                  />
+                ))}
+              </div>
+            )}
             {attachedFiles.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {attachedFiles.map(({ filename }) => (
@@ -521,12 +670,9 @@ export function SessionView({ session, onBack }: SessionViewProps) {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {status === "running" ? (
-            <Button type="button" variant="outline" size="sm" onClick={stop} aria-label="Hentikan">
-              <SquareIcon data-icon="inline-start" />
-              Stop
-            </Button>
-          ) : (
+          {/* Session non-running: tombol hidupkan kembali. Saat running, stop
+              balasan model ada di composer (berubah jadi tombol Stop). */}
+          {status !== "running" && (
             <Button
               type="button"
               variant="outline"
@@ -647,9 +793,14 @@ export function SessionView({ session, onBack }: SessionViewProps) {
                 e.currentTarget.form?.requestSubmit();
               }
             }}
+            onPaste={handlePaste}
             onBlur={() => mention.close()}
             placeholder={
-              canInput ? "Ketik pesan… ketik @ untuk referensi file" : "Session tidak aktif"
+              busy
+                ? "Model sedang merespon…"
+                : canInput
+                  ? "Ketik pesan… ketik @ untuk referensi file, atau tempel gambar"
+                  : "Session tidak aktif"
             }
             aria-label="Input bebas"
             disabled={!canInput}
@@ -657,14 +808,75 @@ export function SessionView({ session, onBack }: SessionViewProps) {
             className="max-h-40 min-h-9 w-full flex-1 resize-none rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50"
           />
           <Button
-            type="submit"
+            type="button"
+            variant="ghost"
             size="icon"
-            disabled={!canInput || text.trim() === ""}
-            aria-label="Kirim"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!canInput}
+            aria-label="Lampirkan gambar"
+            title="Lampirkan gambar (PNG/JPEG/GIF/WebP, maks 20 MiB)"
           >
-            <SendHorizontalIcon data-icon="inline-start" />
+            <ImagePlusIcon data-icon="inline-start" />
           </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            multiple
+            className="sr-only"
+            onChange={(e) => {
+              const files = e.target.files ? [...e.target.files] : [];
+              addImages(files);
+              e.target.value = ""; // izinkan memilih file yang sama lagi
+            }}
+          />
+          {generating ? (
+            // Saat model merespon: tombol kirim berubah jadi tombol Stop
+            // (hentikan balasan saja, Session tetap aktif ala opencode).
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              onClick={interrupt}
+              disabled={wsStatus !== "connected"}
+              aria-label="Hentikan balasan"
+              title="Hentikan balasan model"
+              className="border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <SquareIcon className="size-4" />
+            </Button>
+          ) : (
+            <Button type="submit" size="icon" disabled={!canSubmit} aria-label="Kirim">
+              {sending ? (
+                <Spinner className="size-4" />
+              ) : (
+                <SendHorizontalIcon data-icon="inline-start" />
+              )}
+            </Button>
+          )}
         </form>
+        {/* Pratinjau gambar yang akan dilampirkan (bisa dihapus sebelum kirim). */}
+        {pendingImages.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {pendingImages.map((img) => (
+              <div key={img.key} className="group relative">
+                <img
+                  src={img.previewUrl}
+                  alt={img.file.name}
+                  className="h-16 w-16 rounded-md border object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => removeImage(img.key)}
+                  aria-label={`Hapus ${img.file.name}`}
+                  className="absolute -top-1.5 -right-1.5 rounded-full bg-background/90 p-0.5 text-foreground shadow-sm transition-opacity group-hover:opacity-100"
+                >
+                  <XIcon className="size-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </footer>
     </div>
   );

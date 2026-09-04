@@ -4,7 +4,10 @@
  * Perubahan dari versi PTY/TUI:
  * - `history` kini membawa `messages` (SessionMessage terstruktur) dan
  *   `prompts` (pending) — bukan chunk Output_Stream.
- * - `output`/`resize` dihapus; digantikan `message` dan `stop`.
+ * - `output`/`resize` dihapus; digantikan `message`, `stop` (hentikan Session)
+ *   dan `interrupt` (hentikan balasan model saja — Session tetap berjalan).
+ * - `turn_active` memberi tahu Client kapan model sedang merespon (turn
+ *   streaming aktif) sehingga tombol stop/interrupt bisa ditampilkan.
  */
 import type {
   InteractivePrompt,
@@ -17,9 +20,23 @@ import type {
 /** Pesan Client -> Server. */
 export type ClientMessage =
   | { type: "attach"; sessionId: string }
-  | { type: "input"; sessionId: string; text: string; files?: string[] }
+  | {
+      type: "input";
+      sessionId: string;
+      text: string;
+      /** Path relatif project untuk referensi `@file` (dibaca sebagai teks). */
+      files?: string[];
+      /** Id lampiran gambar di Attachment_Store KCG (upload dari perangkat). */
+      images?: string[];
+    }
   | { type: "prompt_response"; sessionId: string; promptId: string; response: PromptResponse }
-  | { type: "stop"; sessionId: string };
+  | { type: "stop"; sessionId: string }
+  /**
+   * Hentikan balasan model yang sedang berlangsung (interrupt ala opencode):
+   * turn di-abort tapi Session tetap `running` sehingga bisa langsung kirim
+   * pesan baru. Beda dari `stop` yang menonaktifkan Session.
+   */
+  | { type: "interrupt"; sessionId: string };
 
 /** Pesan Server -> Client. */
 export type ServerMessage =
@@ -35,6 +52,8 @@ export type ServerMessage =
   | { type: "prompt"; sessionId: string; prompt: InteractivePrompt }
   | { type: "prompt_resolved"; sessionId: string; promptId: string }
   | { type: "session_status"; sessionId: string; status: SessionStatus }
+  /** Status turn: `active: true` = model sedang merespon; `false` = berhenti. */
+  | { type: "turn_active"; sessionId: string; active: boolean }
   /** Session dihapus permanen — subscriber harus meninggalkan halamannya. */
   | { type: "session_deleted"; sessionId: string }
   | { type: "error"; code: string; message: string };
@@ -47,5 +66,6 @@ export const ErrorCodes = {
   INVALID_RESPONSE: "INVALID_RESPONSE",
   SESSION_NOT_RUNNING: "SESSION_NOT_RUNNING",
   INVALID_TEXT: "INVALID_TEXT",
+  ATTACHMENT_NOT_FOUND: "ATTACHMENT_NOT_FOUND",
   AUTH_FAILED: "AUTH_FAILED",
 } as const;

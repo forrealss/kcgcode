@@ -6,7 +6,8 @@
  *   reattach mengirim `history` berisi `messages` + `prompts` pending.
  * - `input` / `prompt_response` kini asinkron (HTTP ke server headless);
  *   error asinkron dilaporkan via pesan `error` ke Client pengirim.
- * - Pesan `stop` meneruskan ke `stopSession`.
+ * - Pesan `stop` meneruskan ke `stopSession`; pesan `interrupt` meneruskan
+ *   ke `interruptSession` (hentikan balasan saja, Session tetap berjalan).
  *
  * Prinsip yang dipertahankan: kegagalan `send` ke satu Client ditangkap
  * per-Client (hapus subscriber) tanpa menghentikan broadcast ke Client lain
@@ -43,7 +44,13 @@ export interface WebSocketGatewayOptions {
 
 export interface WebSocketGateway {
   attach(sub: Subscriber, sessionId: string): void;
-  input(sub: Subscriber, sessionId: string, text: string, files?: string[]): void;
+  input(
+    sub: Subscriber,
+    sessionId: string,
+    text: string,
+    files?: string[],
+    images?: string[],
+  ): void;
   promptResponse(
     sub: Subscriber,
     sessionId: string,
@@ -51,10 +58,14 @@ export interface WebSocketGateway {
     response: PromptResponse,
   ): void;
   stop(sub: Subscriber, sessionId: string): void;
+  /** Hentikan balasan model saja (interrupt) — Session tetap running. */
+  interrupt(sub: Subscriber, sessionId: string): void;
   notifyMessage(sessionId: string, message: SessionMessage): void;
   notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
   notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
   notifySessionStatus(sessionId: string, status: SessionStatus): void;
+  /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
+  notifyTurnActive(sessionId: string, active: boolean): void;
   notifySessionDeleted(sessionId: string): void;
   notifyPromptResolved(sessionId: string, promptId: string): void;
   notifyError(sessionId: string, code: string, message: string): void;
@@ -69,6 +80,7 @@ function toErrorCode(error: string): string {
     return ErrorCodes.SESSION_NOT_RUNNING;
   }
   if (error === "TEXT_EMPTY" || error === "TEXT_TOO_LONG") return ErrorCodes.INVALID_TEXT;
+  if (error === "ATTACHMENT_NOT_FOUND") return ErrorCodes.ATTACHMENT_NOT_FOUND;
   if (error === ErrorCodes.PROMPT_NOT_FOUND) return ErrorCodes.PROMPT_NOT_FOUND;
   if (error === ErrorCodes.PROMPT_ALREADY_RESOLVED) return ErrorCodes.PROMPT_ALREADY_RESOLVED;
   if (error === "INVALID_PROMPT_OPTION" || error === "INVALID_PROMPT_RESPONSE") {
@@ -119,9 +131,15 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     subs.set(sub, { sessionId });
   }
 
-  function input(sub: Subscriber, sessionId: string, text: string, files?: string[]): void {
+  function input(
+    sub: Subscriber,
+    sessionId: string,
+    text: string,
+    files?: string[],
+    images?: string[],
+  ): void {
     void sessionManager
-      .sendFreeTextInput(sessionId, text, files ?? [])
+      .sendFreeTextInput(sessionId, text, files ?? [], images ?? [])
       .then((res) => {
         if (!res.ok) {
           const code = toErrorCode(res.error ?? "");
@@ -162,6 +180,14 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     }
   }
 
+  function interrupt(sub: Subscriber, sessionId: string): void {
+    const res = sessionManager.interruptSession(sessionId);
+    if (!res.ok) {
+      const code = toErrorCode(res.error ?? "");
+      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+    }
+  }
+
   function broadcast(sessionId: string, build: () => ServerMessage): void {
     for (const [sub, info] of subs) {
       if (info.sessionId !== sessionId) continue;
@@ -183,6 +209,10 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
 
   function notifySessionStatus(sessionId: string, status: SessionStatus): void {
     broadcast(sessionId, () => ({ type: "session_status", sessionId, status }));
+  }
+
+  function notifyTurnActive(sessionId: string, active: boolean): void {
+    broadcast(sessionId, () => ({ type: "turn_active", sessionId, active }));
   }
 
   /** Beri tahu subscriber bahwa Session sudah dihapus permanen. */
@@ -215,10 +245,12 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     input,
     promptResponse,
     stop,
+    interrupt,
     notifyMessage,
     notifyMessagePart,
     notifyPrompt,
     notifySessionStatus,
+    notifyTurnActive,
     notifySessionDeleted,
     notifyPromptResolved,
     notifyError,
@@ -287,9 +319,11 @@ export function dispatchClientMessage(
         typeof msg.sessionId === "string" &&
         typeof msg.text === "string" &&
         (msg.files === undefined ||
-          (Array.isArray(msg.files) && msg.files.every((f) => typeof f === "string")))
+          (Array.isArray(msg.files) && msg.files.every((f) => typeof f === "string"))) &&
+        (msg.images === undefined ||
+          (Array.isArray(msg.images) && msg.images.every((f) => typeof f === "string")))
       ) {
-        gateway.input(sub, msg.sessionId, msg.text, msg.files);
+        gateway.input(sub, msg.sessionId, msg.text, msg.files, msg.images);
       } else {
         invalidMessage(sub, "input membutuhkan sessionId dan text string");
       }
@@ -310,6 +344,13 @@ export function dispatchClientMessage(
         gateway.stop(sub, msg.sessionId);
       } else {
         invalidMessage(sub, "stop membutuhkan sessionId string");
+      }
+      break;
+    case "interrupt":
+      if (typeof msg.sessionId === "string") {
+        gateway.interrupt(sub, msg.sessionId);
+      } else {
+        invalidMessage(sub, "interrupt membutuhkan sessionId string");
       }
       break;
     default:

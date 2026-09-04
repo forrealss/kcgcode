@@ -14,7 +14,10 @@
  * Dipisah dari `src/index.ts` (entry) agar dapat diuji (task 20.2) dengan
  * injeksi `config`, `auth`, `store`, dan `spawn` mock — tanpa mengimpor HTML.
  */
+
+import path from "node:path";
 import { type BunRequest, type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
+import { type AttachmentManager, createAttachmentManager } from "./attachments";
 import {
   type AuthConfig,
   isAuthorized,
@@ -47,6 +50,8 @@ export interface KcgServerOptions {
   store?: SessionStore;
   /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
   servers?: OpenCodeServerManager;
+  /** Direktori lampiran gambar upload (default: `data/uploads`). */
+  uploadsRoot?: string;
   hostname?: string;
   port?: number;
   /** Shell SPA untuk rute tak dikenal (default: 404). */
@@ -102,6 +107,13 @@ function errorStatus(code: string): number {
     // Server headless menolak operasi (mis. hapus session remote gagal).
     case "OC_DELETE_SESSION_FAILED":
       return 502;
+    case "UNSUPPORTED_IMAGE_MIME":
+    case "EMPTY_UPLOAD":
+      return 400;
+    case "IMAGE_TOO_LARGE":
+      return 413;
+    case "ATTACHMENT_NOT_FOUND":
+      return 404;
     default:
       return 500;
   }
@@ -161,14 +173,20 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const store = opts.store ?? openSessionStore();
   const hostname = opts.hostname ?? auth.hostname;
   const port = opts.port ?? resolvePort();
+  // Direktori lampiran gambar. Absolut sejak awal (path.resolve) agar URL
+  // `file:///…` yang dikirim ke opencode valid — URL relatif (host tidak
+  // kosong) ditolak opencode dan prompt gagal diam-diam.
+  const uploadsRoot = opts.uploadsRoot ?? path.resolve("data/uploads");
 
   const projectManager = createProjectManager(config.sandboxRoot, store);
   const servers = opts.servers ?? createOpenCodeServerManager();
+  const attachments: AttachmentManager = createAttachmentManager(uploadsRoot);
 
   let gateway: WebSocketGateway;
   const sessionManager = createSessionManager({
     store,
     servers,
+    attachments,
     onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
     onMessagePart: (sessionId, messageId, part) =>
       gateway.notifyMessagePart(sessionId, messageId, part),
@@ -176,6 +194,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
     onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
+    // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).
+    onTurnChange: (sessionId, active) => gateway.notifyTurnActive(sessionId, active),
   });
   gateway = createWebSocketGateway({ store, sessionManager });
 
@@ -297,7 +317,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       "/api/sessions/:id": {
         /**
          * Hapus Session permanen — juga menghapus session (dan riwayat
-         * pesannya) di server headless opencode bila server masih hidup.
+         * pesannya) di server headless opencode: server di-spawn ulang bila
+         * mati agar data remote tidak tertinggal. Server tak bisa hidup /
+         * menolak hapus -> 5xx, data lokal utuh.
          */
         DELETE: guard(async (req: BunRequest<"/api/sessions/:id">) => {
           try {
@@ -362,6 +384,62 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
             const res = await sessionManager.findFiles(cur.data.projectId, query);
             if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
             return json({ files: res.data });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+      },
+
+      // ---- Lampiran gambar upload dari perangkat ----
+      "/api/sessions/:id/uploads": {
+        /**
+         * Simpan gambar upload ke Attachment_Store Session. Body multipart
+         * `file` (nama+mime+bytes). Ukuran & format divalidasi server.
+         */
+        POST: guard(async (req: BunRequest<"/api/sessions/:id/uploads">) => {
+          try {
+            const cur = sessionManager.getSession(req.params.id);
+            if (!cur.ok) return json({ error: "SESSION_NOT_FOUND" }, 404);
+            let form: FormData;
+            try {
+              form = await req.formData();
+            } catch {
+              return json({ error: "INVALID_UPLOAD" }, 400);
+            }
+            const file = form.get("file");
+            if (!(file instanceof File)) {
+              return json({ error: "INVALID_UPLOAD" }, 400);
+            }
+            const bytes = new Uint8Array(await file.arrayBuffer());
+            const res = attachments.save(req.params.id, file.name, file.type, bytes);
+            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+            return json({ upload: res.data }, 201);
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+      },
+
+      // ---- Muat gambar upload (render bubble & reattach) ----
+      "/api/uploads/:sessionId/:id": {
+        GET: guard((req: BunRequest<"/api/uploads/:sessionId/:id">) => {
+          try {
+            const res = attachments.read(req.params.sessionId, req.params.id);
+            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+            // Salin ke Uint8Array ber-buffer ArrayBuffer agar lolos tipe BodyInit.
+            const bytes = new Uint8Array(res.data.bytes);
+            return new Response(new Blob([bytes]), {
+              headers: { "content-type": res.data.mime },
+            });
+          } catch (e) {
+            return serverError(e);
+          }
+        }),
+        /** Hapus lampiran yang belum terkirim (pengguna membatalkan). */
+        DELETE: guard((req: BunRequest<"/api/uploads/:sessionId/:id">) => {
+          try {
+            attachments.remove(req.params.sessionId, req.params.id);
+            return json({ ok: true });
           } catch (e) {
             return serverError(e);
           }

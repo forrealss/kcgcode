@@ -75,6 +75,16 @@ export interface OpenCodeMessageResult {
 
 export type OpenCodePermissionReply = "once" | "always" | "reject";
 
+/** Referensi file untuk part `file` prompt: `@file` teks maupun gambar. */
+export interface OpenCodeFileRef {
+  /** Nama tampilan part (path relatif project / nama file asli upload). */
+  filename: string;
+  /** MIME part — `text/plain` untuk @file, `image/*` untuk gambar. */
+  mime: string;
+  /** URL absolut yang dibaca opencode (`file:///abs/path`). */
+  url: string;
+}
+
 /** Satu event SSE hasil normalisasi (properties digabung ke level atas). */
 export interface OpenCodeEvent {
   type: string;
@@ -111,14 +121,15 @@ export interface OpenCodeClient {
    */
   /**
    * Kirim prompt tanpa menunggu balasan (`POST /session/{id}/prompt_async`,
-   * 204). `files` berupa file URL absolut (`file:///abs/path`) — opencode
-   * mem-parse `url` part file dengan `URL()` dan membaca isinya sendiri.
+   * 204). `files` berupa referensi file (teks `@file` maupun gambar) —
+   * opencode mem-parse `url` part file dengan `URL()` dan membaca isinya
+   * sendiri, sehingga `url` harus path absolut (`file:///abs/path`).
    */
   promptAsync(
     sessionId: string,
     text: string,
     model?: SessionModel | null,
-    files?: string[],
+    files?: OpenCodeFileRef[],
   ): Promise<Result<null>>;
   /** Cari file project untuk autocomplete `@file` (path relatif). */
   findFiles(query: string): Promise<Result<string[]>>;
@@ -251,15 +262,13 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     sessionId: string,
     text: string,
     model?: SessionModel | null,
-    files: string[] = [],
+    files: OpenCodeFileRef[] = [],
   ): Promise<Result<null>> {
     try {
-      // Parts prompt: teks bebas + satu part `file` per referensi @file.
-      // `filename` path relatif (untuk tampilan), `url` file URL absolut.
+      // Parts prompt: teks bebas + satu part `file` per referensi (teks/gambar).
       const parts: Record<string, unknown>[] = [{ type: "text", text }];
-      for (const url of files) {
-        const filename = url.replace(/^file:\/\//, "") || url;
-        parts.push({ type: "file", mime: "text/plain", filename, url });
+      for (const f of files) {
+        parts.push({ type: "file", mime: f.mime, filename: f.filename, url: f.url });
       }
       const body: Record<string, unknown> = { parts };
       // Skema prompt_async menerima `model: { providerID, modelID }` opsional;

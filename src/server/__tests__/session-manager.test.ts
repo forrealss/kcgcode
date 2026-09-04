@@ -15,6 +15,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
+import { type AttachmentManager, createAttachmentManager } from "../attachments";
 import type { SessionStore } from "../db";
 import { openSessionStore } from "../db";
 import type {
@@ -58,6 +59,8 @@ interface FakeClient extends OpenCodeClient {
   findFilesResult: { ok: boolean; error?: string };
   /** Daftar file yang "tersedia" untuk findFiles. */
   availableFiles: string[];
+  /** Referensi file yang dikirim ke tiap promptAsync (kosong = tanpa file). */
+  promptFilesCalls: { filename: string; mime: string; url: string }[][];
   /** Model yang tersedia (default: satu provider dengan satu model). */
   availableModels: ModelOption[];
   /** Model yang diterima tiap panggilan promptAsync (null = default). */
@@ -73,6 +76,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
   const client: FakeClient = {
     calls,
     eventCb: null,
+    promptFilesCalls: [],
     sendMessageResult: { ok: true },
     promptAsyncResult: { ok: true },
     createSessionResult: { ok: true, id: "ses_remote1" },
@@ -141,8 +145,9 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         },
       };
     },
-    async promptAsync(_sessionId, text, model) {
+    async promptAsync(_sessionId, text, model, files) {
       calls.push(`promptAsync:${text}`);
+      client.promptFilesCalls.push(files ?? []);
       client.promptModels.push(model ? `${model.providerID}/${model.modelID}` : null);
       const delay = client.sendDelays?.shift();
       if (delay) await Bun.sleep(delay);
@@ -261,11 +266,14 @@ interface Harness {
   store: SessionStore;
   sm: SessionManager;
   fake: FakeServers;
+  attachments?: AttachmentManager;
   messages: SessionMessage[];
   messageParts: [string, string, MessagePart][];
   prompts: InteractivePrompt[];
   statuses: [string, SessionStatus][];
   errors: [string, string][];
+  /** Perubahan status turn (onTurnChange): [sessionId, active]. */
+  turns: [string, boolean][];
   project: Project;
   root: string;
   close(): void;
@@ -277,6 +285,8 @@ function freshHarness(): Harness {
 
 function freshHarnessWithHooks(
   extraHooks: Pick<Parameters<typeof createSessionManager>[0], "onDeleted">,
+  extra: { withAttachments?: boolean } = {},
+  managerOverrides: Partial<Parameters<typeof createSessionManager>[0]> = {},
 ): Harness {
   const store = openSessionStore(":memory:");
   const root = mkdtempSync(path.join(tmpdir(), "kcg-sm2-"));
@@ -291,28 +301,37 @@ function freshHarnessWithHooks(
   const prompts: InteractivePrompt[] = [];
   const statuses: [string, SessionStatus][] = [];
   const errors: [string, string][] = [];
+  const turns: [string, boolean][] = [];
 
+  const attachments = extra.withAttachments
+    ? createAttachmentManager(path.join(root, "uploads"))
+    : undefined;
   const sm = createSessionManager({
     store,
     servers: fake.manager,
+    attachments,
     now: () => 1000,
     ...extraHooks,
+    ...managerOverrides,
     onMessage: (m) => messages.push(m),
     onMessagePart: (sid, mid, part) => messageParts.push([sid, mid, part]),
     onPrompt: (p) => prompts.push(p),
     onStatusChange: (id, st) => statuses.push([id, st]),
     onError: (id, m) => errors.push([id, m]),
+    onTurnChange: (id, active) => turns.push([id, active]),
   });
 
   return {
     store,
     sm,
     fake,
+    attachments,
     messages,
     messageParts,
     prompts,
     statuses,
     errors,
+    turns,
     project,
     root,
     close() {
@@ -533,7 +552,7 @@ test("sendFreeTextInput sukses -> echo user; assistant dirakit saat session.idle
   }
 });
 
-test("sendFreeTextInput: prompt_async gagal -> onError, tanpa pesan assistant", async () => {
+test("sendFreeTextInput: prompt_async gagal -> onError + pesan error tersimpan", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
@@ -543,7 +562,127 @@ test("sendFreeTextInput: prompt_async gagal -> onError, tanpa pesan assistant", 
     await flush();
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0]?.[0]).toBe(sid);
+    // Pesan error ramah (bukan kode mentah) dan ditulis ke history (part error).
+    expect(h.errors[0]?.[1]).toBe("Gagal mengirim prompt ke opencode (status 500). Coba lagi.");
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.parts).toEqual([{ type: "error", text: h.errors[0]?.[1] }]);
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.error: turn gagal -> parts tersimpan + pesan error di history + onError", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    // Parts sudah ter-stream sebelum error datang — harus tetap tersimpan.
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "sebagian", messageID: "msg_a1" },
+    });
+
+    // opencode melaporkan kegagalan memproses prompt (mis. URL file gambar).
+    client.emit({
+      type: "session.error",
+      sessionID: "ses_remote1",
+      error: {
+        name: "UnknownError",
+        data: {
+          message:
+            'TypeError: File URL host must be "localhost" or empty on linux\n    at SessionPrompt.resolveUserPart',
+        },
+      },
+    });
+
+    expect(h.errors).toHaveLength(1);
+    expect(h.errors[0]?.[0]).toBe(sid);
+    expect(h.errors[0]?.[1]).toBe('TypeError: File URL host must be "localhost" or empty on linux');
+
+    // Parts tersimpan + pesan error role assistant ditulis ke history.
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(2);
+    expect(assistants[0]?.parts).toEqual([
+      { type: "text", id: "prt_t1", text: "sebagian", messageID: "msg_a1" },
+    ]);
+    expect(assistants[1]?.parts[0]?.type).toBe("error");
+    expect(assistants[1]?.parts[0]?.text).toBe(h.errors[0]?.[1]);
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(2);
+
+    // Idle setelah error tidak menambah apa-apa — turn sudah ditutup.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(2);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.error tanpa turn aktif -> hanya onError, tidak menulis pesan", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    client.emit({
+      type: "session.error",
+      sessionID: "ses_remote1",
+      error: { name: "ProviderAuthError", data: { message: "auth required" } },
+    });
+    expect(h.errors).toHaveLength(1);
+    expect(h.errors[0]?.[1]).toContain("Autentikasi provider model gagal");
     expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok && stored.data).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("TURN_TIMEOUT tanpa balasan -> pesan error tersimpan + onError", async () => {
+  const timers: (() => void)[] = [];
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    {
+      sendTimeoutMs: 5000,
+      setTimeoutFn: (cb) => {
+        timers.push(cb);
+        return timers.length;
+      },
+      clearTimeoutFn: () => {},
+    },
+  );
+  try {
+    const sid = await createSession(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+    // Turn aktif, belum ada balasan — belum ada error.
+    expect(timers).toHaveLength(1);
+    expect(h.errors).toHaveLength(0);
+
+    timers[0]?.();
+    expect(h.errors).toHaveLength(1);
+    expect(h.errors[0]?.[0]).toBe(sid);
+    expect(h.errors[0]?.[1]).toBe(
+      "Model tidak membalas dalam batas waktu yang ditentukan. Coba kirim ulang pesan.",
+    );
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.parts).toEqual([{ type: "error", text: h.errors[0]?.[1] }]);
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(1);
   } finally {
     h.close();
   }
@@ -669,6 +808,162 @@ test("stopSession di tengah turn menyimpan parts yang sudah ter-stream", async (
     const assistants = h.messages.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
     expect(assistants[0]?.parts[0]?.text).toBe("separuh jalan");
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// interruptSession (hentikan balasan saja — Session tetap running)
+// ---------------------------------------------------------------------------
+
+test("interruptSession: turn dimulai -> turn_active true; selesai -> false", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    // Turn belum ada -> tanpa notifikasi.
+    expect(h.turns).toHaveLength(0);
+
+    await h.sm.sendFreeTextInput(sid, "hello");
+    expect(h.turns).toEqual([[sid, true]]);
+
+    // session.idle menutup turn -> turn_active false.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    expect(h.turns).toEqual([
+      [sid, true],
+      [sid, false],
+    ]);
+  } finally {
+    h.close();
+  }
+});
+
+test("interruptSession: abort remote + simpan parts ter-stream; session tetap running", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "separuh jalan", messageID: "msg_a1" },
+    });
+
+    const res = h.sm.interruptSession(sid);
+    expect(res.ok).toBe(true);
+
+    // Turn remote di-abort; parts parsial disimpan sebagai pesan assistant.
+    expect(client.calls).toContain("abortSession:ses_remote1");
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.parts[0]?.text).toBe("separuh jalan");
+    expect(h.turns).toContainEqual([sid, false]);
+
+    // Beda dari stopSession: status TETAP running (tanpa resume).
+    expect(statusOf(h.store, sid)).toBe("running");
+    expect(h.statuses).toHaveLength(0);
+
+    // Bisa langsung kirim pesan baru tanpa Start ulang.
+    const next = await h.sm.sendFreeTextInput(sid, "lanjut");
+    expect(next.ok).toBe(true);
+    expect(h.turns).toContainEqual([sid, true]);
+  } finally {
+    h.close();
+  }
+});
+
+test("interruptSession tanpa turn aktif -> no-op, session tetap running", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const res = h.sm.interruptSession(sid);
+    expect(res.ok).toBe(true);
+    expect(statusOf(h.store, sid)).toBe("running");
+    // Tanpa turn tidak ada broadcast apapun.
+    expect(h.turns).toHaveLength(0);
+    expect(h.messages).toHaveLength(0);
+    // Idempoten: boleh dipanggil lagi.
+    expect(h.sm.interruptSession(sid).ok).toBe(true);
+  } finally {
+    h.close();
+  }
+});
+
+test("interruptSession: session tak dikenal -> SESSION_NOT_FOUND", () => {
+  const h = freshHarness();
+  try {
+    expect(h.sm.interruptSession("tidak-ada").error).toBe("SESSION_NOT_FOUND");
+  } finally {
+    h.close();
+  }
+});
+
+test("session.error MessageAbortedError setelah interrupt -> tanpa banner error", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+    h.sm.interruptSession(sid);
+
+    // Server mengonfirmasi turn dibatalkan (bukan kegagalan nyata).
+    client.emit({
+      type: "session.error",
+      sessionID: "ses_remote1",
+      error: { name: "MessageAbortedError", data: { message: "Pemrosesan prompt dibatalkan." } },
+    });
+    expect(h.errors).toHaveLength(0);
+    const stored = h.store.getMessages(sid);
+    expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.error MessageAbortedError dengan turn aktif -> turn ditutup tanpa pesan error", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    // Parts sudah ter-stream sebelum opencode mengabort turn.
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "sebagian", messageID: "msg_a1" },
+    });
+    client.emit({
+      type: "session.error",
+      sessionID: "ses_remote1",
+      error: { name: "MessageAbortedError", data: { message: "Pemrosesan prompt dibatalkan." } },
+    });
+
+    // Parts tersimpan, TAPI tanpa pesan error & tanpa banner onError.
+    expect(h.errors).toHaveLength(0);
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.parts).toEqual([
+      { type: "text", id: "prt_t1", text: "sebagian", messageID: "msg_a1" },
+    ]);
+    expect(h.turns).toContainEqual([sid, false]);
   } finally {
     h.close();
   }
@@ -1791,16 +2086,40 @@ test("deleteSession: server headless menolak -> error diteruskan, data lokal utu
   }
 });
 
-test("deleteSession: server headless sudah mati -> tetap hapus lokal", async () => {
+test("deleteSession: server headless mati -> di-spawn ulang, remote ikut dihapus", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    // Simulasi server project sudah tidak hidup.
+    // Simulasi server project sudah tidak hidup (mis. bridge di-restart).
     h.fake.clients.delete("p1");
+    expect(h.fake.ensureCalls).toHaveLength(1);
 
     const res = await h.sm.deleteSession(sid);
     expect(res.ok).toBe(true);
+    // Server di-spawn ulang demi menghapus session remote (bukan dilewati).
+    expect(h.fake.ensureCalls).toHaveLength(2);
+    expect(h.fake.ensureCalls[1]).toEqual({ projectId: "p1", projectPath: h.project.path });
+    expect(h.fake.clients.get("p1")?.calls).toContain("deleteSession:ses_remote1");
     expect(h.store.getSession(sid).ok).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession: server mati & spawn ulang gagal -> error, data lokal utuh", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    // Server mati dan tidak bisa dihidupkan lagi (mis. binary opencode hilang).
+    h.fake.clients.delete("p1");
+    h.fake.ensureResult = { ok: false, error: "SERVER_START_FAILED" };
+
+    const res = await h.sm.deleteSession(sid);
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error("harusnya gagal");
+    expect(res.error).toContain("SERVER_START_FAILED");
+    // Penghapusan dibatalkan — sesi tetap tampil agar user bisa coba lagi.
+    expect(h.store.getSession(sid).ok).toBe(true);
   } finally {
     h.close();
   }
@@ -1842,6 +2161,134 @@ test("deleteSession: onDeleted terpanggil (broadcast ke subscriber WS)", async (
     const res = await h.sm.deleteSession(created.session.id);
     expect(res.ok).toBe(true);
     expect(deletedId).toBe(created.session.id);
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Lampiran gambar (upload dari perangkat)
+// ---------------------------------------------------------------------------
+
+test("sendFreeTextInput dengan gambar -> echo user berisi part file image + promptAsync menerima ref gambar", async () => {
+  const h = freshHarnessWithHooks({}, { withAttachments: true });
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    // 1x1 PNG valid agar `attachment` tersimpan.
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d, 0x49, 0x48, 0x44, 0x52,
+    ]);
+    const saved = h.attachments?.save(sid, "foto.png", "image/png", png);
+    expect(saved?.ok).toBe(true);
+    if (!saved?.ok) throw new Error("save gagal");
+
+    const res = await h.sm.sendFreeTextInput(sid, "apa isi gambar ini?", [], [saved.data.id]);
+    expect(res.ok).toBe(true);
+    await flush();
+
+    // Echo user disimpan + dikirim, memuat part file image + attachmentId.
+    const user = h.messages.find((m) => m.role === "user");
+    expect(user).toBeDefined();
+    const imgPart = user?.parts.find((p) => p.type === "file" && p.attachmentId === saved.data.id);
+    expect(imgPart).toBeDefined();
+    expect(imgPart?.mime).toBe("image/png");
+    expect(imgPart?.filename).toBe("foto.png");
+    expect(typeof imgPart?.url).toBe("string");
+
+    // promptAsync dipanggil dengan referensi file image (mime + url absolut).
+    const files = client.promptFilesCalls.at(-1) ?? [];
+    const ref = files.find((f) => f.filename === "foto.png");
+    expect(ref?.mime).toBe("image/png");
+    // URL wajib absolut (`file:///…`): `file://rel/path` ditolak opencode.
+    expect(ref?.url.startsWith("file:///")).toBe(true);
+    expect(ref?.url).toContain(saved.data.id);
+    // Part echo pun membawa URL absolut yang sama.
+    expect(typeof imgPart?.url).toBe("string");
+    expect((imgPart?.url ?? "").startsWith("file:///")).toBe(true);
+  } finally {
+    h.close();
+  }
+});
+
+test("sendFreeTextInput gambar + @file -> part text + file image + file teks di echo", async () => {
+  const h = freshHarnessWithHooks({}, { withAttachments: true });
+  try {
+    const sid = await createSession(h);
+    const saved = h.attachments?.save(sid, "ss.png", "image/png", new Uint8Array([1, 2, 3]));
+    expect(saved?.ok).toBe(true);
+    if (!saved?.ok) throw new Error("save gagal");
+
+    const res = await h.sm.sendFreeTextInput(
+      sid,
+      "lihat @src/App.tsx",
+      ["src/App.tsx"],
+      [saved.data.id],
+    );
+    expect(res.ok).toBe(true);
+    const user = h.messages.find((m) => m.role === "user");
+    const parts = user?.parts ?? [];
+    expect(parts.filter((p) => p.type === "text")).toHaveLength(1);
+    expect(parts.filter((p) => p.type === "file" && p.attachmentId)).toHaveLength(1);
+    expect(parts.filter((p) => p.type === "file" && !p.attachmentId)).toHaveLength(1);
+    await flush();
+  } finally {
+    h.close();
+  }
+});
+
+test("sendFreeTextInput: id gambar tak dikenal -> ATTACHMENT_NOT_FOUND tanpa echo", async () => {
+  const h = freshHarnessWithHooks({}, { withAttachments: true });
+  try {
+    const sid = await createSession(h);
+    const before = h.messages.length;
+    const res = await h.sm.sendFreeTextInput(
+      sid,
+      "halo",
+      [],
+      ["00000000-0000-0000-0000-000000000000"],
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("ATTACHMENT_NOT_FOUND");
+    expect(h.messages.length).toBe(before); // tidak ada echo
+  } finally {
+    h.close();
+  }
+});
+
+test("sendFreeTextInput tanpa teks tapi ada gambar -> teks kosong diizinkan", async () => {
+  const h = freshHarnessWithHooks({}, { withAttachments: true });
+  try {
+    const sid = await createSession(h);
+    const saved = h.attachments?.save(sid, "x.webp", "image/webp", new Uint8Array([9]));
+    expect(saved?.ok).toBe(true);
+    if (!saved?.ok) throw new Error("save gagal");
+
+    const res = await h.sm.sendFreeTextInput(sid, "  ", [], [saved.data.id]);
+    expect(res.ok).toBe(true);
+    const user = h.messages.find((m) => m.role === "user");
+    expect(user?.parts.some((p) => p.type === "file" && p.attachmentId === saved.data.id)).toBe(
+      true,
+    );
+    await flush();
+  } finally {
+    h.close();
+  }
+});
+
+test("deleteSession membersihkan lampiran gambar Session", async () => {
+  const h = freshHarnessWithHooks({}, { withAttachments: true });
+  try {
+    const sid = await createSession(h);
+    const saved = h.attachments?.save(sid, "a.png", "image/png", new Uint8Array([1]));
+    expect(saved?.ok).toBe(true);
+    if (!saved?.ok) throw new Error("save gagal");
+    expect(h.attachments?.info(sid, saved.data.id).ok).toBe(true);
+
+    await h.sm.sendFreeTextInput(sid, "hapus nanti", [], [saved.data.id]);
+    const res = await h.sm.deleteSession(sid);
+    expect(res.ok).toBe(true);
+    expect(h.attachments?.info(sid, saved.data.id).ok).toBe(false);
   } finally {
     h.close();
   }

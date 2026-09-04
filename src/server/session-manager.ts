@@ -28,8 +28,14 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
+import type { AttachmentManager } from "./attachments";
 import type { SessionStore } from "./db";
-import type { ModelOption, OpenCodeClient, OpenCodeEvent } from "./opencode-client";
+import type {
+  ModelOption,
+  OpenCodeClient,
+  OpenCodeEvent,
+  OpenCodeFileRef,
+} from "./opencode-client";
 import type { OpenCodeServerManager } from "./opencode-server";
 import type {
   AgentType,
@@ -83,6 +89,11 @@ export type { SimpleResult };
 export interface SessionManagerOptions {
   store: SessionStore;
   servers: OpenCodeServerManager;
+  /**
+   * Penyimpanan lampiran gambar (upload dari perangkat). Bila tidak diisi,
+   * fitur gambar dinonaktifkan — pesan dengan `images` ditolak.
+   */
+  attachments?: AttachmentManager;
   now?: () => number;
   shutdownBudgetMs?: number;
   sendTimeoutMs?: number;
@@ -103,6 +114,12 @@ export interface SessionManagerOptions {
   onDeleted?: (sessionId: string) => void;
   /** Hook error asinkron (mis. balasan model gagal) — disambungkan ke gateway. */
   onError?: (sessionId: string, message: string) => void;
+  /**
+   * Hook perubahan status turn — `true` saat model mulai merespon (turn
+   * streaming aktif), `false` saat turn selesai/dibatalkan. Disambungkan ke
+   * gateway agar Client tahu kapan tombol stop (interrupt) perlu tampil.
+   */
+  onTurnChange?: (sessionId: string, active: boolean) => void;
 }
 
 export interface SessionManager {
@@ -111,8 +128,15 @@ export interface SessionManager {
   getSession(sessionId: string): Result<Session>;
   stopSession(sessionId: string): SimpleResult;
   /**
-   * Hapus Session permanen: di server headless opencode (beserta riwayat
-   * pesannya di sana) lalu di Session_Store (pesan, prompt, riwayat status).
+   * Hentikan balasan model yang sedang berlangsung (interrupt ala opencode):
+   * turn remote di-abort, parts yang sudah ter-stream disimpan, tapi Session
+   * TETAP `running` — user bisa langsung kirim pesan baru tanpa Start ulang.
+   */
+  interruptSession(sessionId: string): SimpleResult;
+  /**
+   * Hapus Session permanen: pastikan server headless opencode hidup (spawn
+   * ulang bila perlu) lalu hapus session remote di sana (beserta riwayat
+   * pesannya), kemudian baris Session di Session_Store.
    */
   deleteSession(sessionId: string): Promise<SimpleResult>;
   /**
@@ -127,7 +151,16 @@ export interface SessionManager {
   findFiles(projectId: string, query: string): Promise<Result<string[]>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
   setSessionModel(sessionId: string, model: SessionModel | null): SimpleResult;
-  sendFreeTextInput(sessionId: string, text: string, files?: string[]): Promise<SimpleResult>;
+  /**
+   * Kirim input bebas. `files` = path relatif project (`@file`); `images` =
+   * id lampiran di Attachment_Store (gambar upload dari perangkat).
+   */
+  sendFreeTextInput(
+    sessionId: string,
+    text: string,
+    files?: string[],
+    images?: string[],
+  ): Promise<SimpleResult>;
   resolvePrompt(
     sessionId: string,
     promptId: string,
@@ -164,6 +197,80 @@ function describePermission(ev: OpenCodeEvent): string {
     }
   }
   return parts.length > 0 ? parts.join(" — ") : "Izin tool";
+} /**
+ * Baris pertama pesan error dari event `session.error` opencode (bentuk SSE
+ * ternormalisasi: `error: { name, data: { message } }`). Sisa `data.message`
+ * berupa stack trace — tidak berguna untuk UI.
+ */
+function sessionErrorMessage(ev: OpenCodeEvent): string {
+  const err = field(ev, "error");
+  if (typeof err !== "object" || err === null) return "";
+  const e = err as { data?: { message?: unknown } };
+  if (typeof e.data !== "object" || e.data === null) return "";
+  const raw = e.data.message;
+  if (typeof raw !== "string" || raw.trim() === "") return "";
+  return raw.split("\n")[0]?.trim() ?? "";
+}
+
+/**
+ * Deskripsi ramah event `session.error` opencode. Nama error (`error.name`)
+ * dipetakan ke pesan Indonesia; pesan asli (baris pertama) disertakan bila
+ * ada karena sering lebih informatif (mis. `TypeError: File URL host …`).
+ */
+function describeSessionError(ev: OpenCodeEvent): string {
+  const err = field(ev, "error");
+  const name =
+    typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
+  const line = sessionErrorMessage(ev);
+  // Petunjuk ramah per nama error; null = pesan asli lebih informatif
+  // (mis. `UnknownError` yang membawa TypeError asli).
+  const hint = (() => {
+    switch (name) {
+      case "ProviderAuthError":
+        return "Autentikasi provider model gagal. Periksa login opencode (`opencode auth`).";
+      case "APIError":
+        return "Provider model mengembalikan error API. Coba lagi atau ganti model.";
+      case "ContentFilterError":
+        return "Balasan model diblokir oleh filter konten.";
+      case "ContextOverflowError":
+        return "Konteks percakapan melebihi batas model. Mulai Session baru atau compact.";
+      case "MessageOutputLengthError":
+        return "Output model melebihi batas panjang pesan.";
+      case "MessageAbortedError":
+        return "Pemrosesan prompt dibatalkan.";
+      case "StructuredOutputError":
+        return "Output terstruktur model gagal diparse.";
+      default:
+        return null;
+    }
+  })();
+  if (hint === null) return line || "Terjadi kesalahan saat memproses prompt.";
+  return line ? `${hint} — ${line}` : hint;
+}
+
+/** Terjemahkan kode error pengiriman prompt ke pesan yang bisa dibaca user. */
+function friendlySendError(raw: string): string {
+  const r = raw.trim();
+  if (r === "TURN_TIMEOUT") {
+    return "Model tidak membalas dalam batas waktu yang ditentukan. Coba kirim ulang pesan.";
+  }
+  const asyncMatch = r.match(/^OC_PROMPT_ASYNC_FAILED(?:\((\d+)\))?(?::\s*(.*))?$/);
+  if (asyncMatch) {
+    const status = asyncMatch[1];
+    const detail = asyncMatch[2];
+    if (status) return `Gagal mengirim prompt ke opencode (status ${status}). Coba lagi.`;
+    if (detail)
+      return `Gagal mengirim prompt ke opencode: ${detail.split("\n")[0]?.trim() ?? detail}`;
+    return "Gagal mengirim prompt ke opencode. Coba lagi.";
+  }
+  const sendFail = r.match(/^SEND_FAILED:\s*(.*)$/);
+  if (sendFail) {
+    const detail = sendFail[1];
+    return detail
+      ? `Gagal mengirim prompt: ${detail.split("\n")[0]?.trim() ?? detail}`
+      : "Gagal mengirim prompt: koneksi ke opencode bermasalah.";
+  }
+  return r.split("\n")[0] ?? r;
 }
 
 /** Bangun Interactive_Prompt dari event `permission.asked`. */
@@ -220,6 +327,7 @@ function promptFromQuestion(ev: OpenCodeEvent, sessionId: string, now: number): 
 export function createSessionManager(opts: SessionManagerOptions): SessionManager {
   const store = opts.store;
   const servers = opts.servers;
+  const attachments = opts.attachments;
   const now = opts.now ?? Date.now;
   const shutdownBudgetMs = opts.shutdownBudgetMs ?? SHUTDOWN_BUDGET_MS;
   const sendTimeoutMs = opts.sendTimeoutMs ?? SEND_TIMEOUT_MS;
@@ -232,6 +340,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const onStatusChange = opts.onStatusChange;
   const onDeleted = opts.onDeleted;
   const onError = opts.onError;
+  const onTurnChange = opts.onTurnChange;
 
   /**
    * Pemetaan ocSessionId (opencode) -> id Session lokal.
@@ -264,20 +373,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
-   * Tutup turn: rakit pesan assistant dari parts hasil SSE, simpan, kirim ke
-   * Client. Dipanggil saat `session.idle` Session akar (atau timeout).
-   *
-   * Sumber kebenaran adalah parts SSE, bukan balasan `POST /message` — pada
-   * turn panjang (mis. sub-agent) koneksi POST bisa putus sebelum balasan
-   * datang, sehingga pesan final tidak akan pernah tersimpan.
+   * Simpan seluruh pesan assistant yang sudah terakumulasi dari parts SSE
+   * (satu pesan per messageId, sesuai urutan kemunculan). Dipakai baik oleh
+   * finalisasi sukses (`session.idle`) maupun gagal — parts yang sudah
+   * ter-stream tidak boleh hilang walau turn berakhir dengan error.
    */
-  function finalizeTurn(sessionId: string): void {
-    const turn = streamingTurns.get(sessionId);
-    if (!turn || turn.finalized) return;
-    turn.finalized = true;
-    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
-    streamingTurns.delete(sessionId);
-
+  function persistTurnParts(sessionId: string, turn: StreamingTurn): void {
     const createdAt = now();
     for (const messageId of turn.order) {
       const byPart = turn.parts.get(messageId);
@@ -294,6 +395,50 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       store.insertMessage(message);
       onMessage?.(message);
     }
+  }
+
+  /**
+   * Tutup turn: rakit pesan assistant dari parts hasil SSE, simpan, kirim ke
+   * Client. Dipanggil saat `session.idle` Session akar (atau stop/exit).
+   *
+   * Sumber kebenaran adalah parts SSE, bukan balasan `POST /message` — pada
+   * turn panjang (mis. sub-agent) koneksi POST bisa putus sebelum balasan
+   * datang, sehingga pesan final tidak akan pernah tersimpan.
+   */
+  function finalizeTurn(sessionId: string): void {
+    const turn = streamingTurns.get(sessionId);
+    if (!turn || turn.finalized) return;
+    turn.finalized = true;
+    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
+    streamingTurns.delete(sessionId);
+    onTurnChange?.(sessionId, false);
+    persistTurnParts(sessionId, turn);
+  }
+
+  /**
+   * Tutup turn dalam kondisi gagal (prompt ditolak, `session.error`, atau
+   * timeout): parts yang sudah ter-stream tetap disimpan, lalu pesan error
+   * ber-role assistant (part `type: "error"`) ditulis ke history agar
+   * kegagalan terlihat dan bertahan setelah reattach. `onError` tetap
+   * dipanggil untuk banner instan di Client.
+   */
+  function failTurn(sessionId: string, message: string): void {
+    const turn = streamingTurns.get(sessionId);
+    if (!turn || turn.finalized) return;
+    turn.finalized = true;
+    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
+    streamingTurns.delete(sessionId);
+    onTurnChange?.(sessionId, false);
+    persistTurnParts(sessionId, turn);
+    const errMsg: SessionMessage = {
+      id: `err_${randomUUID()}`,
+      sessionId,
+      role: "assistant",
+      parts: [{ type: "error", text: message }],
+      createdAt: now(),
+    };
+    if (store.insertMessage(errMsg).ok) onMessage?.(errMsg);
+    onError?.(sessionId, message);
   }
 
   /** Catat pemetaan ocSessionId -> Session lokal (juga untuk cleanup). */
@@ -357,6 +502,28 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const cur = store.getSession(sessionId);
       if (!cur.ok || cur.data.ocSessionId !== ocId) return;
       finalizeTurn(sessionId);
+      return;
+    }
+    if (ev.type === "session.error") {
+      const ocId = field(ev, "sessionID", "sessionId");
+      if (typeof ocId !== "string") return;
+      const sessionId = ocToSession.get(ocId);
+      if (!sessionId) return;
+      const err = field(ev, "error");
+      const errName =
+        typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
+      // MessageAbortedError = turn dibatalkan (interrupt user / reject prompt).
+      // Bukan kegagalan: parts yang sudah ter-stream disimpan tanpa banner error.
+      const aborted = errName === "MessageAbortedError";
+      const message = describeSessionError(ev);
+      if (streamingTurns.has(sessionId)) {
+        if (aborted) finalizeTurn(sessionId);
+        else failTurn(sessionId, message);
+      } else if (!aborted) {
+        // Tanpa turn aktif, abort berarti turn sudah ditutup interrupt/stop -
+        // jangan tampilkan banner "Pemrosesan prompt dibatalkan" ke Client.
+        onError?.(sessionId, message);
+      }
       return;
     }
     if (ev.type === "message.updated") {
@@ -543,6 +710,27 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
+   * Hentikan balasan model yang sedang berlangsung (interrupt ala opencode):
+   * - Turn remote di-abort (best-effort, tidak menunggu).
+   * - Parts yang sudah ter-stream disimpan sebagai pesan assistant final.
+   * - Session TETAP `running` dan pemetaan SSE dipertahankan — user bisa
+   *   langsung mengirim pesan baru tanpa Start ulang.
+   * Idempoten: tanpa turn aktif tidak ada yang berubah (tetap `ok`).
+   */
+  function interruptSession(sessionId: string): SimpleResult {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    // Abort turn berjalan (best-effort, tidak menunggu).
+    if (cur.data.status === "running" && cur.data.ocSessionId) {
+      const handle = servers.getServer(cur.data.projectId);
+      void handle?.client.abortSession(cur.data.ocSessionId);
+    }
+    // Tutup turn bila ada: parts tersimpan + broadcast turn tidak aktif.
+    finalizeTurn(sessionId);
+    return { ok: true };
+  }
+
+  /**
    * Menghidupkan kembali Session yang `stopped`/`crashed` dengan riwayat
    * percakapan utuh:
    *
@@ -633,16 +821,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * Hapus Session permanen:
    *
    * 1. Turn yang sedang stream difinalisasi & pemetaan SSE dilepas.
-   * 2. `DELETE /session/{id}` ke server headless bila masih hidup — data
-   *    session (termasuk seluruh pesan) ikut dihapus di sisi opencode.
-   *    Bila server tidak hidup, langkah ini dilewati: data remote jadi yatim
-   *    tapi bridge tidak lagi merujuknya (menghindari spawn server hanya
-   *    untuk menghapus).
+   * 2. Pastikan server headless Project hidup — spawn ulang bila mati — lalu
+   *    `DELETE /session/{id}`: data session (termasuk seluruh pesan) ikut
+   *    dihapus di sisi opencode. Penghapusan remote bersifat wajib: bila
+   *    server tidak bisa di-spawn ulang atau menolak hapus, error diteruskan
+   *    dan data lokal TIDAK dihapus — supaya tidak ada session opencode yang
+   *    jadi yatim tanpa sepengetahuan user (bisa dicoba lagi kemudian).
    * 3. Baris Session + seluruh baris anaknya dihapus dari Session_Store.
-   *
-   * Kegagalan hapus remote tidak membatalkan penghapusan lokal bila server
-   * sudah tidak ada; bila server hidup tapi menolak, error diteruskan agar
-   * user tahu datanya masih ada di opencode dan bisa mencoba lagi.
    */
   async function deleteSession(sessionId: string): Promise<SimpleResult> {
     const cur = store.getSession(sessionId);
@@ -656,19 +841,31 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     }
     unmapOcSessions(sessionId);
 
-    // (2) Hapus di server headless (best effort — hanya bila server hidup).
+    // (2) Hapus di server headless — wajib: server di-spawn ulang bila mati
+    //     agar data remote tidak tertinggal. Server hasil spawn dibiarkan
+    //     hidup (bukan di-stop) karena mungkin sedang dipakai operasi lain
+    //     dan hanya akan dihentikan saat shutdown.
     const ocSessionId = cur.data.ocSessionId;
     if (ocSessionId) {
-      const handle = servers.getServer(cur.data.projectId);
-      if (handle) {
-        const remote = await handle.client.deleteSession(ocSessionId);
-        if (!remote.ok) return { ok: false, error: remote.error };
+      let client = servers.getServer(cur.data.projectId)?.client;
+      if (!client) {
+        const project = store.getProjectById(cur.data.projectId);
+        if (!project.ok) return { ok: false, error: project.error };
+        const serverRes = await ensureServerFor(project.data.id, project.data.path);
+        if (!serverRes.ok) return { ok: false, error: serverRes.error };
+        client = serverRes.data.client;
       }
+      const remote = await client.deleteSession(ocSessionId);
+      if (!remote.ok) return { ok: false, error: remote.error };
     }
 
     // (3) Hapus lokal (transaksional: messages, prompts, history, session).
     const res = store.deleteSession(sessionId);
-    if (res.ok) onDeleted?.(sessionId);
+    if (res.ok) {
+      // Lampiran gambar milik Session ikut dibersihkan (best effort).
+      attachments?.removeSession(sessionId);
+      onDeleted?.(sessionId);
+    }
     return res;
   }
 
@@ -676,11 +873,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     sessionId: string,
     text: string,
     files: string[] = [],
+    images: string[] = [],
   ): Promise<SimpleResult> {
-    if (text.length < 1 || text.trim().length === 0) {
+    // Pesan berupa teks bebas dan/atau gambar: teks kosong diizinkan bila ada
+    // gambar terlampir (mis. kirim gambar saja), selainnya wajib non-kosong.
+    const hasText = text.trim().length > 0;
+    const hasImages = images.length > 0;
+    if (!hasText && !hasImages) {
       return { ok: false, error: "TEXT_EMPTY" };
     }
-    if (text.length > MAX_FREE_TEXT_LENGTH) {
+    if (hasText && text.length > MAX_FREE_TEXT_LENGTH) {
       return { ok: false, error: "TEXT_TOO_LONG" };
     }
     const cur = store.getSession(sessionId);
@@ -693,15 +895,41 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const handle = servers.getServer(cur.data.projectId);
     if (!handle) return { ok: false, error: "SESSION_NOT_ACTIVE" };
 
+    // Gambar upload dipetakan ke info + path absolut. Kegagalan resolve
+    // (id tidak dikenal / sudah dihapus) menolak pengiriman tanpa echo.
+    const imageInfos: { id: string; filename: string; mime: string; absPath: string }[] = [];
+    for (const id of images) {
+      const info = attachments?.info(sessionId, id);
+      if (!info?.ok) return { ok: false, error: "ATTACHMENT_NOT_FOUND" };
+      imageInfos.push(info.data);
+    }
+
     // Echo pesan user (disimpan + dikirim ke Client) sebelum menunggu balasan.
-    // Referensi @file ikut di-echo sebagai part `file`. Path relatif project
+    // Referensi @file ikut di-echo sebagai part `file` mime text/plain;
+    // gambar upload sebagai part `file` mime image/* dengan `attachmentId`
+    // agar renderer dapat memuat bytes lewat HTTP. Path relatif project
     // diubah ke file URL absolut — opencode mem-parse `url` dengan URL()
     // sehingga `file://rel/path` (host=rel) ditolak di Linux; host kosong
     // (`file:///abs/path`) valid.
-    const fileUrls = files.map((f) => `file://${path.resolve(cur.data.cwd, f)}`);
+    const promptFiles: OpenCodeFileRef[] = [];
     const userParts: MessagePart[] = [{ type: "text", text }];
-    for (const [i, filename] of files.entries()) {
-      userParts.push({ type: "file", mime: "text/plain", filename, url: fileUrls[i] });
+    for (const filename of files) {
+      const url = `file://${path.resolve(cur.data.cwd, filename)}`;
+      userParts.push({ type: "file", mime: "text/plain", filename, url });
+      promptFiles.push({ filename, mime: "text/plain", url });
+    }
+    for (const info of imageInfos) {
+      // Jaring pengaman: `file://` harus menunjuk path absolut (host kosong).
+      // `file://rel/path` membuat host="rel" yang ditolak opencode.
+      const url = `file://${path.resolve(info.absPath)}`;
+      userParts.push({
+        type: "file",
+        mime: info.mime,
+        filename: info.filename,
+        url,
+        attachmentId: info.id,
+      });
+      promptFiles.push({ filename: info.filename, mime: info.mime, url });
     }
     const userMessage: SessionMessage = {
       id: `usr_${randomUUID()}`,
@@ -728,31 +956,22 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     // mati di tengah turn) — parts yang sudah terkumpul tetap disimpan.
     turn.timeout = setTimeoutFn(() => {
       if (streamingTurns.get(sessionId) !== turn) return;
-      onError?.(sessionId, "TURN_TIMEOUT");
-      finalizeTurn(sessionId);
+      failTurn(sessionId, friendlySendError("TURN_TIMEOUT"));
     }, sendTimeoutMs);
     streamingTurns.set(sessionId, turn);
+    // Beri tahu Client bahwa model mulai merespon (tombol stop/interrupt aktif).
+    onTurnChange?.(sessionId, true);
 
     enqueue(sessionId, async () => {
       try {
         // `prompt_async` balas 204 begitu prompt diterima; hasil turn tiba
         // lewat SSE dan ditutup oleh `session.idle`.
-        const res = await handle.client.promptAsync(ocSessionId, text, cur.data.model, fileUrls);
+        const res = await handle.client.promptAsync(ocSessionId, text, cur.data.model, promptFiles);
         if (!res.ok) {
-          onError?.(sessionId, res.error);
-          if (streamingTurns.get(sessionId) === turn) {
-            turn.finalized = true;
-            if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
-            streamingTurns.delete(sessionId);
-          }
+          failTurn(sessionId, friendlySendError(res.error ?? "OC_PROMPT_ASYNC_FAILED"));
         }
       } catch (e) {
-        onError?.(sessionId, `SEND_FAILED: ${(e as Error).message}`);
-        if (streamingTurns.get(sessionId) === turn) {
-          turn.finalized = true;
-          if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
-          streamingTurns.delete(sessionId);
-        }
+        failTurn(sessionId, friendlySendError(`SEND_FAILED: ${(e as Error).message}`));
       }
     });
 
@@ -855,6 +1074,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     listSessions,
     getSession,
     stopSession,
+    interruptSession,
     resumeSession,
     deleteSession,
     listModels,

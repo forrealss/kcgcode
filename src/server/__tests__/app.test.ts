@@ -30,8 +30,15 @@ interface FakeClient extends OpenCodeClient {
   replyPermissionCalls: [string, string][];
   abortCalls: string[];
   deleteCalls: string[];
+  /** Referensi file yang dikirim ke tiap promptAsync. */
+  promptFilesCalls: { filename: string; mime: string; url: string }[][];
   /** Apakah `getSession` melaporkan session remote masih ada (default: ya). */
   getSessionOk: boolean;
+  /**
+   * Prompt berikutnya gagal diproses opencode: alih-alih sukses, server
+   * memancarkan `session.error` (meniru kegagalan diam-diam di sisi model).
+   */
+  failNextPrompt: boolean;
 }
 
 function makeFakeClient(projectId: string): FakeClient {
@@ -41,7 +48,9 @@ function makeFakeClient(projectId: string): FakeClient {
     replyPermissionCalls: [],
     abortCalls: [],
     deleteCalls: [],
+    promptFilesCalls: [],
     getSessionOk: true,
+    failNextPrompt: false,
     async createSession() {
       return { ok: true, data: { id: `ses_${projectId}`, directory: "/proj" } };
     },
@@ -80,10 +89,29 @@ function makeFakeClient(projectId: string): FakeClient {
     },
     /**
      * Meniru server sungguhan: prompt diterima (204), balasan mengalir lewat
-     * SSE, lalu `session.idle` menutup turn.
+     * SSE, lalu `session.idle` menutup turn. Bila `failNextPrompt`, prompt
+     * justru gagal diproses — server memancarkan `session.error`.
      */
-    async promptAsync(sessionId, text) {
+    async promptAsync(sessionId, text, _model, files) {
       client.sendMessageCalls.push(text);
+      client.promptFilesCalls.push(files ?? []);
+      if (client.failNextPrompt) {
+        client.failNextPrompt = false;
+        queueMicrotask(() => {
+          client.emit({
+            type: "session.error",
+            sessionID: sessionId,
+            error: {
+              name: "UnknownError",
+              data: {
+                message:
+                  'TypeError: File URL host must be "localhost" or empty on linux\n    at SessionPrompt.resolveUserPart',
+              },
+            },
+          });
+        });
+        return { ok: true, data: null };
+      }
       const messageID = `msg_${projectId}`;
       queueMicrotask(() => {
         client.emit({
@@ -192,6 +220,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
       auth: { hostname: "127.0.0.1", authEnabled: false, authToken: "" },
       store,
       servers: servers.manager,
+      uploadsRoot: path.join(root, "uploads"),
       port: 0,
     });
   });
@@ -348,6 +377,188 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(delRes2.status).toBe(404);
 
     ws.close();
+  });
+
+  test("gambar: upload -> GET serve bytes -> kirim input dgn image -> part file image", async () => {
+    // Path unik agar tidak bertabrakan dengan test lain (store dipakai bersama).
+    mkdirSync(path.join(root, "proj-gambar"), { recursive: true });
+    const projRes = await fetch(`${baseUrl()}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "gambar-proj", path: "proj-gambar" }),
+    });
+    expect(projRes.status).toBe(201);
+    const projBody = (await projRes.json()) as { project: Project };
+    const sessRes = await fetch(`${baseUrl()}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentType: "opencode", projectId: projBody.project.id }),
+    });
+    expect(sessRes.status).toBe(201);
+    const sessBody = (await sessRes.json()) as { session: Session };
+    const sessionId = sessBody.session.id;
+
+    // PNG 1x1 minimal (header). Server tidak memvalidasi isi, hanya mime.
+    const png = new Blob([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1])], {
+      type: "image/png",
+    });
+    const form = new FormData();
+    form.append("file", png, "foto.png");
+    const upRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}/uploads`, {
+      method: "POST",
+      body: form,
+    });
+    expect(upRes.status).toBe(201);
+    const upBody = (await upRes.json()) as {
+      upload: { id: string; filename: string; mime: string };
+    };
+    expect(upBody.upload.filename).toBe("foto.png");
+    expect(upBody.upload.mime).toBe("image/png");
+    const uploadId = upBody.upload.id;
+
+    // GET mengembalikan bytes dengan content-type gambar.
+    const getRes = await fetch(`${baseUrl()}/api/uploads/${sessionId}/${uploadId}`);
+    expect(getRes.status).toBe(200);
+    expect(getRes.headers.get("content-type")).toContain("image/png");
+
+    // Upload non-gambar ditolak.
+    const badForm = new FormData();
+    badForm.append("file", new Blob(["x"], { type: "text/plain" }), "a.txt");
+    const badRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}/uploads`, {
+      method: "POST",
+      body: badForm,
+    });
+    expect(badRes.status).toBe(400);
+    expect(((await badRes.json()) as { error: string }).error).toBe("UNSUPPORTED_IMAGE_MIME");
+
+    // Kirim pesan dengan lampiran -> echo user memuat part file image;
+    // promptAsync menerima ref gambar (mime image + url file).
+    const msgs: ServerMessage[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+    ws.onmessage = (event) => {
+      msgs.push(JSON.parse(String(event.data)) as ServerMessage);
+    };
+    await waitFor(() => ws.readyState === WebSocket.OPEN, 3000, "koneksi WS terbuka");
+    ws.send(JSON.stringify({ type: "attach", sessionId }));
+    await waitFor(() => msgs.some((m) => m.type === "history"), 3000, "pesan history");
+    ws.send(
+      JSON.stringify({
+        type: "input",
+        sessionId,
+        text: "jelaskan gambar ini",
+        images: [uploadId],
+      }),
+    );
+    await waitFor(
+      () => msgs.filter((m) => m.type === "message" && m.message.role === "user").length === 1,
+      3000,
+      "echo pesan user dgn gambar",
+    );
+    const userMsg = msgs.find(
+      (m): m is Extract<ServerMessage, { type: "message" }> =>
+        m.type === "message" && m.message.role === "user",
+    );
+    const imagePart = userMsg?.message.parts.find(
+      (p) => p.type === "file" && p.attachmentId === uploadId,
+    );
+    expect(imagePart?.mime).toBe("image/png");
+    expect(imagePart?.filename).toBe("foto.png");
+    expect(typeof imagePart?.url).toBe("string");
+
+    // Fake server menerima ref file image pada promptAsync.
+    const client = servers.clients.get(projBody.project.id);
+    expect(client?.promptFilesCalls.at(-1)).toContainEqual(
+      expect.objectContaining({ mime: "image/png", filename: "foto.png" }),
+    );
+    ws.close();
+  });
+
+  test("prompt gagal (session.error) -> error ke client + pesan error di history", async () => {
+    // Path unik agar tidak bertabrakan dengan test lain (store dipakai bersama).
+    mkdirSync(path.join(root, "proj-gagal"), { recursive: true });
+    const projRes = await fetch(`${baseUrl()}/api/projects`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "gagal-proj", path: "proj-gagal" }),
+    });
+    expect(projRes.status).toBe(201);
+    const projBody = (await projRes.json()) as { project: Project };
+    const sessRes = await fetch(`${baseUrl()}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentType: "opencode", projectId: projBody.project.id }),
+    });
+    expect(sessRes.status).toBe(201);
+    const sessBody = (await sessRes.json()) as { session: Session };
+    const sessionId = sessBody.session.id;
+    const client = servers.clients.get(projBody.project.id);
+    if (!client) throw new Error("client p1 tidak ada");
+    client.failNextPrompt = true;
+
+    const msgs: ServerMessage[] = [];
+    const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+    ws.onmessage = (event) => {
+      msgs.push(JSON.parse(String(event.data)) as ServerMessage);
+    };
+    await waitFor(() => ws.readyState === WebSocket.OPEN, 3000, "koneksi WS terbuka");
+    ws.send(JSON.stringify({ type: "attach", sessionId }));
+    await waitFor(() => msgs.some((m) => m.type === "history"), 3000, "pesan history");
+
+    ws.send(JSON.stringify({ type: "input", sessionId, text: "jelaskan" }));
+    await waitFor(
+      () => msgs.filter((m) => m.type === "message" && m.message.role === "user").length === 1,
+      3000,
+      "echo pesan user",
+    );
+
+    // Client menerima notifikasi error (banner) dengan pesan ramah.
+    await waitFor(
+      () => msgs.some((m) => m.type === "error" && m.code === "AGENT_ERROR"),
+      3000,
+      "pesan error AGENT_ERROR",
+    );
+    const err = msgs.find((m): m is Extract<ServerMessage, { type: "error" }> => {
+      return m.type === "error";
+    });
+    expect(err?.message).toBe('TypeError: File URL host must be "localhost" or empty on linux');
+
+    // Kegagalan bertahan di history: pesan assistant part `type: "error"`.
+    await waitFor(
+      () =>
+        msgs.some(
+          (m) =>
+            m.type === "message" &&
+            m.message.role === "assistant" &&
+            m.message.parts.some((p) => p.type === "error"),
+        ),
+      3000,
+      "pesan error di history",
+    );
+    const errMsg = msgs.find(
+      (m): m is Extract<ServerMessage, { type: "message" }> =>
+        m.type === "message" && m.message.role === "assistant",
+    );
+    expect(
+      errMsg?.message.parts.some((p) => p.type === "error" && typeof p.text === "string"),
+    ).toBe(true);
+    ws.close();
+
+    // Reattach: kegagalan tetap terlihat setelah reload (bukan hanya banner).
+    const msgs2: ServerMessage[] = [];
+    const ws2 = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
+    ws2.onmessage = (event) => {
+      msgs2.push(JSON.parse(String(event.data)) as ServerMessage);
+    };
+    await waitFor(() => ws2.readyState === WebSocket.OPEN, 3000, "koneksi WS kedua terbuka");
+    ws2.send(JSON.stringify({ type: "attach", sessionId }));
+    await waitFor(() => msgs2.some((m) => m.type === "history"), 3000, "history reattach");
+    const hist = msgs2.find((m): m is Extract<ServerMessage, { type: "history" }> => {
+      return m.type === "history";
+    });
+    expect(
+      hist?.messages.some((m) => m.role === "assistant" && m.parts.some((p) => p.type === "error")),
+    ).toBe(true);
+    ws2.close();
   });
 
   test("20.2: daftar Project/Session melalui API lengkap", async () => {
