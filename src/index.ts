@@ -3,7 +3,10 @@
  *
  * Wiring `Bun.serve` diimplementasikan di `src/server/app.ts`
  * (`createKcgServer`) agar dapat diuji secara e2e (task 20.2). File ini:
- * - menyuntikkan shell SPA (`index.html`) ke rute tak dikenal,
+ * - mendaftarkan rute halaman yang menyajikan shell SPA (`index.html`)
+ *   secara eksplisit — `spaPaths` di bawah, pola yang sama dengan daftar
+ *   rute SPA di entry kcgrouter; path lain di luar daftar mengembalikan 404
+ *   (bukan catch-all seperti sebelumnya),
  * - memulai server,
  * - mendaftarkan handler shutdown SIGINT/SIGTERM yang menyimpan status
  *   Session `running` dalam anggaran 5 detik sebelum berhenti (Req 2.3).
@@ -12,7 +15,12 @@ import index from "./index.html";
 import { createKcgServer } from "./server/app";
 
 if (import.meta.main) {
-  const app = createKcgServer({ spa: index });
+  const app = createKcgServer({
+    spa: index,
+    // Rute halaman SPA: `/`, `/projects/:projectId`, dan Session view
+    // (`/projects/:projectId/sessions/:sessionId` — tercakup wildcard).
+    spaPaths: ["/", "/projects", "/projects/*"],
+  });
   console.log(`🚀 KCG Bridge berjalan di ${app.server.url}`);
 
   let shuttingDown = false;

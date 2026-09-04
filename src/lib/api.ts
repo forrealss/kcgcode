@@ -6,7 +6,7 @@
  * - Kesalahan HTTP dilempar sebagai `ApiError` dengan `status` dan `code`
  *   (dari body `{ error }`) agar komponen menampilkan pesan yang tepat.
  * - Token yang sama dipakai untuk upgrade WebSocket via `?token=`
- *   (Requirement 9.3, lihat `use-websocket.ts`).
+ *   (Requirement 9.3, lihat `useWebSocket.ts`).
  */
 export const AUTH_TOKEN_KEY = "kcg-auth-token";
 

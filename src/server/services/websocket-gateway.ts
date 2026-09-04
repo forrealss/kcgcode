@@ -1,0 +1,363 @@
+/**
+ * WebSocket_Gateway — registrasi koneksi, reattach, broadcast (versi headless).
+ *
+ * Perubahan dari versi PTY/TUI:
+ * - Cursor `seq` per-koneksi dihapus (tidak ada lagi chunk Output_Stream);
+ *   reattach mengirim `history` berisi `messages` + `prompts` pending.
+ * - `input` / `prompt_response` kini asinkron (HTTP ke server headless);
+ *   error asinkron dilaporkan via pesan `error` ke Client pengirim.
+ * - Pesan `stop` meneruskan ke `stopSession`; pesan `interrupt` meneruskan
+ *   ke `interruptSession` (hentikan balasan saja, Session tetap berjalan).
+ *
+ * Prinsip yang dipertahankan: kegagalan `send` ke satu Client ditangkap
+ * per-Client (hapus subscriber) tanpa menghentikan broadcast ke Client lain
+ * (Requirement 5.3); attach ke Session tidak ditemukan -> `error` + `close`
+ * (Requirement 4.3).
+ */
+import type { ServerWebSocket } from "bun";
+import type { SessionStore } from "../../db";
+import type {
+  InteractivePrompt,
+  MessagePart,
+  PromptResponse,
+  SessionMessage,
+  SessionStatus,
+} from "../../types";
+import { ErrorCodes, type ServerMessage } from "../../ws-protocol";
+import type { SessionManager } from "./session-manager";
+
+/** Abstraksi koneksi — diimplementasikan oleh `bunWsSubscriber` atau mock test. */
+export interface Subscriber {
+  send(msg: ServerMessage): void;
+  close(): void;
+}
+
+/** Koneksi yang ter-attach ke sebuah Session. */
+export interface AttachedInfo {
+  sessionId: string;
+}
+
+export interface WebSocketGatewayOptions {
+  store: SessionStore;
+  sessionManager: SessionManager;
+}
+
+export interface WebSocketGateway {
+  attach(sub: Subscriber, sessionId: string): void;
+  input(
+    sub: Subscriber,
+    sessionId: string,
+    text: string,
+    files?: string[],
+    images?: string[],
+  ): void;
+  promptResponse(
+    sub: Subscriber,
+    sessionId: string,
+    promptId: string,
+    response: PromptResponse,
+  ): void;
+  stop(sub: Subscriber, sessionId: string): void;
+  /** Hentikan balasan model saja (interrupt) — Session tetap running. */
+  interrupt(sub: Subscriber, sessionId: string): void;
+  notifyMessage(sessionId: string, message: SessionMessage): void;
+  notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
+  notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
+  notifySessionStatus(sessionId: string, status: SessionStatus): void;
+  /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
+  notifyTurnActive(sessionId: string, active: boolean): void;
+  notifySessionDeleted(sessionId: string): void;
+  notifyPromptResolved(sessionId: string, promptId: string): void;
+  notifyError(sessionId: string, code: string, message: string): void;
+  detach(sub: Subscriber): void;
+  subscriberCount(sessionId: string): number;
+}
+
+/** Pemetaan error domain Session_Manager ke kode protokol `error`. */
+function toErrorCode(error: string): string {
+  if (error === ErrorCodes.SESSION_NOT_FOUND) return ErrorCodes.SESSION_NOT_FOUND;
+  if (error === "SESSION_NOT_RUNNING" || error === "SESSION_NOT_ACTIVE") {
+    return ErrorCodes.SESSION_NOT_RUNNING;
+  }
+  if (error === "TEXT_EMPTY" || error === "TEXT_TOO_LONG") return ErrorCodes.INVALID_TEXT;
+  if (error === "ATTACHMENT_NOT_FOUND") return ErrorCodes.ATTACHMENT_NOT_FOUND;
+  if (error === ErrorCodes.PROMPT_NOT_FOUND) return ErrorCodes.PROMPT_NOT_FOUND;
+  if (error === ErrorCodes.PROMPT_ALREADY_RESOLVED) return ErrorCodes.PROMPT_ALREADY_RESOLVED;
+  if (error === "INVALID_PROMPT_OPTION" || error === "INVALID_PROMPT_RESPONSE") {
+    return ErrorCodes.INVALID_RESPONSE;
+  }
+  return "ERROR";
+}
+
+export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocketGateway {
+  const { store, sessionManager } = opts;
+  const subs = new Map<Subscriber, AttachedInfo>();
+
+  /** Kirim pesan; bila `send` melempar, hapus subscriber (Req 5.3). */
+  function sendSafe(sub: Subscriber, msg: ServerMessage): boolean {
+    try {
+      sub.send(msg);
+      return true;
+    } catch {
+      subs.delete(sub);
+      return false;
+    }
+  }
+
+  function attach(sub: Subscriber, sessionId: string): void {
+    // (1) validasi Session ada di store (Req 4.3)
+    const sess = store.getSession(sessionId);
+    if (!sess.ok) {
+      sendSafe(sub, {
+        type: "error",
+        code: ErrorCodes.SESSION_NOT_FOUND,
+        message: "Session tidak ditemukan",
+      });
+      sub.close();
+      return;
+    }
+
+    // (2) riwayat pesan terstruktur + prompt pending (Req 4.1, 4.4)
+    const messages = store.getMessages(sessionId);
+    if (!messages.ok) {
+      sendSafe(sub, { type: "error", code: "STORE_ERROR", message: messages.error });
+      sub.close();
+      return;
+    }
+    const prompts = store.listPendingPrompts(sessionId);
+    if (!sendSafe(sub, { type: "history", sessionId, messages: messages.data, prompts })) return;
+
+    // (3) daftarkan sebagai subscriber live
+    subs.set(sub, { sessionId });
+  }
+
+  function input(
+    sub: Subscriber,
+    sessionId: string,
+    text: string,
+    files?: string[],
+    images?: string[],
+  ): void {
+    void sessionManager
+      .sendFreeTextInput(sessionId, text, files ?? [], images ?? [])
+      .then((res) => {
+        if (!res.ok) {
+          const code = toErrorCode(res.error ?? "");
+          sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+        }
+      })
+      .catch(() => {
+        sendSafe(sub, { type: "error", code: "ERROR", message: "Gagal mengirim pesan" });
+      });
+  }
+
+  function promptResponse(
+    sub: Subscriber,
+    sessionId: string,
+    promptId: string,
+    response: PromptResponse,
+  ): void {
+    void sessionManager
+      .resolvePrompt(sessionId, promptId, response)
+      .then((res) => {
+        if (!res.ok) {
+          const code = toErrorCode(res.error ?? "");
+          sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+          return;
+        }
+        notifyPromptResolved(sessionId, promptId);
+      })
+      .catch(() => {
+        sendSafe(sub, { type: "error", code: "ERROR", message: "Gagal memproses respon prompt" });
+      });
+  }
+
+  function stop(sub: Subscriber, sessionId: string): void {
+    const res = sessionManager.stopSession(sessionId);
+    if (!res.ok) {
+      const code = toErrorCode(res.error ?? "");
+      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+    }
+  }
+
+  function interrupt(sub: Subscriber, sessionId: string): void {
+    const res = sessionManager.interruptSession(sessionId);
+    if (!res.ok) {
+      const code = toErrorCode(res.error ?? "");
+      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+    }
+  }
+
+  function broadcast(sessionId: string, build: () => ServerMessage): void {
+    for (const [sub, info] of subs) {
+      if (info.sessionId !== sessionId) continue;
+      sendSafe(sub, build());
+    }
+  }
+
+  function notifyMessage(sessionId: string, message: SessionMessage): void {
+    broadcast(sessionId, () => ({ type: "message", sessionId, message }));
+  }
+
+  function notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void {
+    broadcast(sessionId, () => ({ type: "message_part", sessionId, messageId, part }));
+  }
+
+  function notifyPrompt(sessionId: string, prompt: InteractivePrompt): void {
+    broadcast(sessionId, () => ({ type: "prompt", sessionId, prompt }));
+  }
+
+  function notifySessionStatus(sessionId: string, status: SessionStatus): void {
+    broadcast(sessionId, () => ({ type: "session_status", sessionId, status }));
+  }
+
+  function notifyTurnActive(sessionId: string, active: boolean): void {
+    broadcast(sessionId, () => ({ type: "turn_active", sessionId, active }));
+  }
+
+  /** Beri tahu subscriber bahwa Session sudah dihapus permanen. */
+  function notifySessionDeleted(sessionId: string): void {
+    broadcast(sessionId, () => ({ type: "session_deleted", sessionId }));
+  }
+
+  function notifyPromptResolved(sessionId: string, promptId: string): void {
+    broadcast(sessionId, () => ({ type: "prompt_resolved", sessionId, promptId }));
+  }
+
+  function notifyError(sessionId: string, code: string, message: string): void {
+    broadcast(sessionId, () => ({ type: "error", code, message }));
+  }
+
+  function detach(sub: Subscriber): void {
+    subs.delete(sub);
+  }
+
+  function subscriberCount(sessionId: string): number {
+    let n = 0;
+    for (const info of subs.values()) {
+      if (info.sessionId === sessionId) n += 1;
+    }
+    return n;
+  }
+
+  return {
+    attach,
+    input,
+    promptResponse,
+    stop,
+    interrupt,
+    notifyMessage,
+    notifyMessagePart,
+    notifyPrompt,
+    notifySessionStatus,
+    notifyTurnActive,
+    notifySessionDeleted,
+    notifyPromptResolved,
+    notifyError,
+    detach,
+    subscriberCount,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Adaptor + dispatch pesan Client -> Server
+// ---------------------------------------------------------------------------
+
+/** Adaptor ServerWebSocket Bun ke `Subscriber` (untuk wiring di `index.ts`). */
+export function bunWsSubscriber<T>(ws: ServerWebSocket<T>): Subscriber {
+  return {
+    send(msg: ServerMessage) {
+      ws.send(JSON.stringify(msg));
+    },
+    close() {
+      ws.close(1000);
+    },
+  };
+}
+
+function isPromptResponse(r: unknown): r is PromptResponse {
+  return (
+    r === "approve" ||
+    r === "deny" ||
+    r === "cancel" ||
+    (typeof r === "object" && r !== null && typeof (r as { option?: unknown }).option === "string")
+  );
+}
+
+function invalidMessage(sub: Subscriber, detail: string): void {
+  sub.send({ type: "error", code: "INVALID_MESSAGE", message: detail });
+}
+
+/**
+ * Mem-parsing pesan Client dan meneruskan ke gateway sesuai `type`.
+ * Pesan JSON rusak / payload salah bentuk -> `error` INVALID_MESSAGE.
+ */
+export function dispatchClientMessage(
+  gateway: WebSocketGateway,
+  sub: Subscriber,
+  raw: string,
+): void {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    invalidMessage(sub, "Pesan JSON tidak valid");
+    return;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    invalidMessage(sub, "Pesan harus berupa objek JSON");
+    return;
+  }
+  const msg = parsed as Record<string, unknown>;
+  switch (msg.type) {
+    case "attach":
+      if (typeof msg.sessionId === "string") gateway.attach(sub, msg.sessionId);
+      else invalidMessage(sub, "attach membutuhkan sessionId string");
+      break;
+    case "input":
+      if (
+        typeof msg.sessionId === "string" &&
+        typeof msg.text === "string" &&
+        (msg.files === undefined ||
+          (Array.isArray(msg.files) && msg.files.every((f) => typeof f === "string"))) &&
+        (msg.images === undefined ||
+          (Array.isArray(msg.images) && msg.images.every((f) => typeof f === "string")))
+      ) {
+        gateway.input(sub, msg.sessionId, msg.text, msg.files, msg.images);
+      } else {
+        invalidMessage(sub, "input membutuhkan sessionId dan text string");
+      }
+      break;
+    case "prompt_response":
+      if (
+        typeof msg.sessionId === "string" &&
+        typeof msg.promptId === "string" &&
+        isPromptResponse(msg.response)
+      ) {
+        gateway.promptResponse(sub, msg.sessionId, msg.promptId, msg.response);
+      } else {
+        invalidMessage(sub, "prompt_response membutuhkan sessionId, promptId, dan response valid");
+      }
+      break;
+    case "stop":
+      if (typeof msg.sessionId === "string") {
+        gateway.stop(sub, msg.sessionId);
+      } else {
+        invalidMessage(sub, "stop membutuhkan sessionId string");
+      }
+      break;
+    case "interrupt":
+      if (typeof msg.sessionId === "string") {
+        gateway.interrupt(sub, msg.sessionId);
+      } else {
+        invalidMessage(sub, "interrupt membutuhkan sessionId string");
+      }
+      break;
+    default:
+      sub.send({
+        type: "error",
+        code: "UNKNOWN_MESSAGE_TYPE",
+        message: "Tipe pesan tidak dikenal",
+      });
+  }
+}

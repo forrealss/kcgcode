@@ -1,13 +1,17 @@
 /**
- * Wiring server utama KCG Bridge (task 20).
+ * Composition root KCG Bridge (task 20) — wiring server.
  *
  * `createKcgServer()` merakit seluruh komponen dan menjalankan
- * `Bun.serve({ hostname, port, routes, websocket })`:
- * - Routes HTTP `/api/projects` (GET/POST), `/api/fs` (GET, Folder_Browser),
- *   `/api/sessions` (GET/POST/DELETE) + upgrade WebSocket di `/ws`.
- * - `auth.ts` dipasang di setiap route API dan upgrade WS (Req 9.2, 9.3);
- *   asset statis PWA (manifest/sw/logo) dan shell HTML dibiarkan publik agar
- *   aplikasi dapat dimuat — kontrol CLI_Agent hanya lewat `/api/*` dan `/ws`.
+ * `Bun.serve({ hostname, port, routes, websocket })`. Mengikuti struktur
+ * kcgrouter: handler HTTP dikelompokkan per fitur di `routes/*.routes.ts`
+ * (di-assemble di sini), otentikasi di `middleware/auth.middleware.ts`,
+ * dan domain logic di `services/`.
+ * - Routes HTTP `/api/projects`, `/api/fs`, `/api/sessions`, upload lampiran
+ *   (tabel rute terpisah) + upgrade WebSocket di `/ws`.
+ * - `auth.middleware.ts` dipasang di setiap route API dan upgrade WS
+ *   (Req 9.2, 9.3); asset statis PWA (manifest/sw/logo) dan shell HTML
+ *   dibiarkan publik agar aplikasi dapat dimuat — kontrol CLI_Agent hanya
+ *   lewat `/api/*` dan `/ws`.
  * - `reconcileOnStartup()` dipanggil sebelum `Bun.serve` menerima koneksi
  *   (Requirement 2.4).
  *
@@ -16,28 +20,33 @@
  */
 
 import path from "node:path";
-import { type BunRequest, type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
-import { type AttachmentManager, createAttachmentManager } from "./attachments";
+import { type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
+import { type AppConfig, loadConfig } from "../config";
+import { openSessionStore, type SessionStore } from "../db";
 import {
   type AuthConfig,
-  isAuthorized,
+  createApiGuard,
   loadAuthConfig,
-  unauthorizedResponse,
   WS_AUTH_CLOSE_CODE,
-} from "./auth";
-import { type AppConfig, loadConfig } from "./config";
-import { openSessionStore, type SessionStore } from "./db";
-import { createOpenCodeServerManager, type OpenCodeServerManager } from "./opencode-server";
-import { createProjectManager, type ProjectManager } from "./project-manager";
-import { createSessionManager, type SessionManager } from "./session-manager";
-import type { AgentType, SessionModel } from "./types";
+} from "./middleware/auth.middleware";
+import { projectsRoutes } from "./routes/projects.routes";
+import { sessionsRoutes } from "./routes/sessions.routes";
+import type { ApiRouteContext } from "./routes/types";
+import { uploadsRoutes } from "./routes/uploads.routes";
+import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
+import {
+  createOpenCodeServerManager,
+  type OpenCodeServerManager,
+} from "./services/opencode-server";
+import { createProjectManager, type ProjectManager } from "./services/project-manager";
+import { createSessionManager, type SessionManager } from "./services/session-manager";
 import {
   bunWsSubscriber,
   createWebSocketGateway,
   dispatchClientMessage,
   type Subscriber,
   type WebSocketGateway,
-} from "./websocket-gateway";
+} from "./services/websocket-gateway";
 
 /** Data per-koneksi WebSocket (hasil otentikasi upgrade, Req 9.3). */
 interface WsData {
@@ -54,8 +63,13 @@ export interface KcgServerOptions {
   uploadsRoot?: string;
   hostname?: string;
   port?: number;
-  /** Shell SPA untuk rute tak dikenal (default: 404). */
+  /** Shell SPA untuk rute halaman terdaftar (`spaPaths`; default: 404). */
   spa?: Response | HTMLBundle;
+  /**
+   * Rute halaman yang menyajikan shell SPA — didaftarkan eksplisit di entry
+   * (`src/index.ts`) persis seperti daftar rute SPA kcgrouter; path lain 404.
+   */
+  spaPaths?: string[];
 }
 
 export interface KcgServer {
@@ -66,81 +80,6 @@ export interface KcgServer {
   gateway: WebSocketGateway;
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
   close(): Promise<void>;
-}
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "content-type": "application/json" },
-  });
-}
-
-function serverError(err: unknown): Response {
-  console.error("[kcg-bridge] error tidak terduga:", err);
-  return json({ error: "INTERNAL_ERROR" }, 500);
-}
-
-/**
- * Pemetaan error domain ke status HTTP (design.md — Error Handling):
- * 400 validasi, 404 tidak ditemukan, 409 konflik, sisanya 500.
- */
-function errorStatus(code: string): number {
-  switch (code) {
-    case "NAME_REQUIRED":
-    case "PATH_OUTSIDE_SANDBOX":
-    case "INVALID_PATH_CHARS":
-    case "UNSUPPORTED_AGENT_TYPE":
-    case "INVALID_SIZE":
-    case "MODEL_NOT_FOUND":
-      return 400;
-    case "PROJECT_NOT_FOUND":
-    case "PROJECT_DIR_NOT_FOUND":
-    case "SESSION_NOT_FOUND":
-    case "PATH_NOT_FOUND":
-      return 404;
-    case "NAME_TAKEN":
-    case "PATH_TAKEN":
-    case "SESSION_NOT_RUNNING":
-    case "SESSION_NOT_ACTIVE":
-    case "SESSION_ALREADY_RUNNING":
-      return 409;
-    // Server headless menolak operasi (mis. hapus session remote gagal).
-    case "OC_DELETE_SESSION_FAILED":
-      return 502;
-    case "UNSUPPORTED_IMAGE_MIME":
-    case "EMPTY_UPLOAD":
-      return 400;
-    case "IMAGE_TOO_LARGE":
-      return 413;
-    case "ATTACHMENT_NOT_FOUND":
-      return 404;
-    default:
-      return 500;
-  }
-}
-
-/**
- * Membaca body JSON; body tidak valid -> `{ ok: false }` sehingga handler
- * dapat membalas 400 (bukan 500 dari `serverError`).
- */
-async function readJson(req: Request): Promise<{ ok: true; data: unknown } | { ok: false }> {
-  try {
-    return { ok: true, data: await req.json() };
-  } catch {
-    return { ok: false };
-  }
-}
-
-/**
- * Body `model` pada POST/PUT Session: `{ providerID, modelID }` atau `null`
- * (artinya pakai model default opencode). Bentuk lain dianggap null.
- */
-function parseModelBody(raw: unknown): SessionModel | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const { providerID, modelID } = raw as { providerID?: unknown; modelID?: unknown };
-  if (typeof providerID !== "string" || providerID === "") return null;
-  if (typeof modelID !== "string" || modelID === "") return null;
-  return { providerID, modelID };
 }
 
 /**
@@ -202,25 +141,12 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // Requirement 2.4: tandai Session "running" tanpa proses sebelum menerima koneksi.
   sessionManager.reconcileOnStartup();
 
+  // Middleware auth + konteks bersama untuk tabel rute API.
+  const { authOk, guard } = createApiGuard(auth);
+  const routeCtx: ApiRouteContext = { projectManager, sessionManager, attachments, guard };
+
   // Subscriber per koneksi (identitas stabil untuk Map gateway).
   const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
-
-  function authOk(req: Request): boolean {
-    const url = new URL(req.url);
-    return isAuthorized(auth, {
-      authHeader: req.headers.get("authorization"),
-      queryToken: url.searchParams.get("token"),
-    });
-  }
-
-  function guard<Req extends Request, Res extends Response>(
-    handler: (req: Req) => Res | Promise<Res>,
-  ): (req: Req) => Response | Promise<Response> {
-    return (req) => {
-      if (!authOk(req)) return unauthorizedResponse();
-      return handler(req);
-    };
-  }
 
   const server = serve<WsData>({
     hostname,
@@ -231,235 +157,10 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       "/sw.js": () => staticFile("public/sw.js", "text/javascript"),
       "/logo.svg": () => staticFile("public/logo.svg", "image/svg+xml"),
 
-      // ---- Project & Folder_Browser (Requirement 10) ----
-      "/api/projects": {
-        GET: guard(() => {
-          try {
-            return json({ projects: projectManager.listProjects() });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-        POST: guard(async (req) => {
-          try {
-            const body = await readJson(req);
-            if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-            const { name, path } = body.data as { name?: unknown; path?: unknown };
-            const res = projectManager.createProject(
-              typeof name === "string" ? name : "",
-              typeof path === "string" ? path : "",
-            );
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            return json({ project: res.data }, 201);
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      "/api/fs": {
-        GET: guard((req) => {
-          try {
-            const url = new URL(req.url);
-            const res = projectManager.listDirectory(url.searchParams.get("path") ?? "");
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            return json({ entries: res.data.entries });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      // ---- Daftar model yang tersedia pada server headless Project ----
-      "/api/projects/:id/models": {
-        GET: guard(async (req: BunRequest<"/api/projects/:id/models">) => {
-          try {
-            const res = await sessionManager.listModels(req.params.id);
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            return json({ models: res.data });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      // ---- Session (Requirement 1, 4) ----
-      "/api/sessions": {
-        GET: guard(() => {
-          try {
-            return json({ sessions: sessionManager.listSessions() });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-        POST: guard(async (req) => {
-          try {
-            const body = await readJson(req);
-            if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-            const { agentType, projectId, model } = body.data as {
-              agentType?: unknown;
-              projectId?: unknown;
-              model?: unknown;
-            };
-            const res = await sessionManager.createSession({
-              agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
-              projectId: typeof projectId === "string" ? projectId : "",
-              model: parseModelBody(model),
-            });
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            return json({ session: res.session }, 201);
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      "/api/sessions/:id": {
-        /**
-         * Hapus Session permanen — juga menghapus session (dan riwayat
-         * pesannya) di server headless opencode: server di-spawn ulang bila
-         * mati agar data remote tidak tertinggal. Server tak bisa hidup /
-         * menolak hapus -> 5xx, data lokal utuh.
-         */
-        DELETE: guard(async (req: BunRequest<"/api/sessions/:id">) => {
-          try {
-            const res = await sessionManager.deleteSession(req.params.id);
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-            return json({ ok: true });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-        /**
-         * Resume Session yang stopped/crashed (tombol "Start" di UI).
-         * Memakai ocSessionId lama bila masih dikenal server headless;
-         * bila tidak, sesi remote baru dibuat & disimpan ke Session.
-         */
-        POST: guard(async (req: BunRequest<"/api/sessions/:id">) => {
-          try {
-            const res = await sessionManager.resumeSession(req.params.id);
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-            const cur = sessionManager.getSession(req.params.id);
-            return json({ session: cur.ok ? cur.data : undefined, ok: true });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-        /**
-         * Ganti model pilihan Session — body `{ model: {providerID, modelID} }`
-         * atau `{ model: null }` untuk kembali ke default opencode. Berlaku
-         * pada prompt berikutnya tanpa perlu restart Session.
-         */
-        PUT: guard(async (req: BunRequest<"/api/sessions/:id">) => {
-          try {
-            const body = await readJson(req);
-            if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-            const raw = (body.data as { model?: unknown }).model;
-            const model = raw === null ? null : parseModelBody(raw);
-            const res = sessionManager.setSessionModel(req.params.id, model);
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-            const cur = sessionManager.getSession(req.params.id);
-            return json({ session: cur.ok ? cur.data : undefined, ok: true });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      // ---- Cari file Project (autocomplete referensi @file di composer) ----
-      "/api/sessions/:id/files": {
-        GET: guard(async (req: BunRequest<"/api/sessions/:id/files">) => {
-          try {
-            const url = new URL(req.url);
-            const query = (url.searchParams.get("q") ?? "").slice(0, 200);
-            const cur = sessionManager.getSession(req.params.id);
-            if (!cur.ok)
-              return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
-            const res = await sessionManager.findFiles(cur.data.projectId, query);
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            return json({ files: res.data });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      // ---- Lampiran gambar upload dari perangkat ----
-      "/api/sessions/:id/uploads": {
-        /**
-         * Simpan gambar upload ke Attachment_Store Session. Body multipart
-         * `file` (nama+mime+bytes). Ukuran & format divalidasi server.
-         */
-        POST: guard(async (req: BunRequest<"/api/sessions/:id/uploads">) => {
-          try {
-            const cur = sessionManager.getSession(req.params.id);
-            if (!cur.ok) return json({ error: "SESSION_NOT_FOUND" }, 404);
-            let form: FormData;
-            try {
-              form = await req.formData();
-            } catch {
-              return json({ error: "INVALID_UPLOAD" }, 400);
-            }
-            const file = form.get("file");
-            if (!(file instanceof File)) {
-              return json({ error: "INVALID_UPLOAD" }, 400);
-            }
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            const res = attachments.save(req.params.id, file.name, file.type, bytes);
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            return json({ upload: res.data }, 201);
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      // ---- Muat gambar upload (render bubble & reattach) ----
-      "/api/uploads/:sessionId/:id": {
-        GET: guard((req: BunRequest<"/api/uploads/:sessionId/:id">) => {
-          try {
-            const res = attachments.read(req.params.sessionId, req.params.id);
-            if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-            // Salin ke Uint8Array ber-buffer ArrayBuffer agar lolos tipe BodyInit.
-            const bytes = new Uint8Array(res.data.bytes);
-            return new Response(new Blob([bytes]), {
-              headers: { "content-type": res.data.mime },
-            });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-        /** Hapus lampiran yang belum terkirim (pengguna membatalkan). */
-        DELETE: guard((req: BunRequest<"/api/uploads/:sessionId/:id">) => {
-          try {
-            attachments.remove(req.params.sessionId, req.params.id);
-            return json({ ok: true });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
-
-      // ---- Stop Session (abort turn + status stopped, data tetap ada) ----
-      "/api/sessions/:id/stop": {
-        POST: guard((req: BunRequest<"/api/sessions/:id/stop">) => {
-          try {
-            const res = sessionManager.stopSession(req.params.id);
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-            return json({ ok: true });
-          } catch (e) {
-            return serverError(e);
-          }
-        }),
-      },
+      // ---- Rute API per fitur (pola kcgrouter: tabel rute terpisah) ----
+      ...projectsRoutes(routeCtx),
+      ...sessionsRoutes(routeCtx),
+      ...uploadsRoutes(routeCtx),
 
       // ---- WebSocket_Gateway upgrade (Requirement 4, 9.3) ----
       "/ws": (req: Request, server: Server<WsData>) => {
@@ -468,8 +169,14 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
         return undefined;
       },
 
-      // ---- Shell SPA untuk rute lain (disuntik dari entry, default 404) ----
-      "/*": opts.spa ?? new Response("Not Found", { status: 404 }),
+      // ---- Shell SPA hanya untuk rute halaman terdaftar (disuntik entry,
+      //      default 404) — path tak dikenal tidak menangkap shell SPA ----
+      ...Object.fromEntries(
+        (opts.spaPaths ?? []).map((pattern) => [
+          pattern,
+          opts.spa ?? new Response("Not Found", { status: 404 }),
+        ]),
+      ),
     },
     websocket: {
       data: {} as WsData,

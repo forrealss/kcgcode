@@ -7,7 +7,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveConfig } from "../config";
+import { resolveConfig } from "../../config";
 
 function makeTempDir(): string {
   return mkdtempSync(path.join(tmpdir(), "kcg-config-"));
@@ -70,7 +70,7 @@ test("config: loadConfig keluar dengan kode error saat konfigurasi tidak valid",
   const cfgPath = path.join(dir, "bad.json");
   writeFileSync(cfgPath, JSON.stringify({}), "utf8");
 
-  const modulePath = path.join(process.cwd(), "src/server/config.ts");
+  const modulePath = path.join(process.cwd(), "src/config.ts");
   const script = `import { loadConfig } from ${JSON.stringify(modulePath)}; loadConfig();`;
   const proc = Bun.spawnSync(["bun", "-e", script], {
     env: { ...process.env, KCG_CONFIG_PATH: cfgPath },
@@ -88,7 +88,7 @@ test("config: loadConfig berhasil saat konfigurasi valid", () => {
   const cfgPath = path.join(dir, "ok.json");
   writeFileSync(cfgPath, JSON.stringify({ sandboxRoot: sandbox }), "utf8");
 
-  const modulePath = path.join(process.cwd(), "src/server/config.ts");
+  const modulePath = path.join(process.cwd(), "src/config.ts");
   const script = `import { loadConfig } from ${JSON.stringify(modulePath)}; const c = loadConfig(); console.log(c.sandboxRoot);`;
   const proc = Bun.spawnSync(["bun", "-e", script], {
     env: { ...process.env, KCG_CONFIG_PATH: cfgPath },

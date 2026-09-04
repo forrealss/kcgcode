@@ -13,12 +13,12 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { openSessionStore, type SessionStore } from "../../db";
+import type { Project, Session } from "../../types";
+import type { ServerMessage } from "../../ws-protocol";
 import { createKcgServer, type KcgServer } from "../app";
-import { openSessionStore, type SessionStore } from "../db";
-import type { OpenCodeClient, OpenCodeEvent } from "../opencode-client";
-import type { OpenCodeServerManager } from "../opencode-server";
-import type { Project, Session } from "../types";
-import type { ServerMessage } from "../ws-protocol";
+import type { OpenCodeClient, OpenCodeEvent } from "../services/opencode-client";
+import type { OpenCodeServerManager } from "../services/opencode-server";
 
 // ---------------------------------------------------------------------------
 // Mock OpenCodeClient + OpenCodeServerManager
