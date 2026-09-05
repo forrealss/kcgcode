@@ -1,5 +1,5 @@
 /**
- * Shell aplikasi KCG Bridge (task 25.1) — layout + routing URL ala kcgrouter.
+ * Shell aplikasi KCG Code (task 25.1) — layout + routing URL ala kcgcode.
  *
  * Navigasi: `/` (daftar Project) -> `/projects/:projectId` (daftar Session)
  * -> `/projects/:projectId/sessions/:sessionId` (Session view).
@@ -81,7 +81,7 @@ export function AppShell() {
                 </span>
                 <div className="flex min-w-0 flex-col">
                   <span className="truncate text-sm font-semibold leading-tight tracking-tight">
-                    KCG Bridge
+                    KCG Code
                   </span>
                   <span className="hidden truncate text-[11px] leading-tight text-muted-foreground sm:block">
                     Kontrol CLI_Agent dari mana saja

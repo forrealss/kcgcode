@@ -107,7 +107,7 @@ export function ProjectsPage() {
             <img src={logo} alt="" className="size-full" />
           </span>
           <div className="flex min-w-0 flex-col">
-            <h1 className="truncate text-lg font-semibold tracking-tight">KCG Bridge</h1>
+            <h1 className="truncate text-lg font-semibold tracking-tight">KCG Code</h1>
             <p className="truncate text-xs text-muted-foreground">
               {running > 0
                 ? `${running} session${running === 1 ? "" : "s"} running`

@@ -25,7 +25,7 @@ import {
 // Property 26 — Otentikasi konsisten terhadap kredensial (9.2, 9.3)
 // ---------------------------------------------------------------------------
 
-// Feature: kcg-bridge, Property 26: Otentikasi konsisten terhadap kredensial
+// Feature: kcg-code, Property 26: Otentikasi konsisten terhadap kredensial
 test("Property 26: diterima iff kredensial cocok; semua kombinasi lain ditolak", () => {
   fc.assert(
     fc.property(

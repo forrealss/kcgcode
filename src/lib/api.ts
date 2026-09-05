@@ -1,5 +1,5 @@
 /**
- * Helper fetch API KCG Bridge (task 24).
+ * Helper fetch API KCG Code (task 24).
  *
  * - Menambahkan header `Authorization: Bearer <token>` bila token tersimpan
  *   di `localStorage["kcg-auth-token"]` (Requirement 9.2).

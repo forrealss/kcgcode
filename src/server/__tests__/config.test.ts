@@ -15,7 +15,7 @@ function makeTempDir(): string {
 
 test("config: field sandboxRoot hilang -> error", () => {
   const dir = makeTempDir();
-  const cfgPath = path.join(dir, "kcg-bridge.config.json");
+  const cfgPath = path.join(dir, "kcg-code.config.json");
   writeFileSync(cfgPath, JSON.stringify({}), "utf8");
   const res = resolveConfig(cfgPath);
   expect(res.ok).toBe(false);
@@ -26,7 +26,7 @@ test("config: field sandboxRoot hilang -> error", () => {
 
 test("config: direktori sandboxRoot tidak ditemukan -> error", () => {
   const dir = makeTempDir();
-  const cfgPath = path.join(dir, "kcg-bridge.config.json");
+  const cfgPath = path.join(dir, "kcg-code.config.json");
   const missing = path.join(dir, "tidak-ada");
   writeFileSync(cfgPath, JSON.stringify({ sandboxRoot: missing }), "utf8");
   const res = resolveConfig(cfgPath);
@@ -44,7 +44,7 @@ test("config: berkas tidak ada -> error", () => {
 
 test("config: JSON tidak valid -> error", () => {
   const dir = makeTempDir();
-  const cfgPath = path.join(dir, "kcg-bridge.config.json");
+  const cfgPath = path.join(dir, "kcg-code.config.json");
   writeFileSync(cfgPath, "{ not valid json", "utf8");
   const res = resolveConfig(cfgPath);
   expect(res.ok).toBe(false);
@@ -54,7 +54,7 @@ test("config: konfigurasi valid -> sandboxRoot ter-resolve", () => {
   const dir = makeTempDir();
   const sandbox = path.join(dir, "sandbox");
   mkdirSync(sandbox, { recursive: true });
-  const cfgPath = path.join(dir, "kcg-bridge.config.json");
+  const cfgPath = path.join(dir, "kcg-code.config.json");
   writeFileSync(cfgPath, JSON.stringify({ sandboxRoot: sandbox }), "utf8");
 
   const res = resolveConfig(cfgPath);

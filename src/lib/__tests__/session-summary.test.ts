@@ -106,7 +106,7 @@ describe("describeSessionModel", () => {
     expect(
       describeSessionModel({
         ...s,
-        model: { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" },
+        model: { providerID: "kcgcode", modelID: "kiro/claude-opus-5" },
       }),
     ).toBe("kiro/claude-opus-5");
   });

@@ -5,7 +5,7 @@
  * pendaftaran Project beserta seluruh Session-nya), `/api/fs` (GET list
  * direktori untuk Folder_Browser), dan `/api/projects/:id/models` (GET model
  * yang tersedia pada server headless Project). Dipasang composition root
- * (`app.ts`) bersama tabel rute lain — pola kcgrouter (`*.routes.ts`).
+ * (`app.ts`) bersama tabel rute lain — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
 import { errorStatus, json, readJson, serverError } from "./helpers";

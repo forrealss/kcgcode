@@ -1,5 +1,5 @@
 /**
- * Tipe bersama tabel rute API (pola `routes/types.ts` kcgrouter).
+ * Tipe bersama tabel rute API (pola `routes/types.ts` kcgcode).
  *
  * Composition root (`app.ts`) merakit service lalu menyuntikkannya ke tiap
  * tabel rute via `ApiRouteContext`; handler tidak lagi menutup dependency

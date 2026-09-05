@@ -27,16 +27,16 @@ function option(
   return { providerID, providerName, modelID, name };
 }
 
-const OPUS = option("kcgrouter", "KCG Router", "kiro/claude-opus-5", "Claude Opus 5");
-const SONNET = option("kcgrouter", "KCG Router", "kiro/claude-sonnet-4", "Claude Sonnet 4");
+const OPUS = option("kcgcode", "KCG Code", "kiro/claude-opus-5", "Claude Opus 5");
+const SONNET = option("kcgcode", "KCG Code", "kiro/claude-sonnet-4", "Claude Sonnet 4");
 const GPT = option("openai", "OpenAI", "gpt-5", "GPT-5");
 
 describe("kunci model", () => {
   test("modelKey memakai pemisah non-slash (modelID boleh memuat '/')", () => {
-    const key = modelKey("kcgrouter", "kiro/claude-opus-5");
+    const key = modelKey("kcgcode", "kiro/claude-opus-5");
     expect(key).toContain("kiro/claude-opus-5");
     expect(parseModelKey(key)).toEqual({
-      providerID: "kcgrouter",
+      providerID: "kcgcode",
       modelID: "kiro/claude-opus-5",
     });
   });
@@ -71,12 +71,12 @@ describe("kunci model", () => {
 describe("groupModels", () => {
   test("mengelompokkan per provider, urutan kemunculan dipertahankan", () => {
     const groups = groupModels([OPUS, GPT, SONNET]);
-    expect(groups.map((g) => g.providerID)).toEqual(["kcgrouter", "openai"]);
+    expect(groups.map((g) => g.providerID)).toEqual(["kcgcode", "openai"]);
     expect(groups[0]?.models.map((m) => m.modelID)).toEqual([
       "kiro/claude-opus-5",
       "kiro/claude-sonnet-4",
     ]);
-    expect(groups[0]?.providerName).toBe("KCG Router");
+    expect(groups[0]?.providerName).toBe("KCG Code");
   });
 
   test("daftar kosong -> kosong", () => {
@@ -107,7 +107,11 @@ describe("filterModels", () => {
   test("beberapa kata: semua harus cocok, urutan bebas", () => {
     expect(filterModels(all, "opus 5").map((m) => m.modelID)).toEqual(["kiro/claude-opus-5"]);
     expect(filterModels(all, "5 opus").map((m) => m.modelID)).toEqual(["kiro/claude-opus-5"]);
-    expect(filterModels(all, "claude router").map((m) => m.modelID)).toEqual([
+    expect(filterModels(all, "claude code").map((m) => m.modelID)).toEqual([
+      "kiro/claude-opus-5",
+      "kiro/claude-sonnet-4",
+    ]);
+    expect(filterModels(all, "code claude").map((m) => m.modelID)).toEqual([
       "kiro/claude-opus-5",
       "kiro/claude-sonnet-4",
     ]);
@@ -130,13 +134,13 @@ describe("activeModelLabel", () => {
   });
 
   test("model dikenal -> nama ramah dari daftar", () => {
-    expect(
-      activeModelLabel({ providerID: "kcgrouter", modelID: "kiro/claude-opus-5" }, [OPUS]),
-    ).toBe("Claude Opus 5");
+    expect(activeModelLabel({ providerID: "kcgcode", modelID: "kiro/claude-opus-5" }, [OPUS])).toBe(
+      "Claude Opus 5",
+    );
   });
 
   test("daftar belum termuat -> jatuh ke modelID (trigger tidak kosong)", () => {
-    expect(activeModelLabel({ providerID: "kcgrouter", modelID: "kiro/claude-opus-5" }, [])).toBe(
+    expect(activeModelLabel({ providerID: "kcgcode", modelID: "kiro/claude-opus-5" }, [])).toBe(
       "kiro/claude-opus-5",
     );
   });

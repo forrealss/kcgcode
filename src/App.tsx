@@ -1,8 +1,8 @@
 /**
- * Akar aplikasi KCG Bridge.
+ * Akar aplikasi KCG Code.
  *
  * Layout, navigasi, dan pemetaan URL -> halaman dipegang `AppShell`
- * (`components/layout/AppShell.tsx`) — pola yang sama dengan kcgrouter
+ * (`components/layout/AppShell.tsx`) — pola yang sama dengan kcgcode
  * (`src/App.tsx` merender shell, halaman hidup di `src/pages/*`).
  */
 

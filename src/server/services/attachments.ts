@@ -1,7 +1,7 @@
 /**
  * Attachment_Store — penyimpanan gambar yang di-upload Client untuk Session.
  *
- * Gambar dikirim dari browser ke KCG Bridge (HTTP), disimpan di disk sebagai
+ * Gambar dikirim dari browser ke KCG Code (HTTP), disimpan di disk sebagai
  * file tak ternama (`<uuid>` di `<uploadsRoot>/<sessionId>/`), lalu dirujuk
  * oleh Session sebagai part `file` dengan `mime: image/*` + `url: file:///…`
  * saat prompt dikirim ke opencode (lihat `opencode-client.ts`).

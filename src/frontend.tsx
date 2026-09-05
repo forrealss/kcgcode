@@ -20,16 +20,24 @@ const app = (
 );
 
 // https://bun.com/docs/bundler/hot-reloading#import-meta-hot-data
-if (!import.meta.hot.data.root) {
-  import.meta.hot.data.root = createRoot(elem);
-}
-import.meta.hot.data.root.render(app);
+//
+// API HMR (`import.meta.hot`) hanya ada saat `bun --hot`; pada build produksi
+// Bun mengganti/menghilangkannya, jadi pola di bawah memakai guard literal
+// `if (import.meta.hot)` yang di-tree-shake bundler saat produksi — blok else
+// itulah yang tersisa di bundle produksi (createRoot sekali, tanpa HMR API).
+if (import.meta.hot) {
+  if (!import.meta.hot.data.root) {
+    import.meta.hot.data.root = createRoot(elem);
+  }
+  import.meta.hot.data.root.render(app);
+} else {
+  // Produksi: PWA_Shell (Requirement 8.1) — registrasi service worker & inject
+  // link manifest hanya di sini agar asset statis di-cache untuk instalasi PWA
+  // tanpa merusak HMR saat dev. Manifest di-inject runtime agar URL tetap
+  // `/manifest.json` (tidak di-rewrite bundler menjadi hashed asset), disajikan
+  // route server.
+  createRoot(elem).render(app);
 
-// PWA_Shell (Requirement 8.1): registrasi service worker & inject link manifest
-// hanya pada production agar asset statis di-cache untuk instalasi PWA tanpa
-// merusak HMR saat dev. Manifest di-inject runtime agar URL tetap `/manifest.json`
-// (tidak di-rewrite bundler menjadi hashed asset), disajikan route server.
-if (import.meta.env.PROD && typeof document !== "undefined") {
   const manifestLink = document.createElement("link");
   manifestLink.rel = "manifest";
   manifestLink.href = "/manifest.json";

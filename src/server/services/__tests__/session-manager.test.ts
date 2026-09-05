@@ -92,8 +92,8 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     ],
     availableModels: [
       {
-        providerID: "kcgrouter",
-        providerName: "kcgrouter",
+        providerID: "kcgcode",
+        providerName: "kcgcode",
         modelID: "kiro/claude-opus-5",
         name: "Claude Opus 5",
       },
@@ -413,7 +413,7 @@ test("createSession: ensure server hanya sekali untuk project yang sama", async 
   }
 });
 
-// Feature: kcg-bridge, Property 2: Pembuatan Session dengan kondisi tidak valid selalu ditolak
+// Feature: kcg-code, Property 2: Pembuatan Session dengan kondisi tidak valid selalu ditolak
 test("Property 2: agentType tak didukung / project tak ada / dir hilang -> ditolak", async () => {
   await fc.assert(
     fc.asyncProperty(
@@ -1346,11 +1346,11 @@ test("session.created tanpa parentID dikenal -> tidak dipetakan", async () => {
     await createSession(h);
     const client = clientOf(h);
 
-    // Session lain di server yang sama (mis. dibuat TUI) — bukan milik bridge.
+    // Session lain di server yang sama (mis. dibuat TUI) — bukan milik KCG Code.
     client.emit({
       type: "session.created",
       sessionID: "ses_asing",
-      info: { id: "ses_asing", parentID: "ses_bukan_milik_bridge" },
+      info: { id: "ses_asing", parentID: "ses_bukan_milik_kcgcode" },
     });
     client.emit({
       type: "permission.asked",
@@ -1860,7 +1860,7 @@ test("resumeSession: input bebas kembali berfungsi setelah resume", async () => 
 // Pemilihan model (sesuai pilihan model di opencode)
 // ---------------------------------------------------------------------------
 
-const MODEL = { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" };
+const MODEL = { providerID: "kcgcode", modelID: "kiro/claude-opus-5" };
 
 test("createSession dengan model valid -> tersimpan di Session & tervalidasi", async () => {
   const h = freshHarness();
@@ -1885,7 +1885,7 @@ test("createSession dengan model tidak dikenal -> MODEL_NOT_FOUND, tanpa sesi re
     const res = await h.sm.createSession({
       agentType: "opencode",
       projectId: "p1",
-      model: { providerID: "kcgrouter", modelID: "model-tidak-ada" },
+      model: { providerID: "kcgcode", modelID: "model-tidak-ada" },
     });
     expect(res.ok).toBe(false);
     if (res.ok) throw new Error("harusnya ditolak");
@@ -1945,8 +1945,8 @@ test("promptAsync selalu membawa model Session yang tersimpan", async () => {
     await flush();
     const client = h.fake.clients.get("p1");
     expect(client?.promptModels).toEqual([
-      "kcgrouter/kiro/claude-opus-5",
-      "kcgrouter/kiro/claude-opus-5",
+      "kcgcode/kiro/claude-opus-5",
+      "kcgcode/kiro/claude-opus-5",
     ]);
   } finally {
     h.close();
@@ -1957,12 +1957,12 @@ test("setSessionModel: ganti model -> prompt berikutnya memakai model baru", asy
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    const baru = { providerID: "kcgrouter", modelID: "mimo/mimo-v2.5" };
+    const baru = { providerID: "kcgcode", modelID: "mimo/mimo-v2.5" };
     const client = h.fake.clients.get("p1");
     if (client) {
       client.availableModels = [
         ...client.availableModels,
-        { providerID: "kcgrouter", providerName: "kcgrouter", modelID: baru.modelID, name: "Mimo" },
+        { providerID: "kcgcode", providerName: "kcgcode", modelID: baru.modelID, name: "Mimo" },
       ];
     }
 
@@ -1975,7 +1975,7 @@ test("setSessionModel: ganti model -> prompt berikutnya memakai model baru", asy
 
     await h.sm.sendFreeTextInput(sid, "setelah ganti model");
     await flush();
-    expect(client?.promptModels).toEqual(["kcgrouter/mimo/mimo-v2.5"]);
+    expect(client?.promptModels).toEqual(["kcgcode/mimo/mimo-v2.5"]);
   } finally {
     h.close();
   }
@@ -2008,8 +2008,8 @@ test("listModels(projectId) -> daftar model dari server headless Project", async
     if (!res.ok) throw new Error("listModels gagal");
     expect(res.data).toEqual([
       {
-        providerID: "kcgrouter",
-        providerName: "kcgrouter",
+        providerID: "kcgcode",
+        providerName: "kcgcode",
         modelID: "kiro/claude-opus-5",
         name: "Claude Opus 5",
       },
@@ -2039,7 +2039,7 @@ test("model bertahan setelah stop + resume (riwayat & pilihan utuh)", async () =
     expect(stored.ok && stored.data.model).toEqual(MODEL);
     await h.sm.sendFreeTextInput(sid, "lanjut");
     await flush();
-    expect(h.fake.clients.get("p1")?.promptModels).toEqual(["kcgrouter/kiro/claude-opus-5"]);
+    expect(h.fake.clients.get("p1")?.promptModels).toEqual(["kcgcode/kiro/claude-opus-5"]);
   } finally {
     h.close();
   }
@@ -2092,7 +2092,7 @@ test("deleteSession: server headless mati -> di-spawn ulang, remote ikut dihapus
   const h = freshHarness();
   try {
     const sid = await createSession(h);
-    // Simulasi server project sudah tidak hidup (mis. bridge di-restart).
+    // Simulasi server project sudah tidak hidup (mis. KCG Code di-restart).
     h.fake.clients.delete("p1");
     expect(h.fake.ensureCalls).toHaveLength(1);
 

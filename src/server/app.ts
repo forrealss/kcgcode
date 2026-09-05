@@ -1,9 +1,9 @@
 /**
- * Composition root KCG Bridge (task 20) — wiring server.
+ * Composition root KCG Code (task 20) — wiring server.
  *
  * `createKcgServer()` merakit seluruh komponen dan menjalankan
  * `Bun.serve({ hostname, port, routes, websocket })`. Mengikuti struktur
- * kcgrouter: handler HTTP dikelompokkan per fitur di `routes/*.routes.ts`
+ * kcgcode: handler HTTP dikelompokkan per fitur di `routes/*.routes.ts`
  * (di-assemble di sini), otentikasi di `middleware/auth.middleware.ts`,
  * dan domain logic di `services/`.
  * - Routes HTTP `/api/projects`, `/api/fs`, `/api/sessions`, upload lampiran
@@ -67,7 +67,7 @@ export interface KcgServerOptions {
   spa?: Response | HTMLBundle;
   /**
    * Rute halaman yang menyajikan shell SPA — didaftarkan eksplisit di entry
-   * (`src/index.ts`) persis seperti daftar rute SPA kcgrouter; path lain 404.
+   * (`src/index.ts`) persis seperti daftar rute SPA kcgcode; path lain 404.
    */
   spaPaths?: string[];
 }
@@ -91,7 +91,7 @@ function resolvePort(): number {
   if (raw === undefined) return 3000;
   const n = Number(raw);
   if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
-  console.warn(`[kcg-bridge] KCG_PORT tidak valid ("${raw}"); memakai 3000.`);
+  console.warn(`[kcg-code] KCG_PORT tidak valid ("${raw}"); memakai 3000.`);
   return 3000;
 }
 
@@ -102,7 +102,7 @@ async function staticFile(filePath: string, contentType: string): Promise<Respon
 }
 
 /**
- * Membangun seluruh komponen KCG Bridge, me-reconcile status Session, dan
+ * Membangun seluruh komponen KCG Code, me-reconcile status Session, dan
  * menjalankan `Bun.serve`. `reconcileOnStartup()` dieksekusi sebelum server
  * menerima koneksi (Requirement 2.4).
  */
@@ -157,7 +157,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       "/sw.js": () => staticFile("public/sw.js", "text/javascript"),
       "/logo.svg": () => staticFile("public/logo.svg", "image/svg+xml"),
 
-      // ---- Rute API per fitur (pola kcgrouter: tabel rute terpisah) ----
+      // ---- Rute API per fitur (pola kcgcode: tabel rute terpisah) ----
       ...projectsRoutes(routeCtx),
       ...sessionsRoutes(routeCtx),
       ...uploadsRoutes(routeCtx),

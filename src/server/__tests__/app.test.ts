@@ -69,8 +69,8 @@ function makeFakeClient(projectId: string): FakeClient {
         ok: true,
         data: [
           {
-            providerID: "kcgrouter",
-            providerName: "kcgrouter",
+            providerID: "kcgcode",
+            providerName: "kcgcode",
             modelID: "kiro/claude-opus-5",
             name: "Claude Opus 5",
           },
@@ -632,7 +632,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
       models: { providerID: string; modelID: string; name: string }[];
     };
     expect(modelsBody.models[0]).toMatchObject({
-      providerID: "kcgrouter",
+      providerID: "kcgcode",
       modelID: "kiro/claude-opus-5",
     });
 
@@ -644,12 +644,12 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
         body: JSON.stringify({
           agentType: "opencode",
           projectId: proj.project.id,
-          model: { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" },
+          model: { providerID: "kcgcode", modelID: "kiro/claude-opus-5" },
         }),
       })
     ).json()) as { session: Session };
     expect(sess.session.model).toEqual({
-      providerID: "kcgrouter",
+      providerID: "kcgcode",
       modelID: "kiro/claude-opus-5",
     });
 
@@ -660,7 +660,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
       body: JSON.stringify({
         agentType: "opencode",
         projectId: proj.project.id,
-        model: { providerID: "kcgrouter", modelID: "tidak-ada" },
+        model: { providerID: "kcgcode", modelID: "tidak-ada" },
       }),
     });
     expect(badRes.status).toBe(400);

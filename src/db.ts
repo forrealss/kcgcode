@@ -28,7 +28,7 @@ import type {
   SessionStatus,
 } from "./types";
 
-export const DEFAULT_DB_PATH = "data/kcg-bridge.sqlite";
+export const DEFAULT_DB_PATH = "data/kcg-code.sqlite";
 
 /** Satu entri riwayat status (append-only). */
 export interface StatusHistoryEntry {
@@ -263,7 +263,7 @@ function errResult(msg: string): { ok: false; error: string } {
 
 /**
  * Membuka koneksi ke database, menyalakan WAL, dan menjalankan migrasi
- * idempoten. Default `data/kcg-bridge.sqlite`.
+ * idempoten. Default `data/kcg-code.sqlite`.
  */
 export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore {
   if (dbPath !== ":memory:") {

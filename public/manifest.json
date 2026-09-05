@@ -1,6 +1,6 @@
 {
-  "name": "KCG Bridge",
-  "short_name": "KCG Bridge",
+  "name": "KCG Code",
+  "short_name": "KCG Code",
   "description": "Kontrol CLI AI Agent (OpenCode / Claude Code) dari perangkat mobile.",
   "start_url": "/",
   "display": "standalone",

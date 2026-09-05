@@ -497,7 +497,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (typeof id !== "string" || typeof parentID !== "string") return;
     if (ocToSession.has(id)) return; // sudah terpetakan (mis. session induk)
     const sessionId = ocToSession.get(parentID);
-    if (!sessionId) return; // induk bukan Session milik bridge — abaikan
+    if (!sessionId) return; // induk bukan Session milik KCG Code — abaikan
     mapOcSession(id, sessionId);
   }
 
@@ -678,7 +678,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
     // (6) buat Session di server headless
     const created = await client.createSession({
-      title: "KCG Bridge Session",
+      title: "KCG Code Session",
     });
     if (!created.ok) return { ok: false, error: created.error };
 
@@ -788,7 +788,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     }
     if (!ocSessionId) {
       const created = await serverRes.data.client.createSession({
-        title: "KCG Bridge Session (resumed)",
+        title: "KCG Code Session (resumed)",
       });
       if (!created.ok) return { ok: false, error: created.error };
       ocSessionId = created.data.id;

@@ -1,5 +1,5 @@
 /**
- * Helper HTTP bersama untuk handler rute API (pola kcgrouter: helper rute
+ * Helper HTTP bersama untuk handler rute API (pola kcgcode: helper rute
  * dipisah dari composition root). Dulu menumpuk di `app.ts`; kini dipakai
  * semua tabel rute di `routes/*.routes.ts`.
  */
@@ -13,7 +13,7 @@ export function json(data: unknown, status = 200): Response {
 }
 
 export function serverError(err: unknown): Response {
-  console.error("[kcg-bridge] error tidak terduga:", err);
+  console.error("[kcg-code] error tidak terduga:", err);
   return json({ error: "INTERNAL_ERROR" }, 500);
 }
 

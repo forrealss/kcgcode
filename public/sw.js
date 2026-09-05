@@ -1,9 +1,9 @@
-// KCG Bridge service worker (Requirement 8.1).
+// KCG Code service worker (Requirement 8.1).
 // - Cache-first untuk asset statis (JS/CSS bundle hasil build.ts).
 // - Network-only (pass-through) untuk `/api/*` dan koneksi WebSocket `/ws`,
 //   agar kontrol CLI_Agent tidak pernah disajikan dari cache basi.
 
-const CACHE_NAME = "kcg-bridge-v1";
+const CACHE_NAME = "kcg-code-v1";
 const PRECACHE = ["/", "/manifest.json", "/logo.svg"];
 
 self.addEventListener("install", (event) => {

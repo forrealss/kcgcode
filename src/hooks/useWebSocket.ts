@@ -1,7 +1,7 @@
 /**
  * Hook WebSocket Client (task 22.3).
  *
- * Mengelola koneksi ke `/ws` server KCG Bridge:
+ * Mengelola koneksi ke `/ws` server KCG Code:
  * - `attach(sessionId)` membuka koneksi (bila perlu) dan mengirim pesan
  *   `attach` — setelah reconnect otomatis, `attach` dikirim ulang agar riwayat
  *   tersinkronisasi (Requirement 4.1).

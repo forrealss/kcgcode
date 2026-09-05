@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import logoUrl from "@/logo.svg";
 
 /**
- * Maskot status turn: logo KCG Router + keterangan proses yang sedang
+ * Maskot status turn: logo KCG Code + keterangan proses yang sedang
  * berjalan ("Working…", "Thinking…", "read package.json", "Writing…").
  *
  * Tiga mode:

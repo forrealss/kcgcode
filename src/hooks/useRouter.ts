@@ -1,5 +1,5 @@
 /**
- * Router URL tipis untuk shell SPA KCG Bridge (tanpa dependency).
+ * Router URL tipis untuk shell SPA KCG Code (tanpa dependency).
  *
  * - Server (`src/server/app.ts`) menyajikan shell SPA hanya untuk rute halaman
  *   yang terdaftar di `src/index.ts` (`spaPaths`), sehingga tiap halaman punya
@@ -12,7 +12,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-const ROUTE_CHANGE_EVENT = "kcg-bridge-route-change";
+const ROUTE_CHANGE_EVENT = "kcg-code-route-change";
 
 /** Listener perubahan route hasil `navigate()` (popstate ditangani terpisah). */
 const listeners = new Set<() => void>();

@@ -1,5 +1,5 @@
 /**
- * Route URL KCG Bridge — logika murni (tanpa DOM / History API).
+ * Route URL KCG Code — logika murni (tanpa DOM / History API).
  *
  * Dipisah dari `hooks/useRouter.ts` agar dapat diuji dengan `bun test`
  * (pola yang sama dengan `useTheme.ts`). Server (`src/server/app.ts`)

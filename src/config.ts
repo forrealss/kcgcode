@@ -9,7 +9,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import type { Result } from "./server/result";
 
-export const DEFAULT_CONFIG_PATH = "kcg-bridge.config.json";
+export const DEFAULT_CONFIG_PATH = "kcg-code.config.json";
 
 export interface AppConfig {
   /** Path absolut hasil `realpath` dari `sandboxRoot`. */

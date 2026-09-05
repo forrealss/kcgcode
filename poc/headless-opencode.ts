@@ -2,7 +2,7 @@
 /**
  * PoC — opencode headless server mode (`opencode serve`).
  *
- * Membandingkan dengan pendekatan PTY (mode TUI) yang dipakai KCG Bridge:
+ * Membandingkan dengan pendekatan PTY (mode TUI) yang dipakai KCG Code:
  * - Tanpa ANSI escape / parsing terminal.
  * - Prompt & balasan sebagai JSON terstruktur (bukan byte mentah TUI).
  * - Permission request datang sebagai event terstruktur dan bisa dijawab
@@ -152,7 +152,7 @@ async function watchEvents(abort: AbortController): Promise<void> {
       // Permission request = event terstruktur (bukan regex `(y/n)` dari TUI).
       // Nama event asli (terverifikasi live): `permission.asked` — payload
       // { id, sessionID, permission, patterns } dengan id `per_...`.
-      // Di PoC ini dijawab otomatis; di KCG Bridge nanti jadi kartu interaktif.
+      // Di PoC ini dijawab otomatis; di KCG Code nanti jadi kartu interaktif.
       if (type === "permission.asked") {
         try {
           const ev = JSON.parse(payload) as {
@@ -206,7 +206,7 @@ try {
 
   section("4. Buat session");
   const { status: s1, json: session } = await api("POST", "/session", {
-    title: "KCG Bridge PoC",
+    title: "KCG Code PoC",
   });
   if (s1 !== 200) throw new Error(`POST /session gagal (${s1}): ${JSON.stringify(session)}`);
   const sess = session as {

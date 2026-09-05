@@ -66,8 +66,8 @@ test("flattenProviders: flatten provider + model dengan nama tampilan", () => {
   const payload = {
     providers: [
       {
-        id: "kcgrouter",
-        name: "kcgrouter",
+        id: "kcgcode",
+        name: "kcgcode",
         models: {
           "kiro/claude-opus-5": { id: "kiro/claude-opus-5", name: "Claude Opus 5" },
           "mimo/mimo-v2.5": { id: "mimo/mimo-v2.5" }, // tanpa name -> fallback id
@@ -77,14 +77,14 @@ test("flattenProviders: flatten provider + model dengan nama tampilan", () => {
   };
   expect(flattenProviders(payload)).toEqual([
     {
-      providerID: "kcgrouter",
-      providerName: "kcgrouter",
+      providerID: "kcgcode",
+      providerName: "kcgcode",
       modelID: "kiro/claude-opus-5",
       name: "Claude Opus 5",
     },
     {
-      providerID: "kcgrouter",
-      providerName: "kcgrouter",
+      providerID: "kcgcode",
+      providerName: "kcgcode",
       modelID: "mimo/mimo-v2.5",
       name: "mimo/mimo-v2.5",
     },

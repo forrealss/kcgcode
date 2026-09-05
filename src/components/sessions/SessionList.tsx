@@ -550,7 +550,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
                 ? `${summary.total} session${summary.total === 1 ? "" : "s"} of this project will also be permanently deleted, including their conversation history on the opencode server. `
                 : ""}
               The working folder on the server is not deleted — only the project registration in KCG
-              Bridge. This action cannot be undone.
+              Code. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

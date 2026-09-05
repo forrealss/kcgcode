@@ -47,7 +47,7 @@ function freshManager() {
   return { store, pm: createProjectManager(root, store) };
 }
 
-// Feature: kcg-bridge, Property 29: Pembuatan Project unik berhasil round-trip
+// Feature: kcg-code, Property 29: Pembuatan Project unik berhasil round-trip
 test("Property 29: createProject sukses -> direktori ada & listProjects menyertakannya", () => {
   fc.assert(
     fc.property(safeNameArb(), safePathArb(), (name, relPath) => {
@@ -72,7 +72,7 @@ test("Property 29: createProject sukses -> direktori ada & listProjects menyerta
   );
 });
 
-// Feature: kcg-bridge, Property 30: Nama atau path Project duplikat selalu ditolak
+// Feature: kcg-code, Property 30: Nama atau path Project duplikat selalu ditolak
 test("Property 30: nama duplikat -> NAME_TAKEN; path duplikat -> PATH_TAKEN", () => {
   fc.assert(
     fc.property(safeNameArb(), safePathArb(), (name, relPath) => {

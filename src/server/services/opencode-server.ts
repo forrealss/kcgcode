@@ -3,7 +3,7 @@
  *
  * Satu instance `opencode serve` hanya dapat membuat Session di direktori
  * kerja (cwd) tempat ia dijalankan (terverifikasi: `POST /session` tidak
- * menerima field `directory`). Karena Project KCG Bridge bisa berbeda-beda
+ * menerima field `directory`). Karena Project KCG Code bisa berbeda-beda
  * direktori, setiap Project mendapat satu server sendiri yang di-spawn di
  * `project.path` — menggantikan model "satu PTY per Session".
  *

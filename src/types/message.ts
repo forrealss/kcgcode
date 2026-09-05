@@ -48,7 +48,7 @@ export interface MessagePart {
 export interface SessionMessage {
   /** Id pesan (dari opencode `msg_...` atau id lokal untuk echo user). */
   id: string;
-  /** Id Session lokal KCG Bridge. */
+  /** Id Session lokal KCG Code. */
   sessionId: string;
   role: "user" | "assistant";
   parts: MessagePart[];

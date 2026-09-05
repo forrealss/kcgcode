@@ -1,7 +1,7 @@
 /**
  * Tabel rute API Session (Requirement 1, 4): daftar/buat, hapus/resume/ganti
  * model, stop, cari file (`@file`), dan upload lampiran gambar. Dipasang
- * composition root (`app.ts`) — pola kcgrouter (`*.routes.ts`).
+ * composition root (`app.ts`) — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
 import type { AgentType } from "../../types";

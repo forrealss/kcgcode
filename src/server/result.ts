@@ -1,5 +1,5 @@
 /**
- * Primitif tipe server-only (pola kcgrouter: tipe internal server dipisah
+ * Primitif tipe server-only (pola kcgcode: tipe internal server dipisah
  * dari tipe domain FE yang hidup di `src/types/`). Tidak untuk dipakai
  * frontend.
  */

@@ -3,7 +3,7 @@
  *
  * GET mengalirkan bytes gambar untuk bubble & reattach; DELETE menghapus
  * lampiran yang belum terkirim (pengguna membatalkan). Dipasang composition
- * root (`app.ts`) — pola kcgrouter (`*.routes.ts`).
+ * root (`app.ts`) — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
 import { errorStatus, json, serverError } from "./helpers";

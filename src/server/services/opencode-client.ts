@@ -218,7 +218,7 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
   ): Promise<Result<OpenCodeSessionInfo>> {
     try {
       const { status, json } = await requestJson(baseUrl, "POST", "/session", {
-        title: opts.title ?? "KCG Bridge Session",
+        title: opts.title ?? "KCG Code Session",
       });
       if (status !== 200) return errResult(`OC_CREATE_SESSION_FAILED(${status})`);
       const info = json as OpenCodeSessionInfo;

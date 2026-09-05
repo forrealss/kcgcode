@@ -22,7 +22,7 @@ function makeSession(id = "s1", status: SessionStatus = "running"): Session {
     cwd: "/sandbox/proj",
     status,
     ocSessionId: id === "s1" ? "ses_1" : null,
-    model: id === "s1" ? { providerID: "kcgrouter", modelID: "kiro/claude-opus-5" } : null,
+    model: id === "s1" ? { providerID: "kcgcode", modelID: "kiro/claude-opus-5" } : null,
     createdAt: 1,
     updatedAt: 1,
   };
@@ -49,7 +49,7 @@ function makeMemoryStore() {
   return store;
 }
 
-// Feature: kcg-bridge, Property 8: Round-trip penyimpanan pesan terstruktur
+// Feature: kcg-code, Property 8: Round-trip penyimpanan pesan terstruktur
 test("Property 8: round-trip messages — urutan identik dengan penyimpanan", () => {
   fc.assert(
     fc.property(
@@ -78,7 +78,7 @@ test("Property 8: round-trip messages — urutan identik dengan penyimpanan", ()
   );
 });
 
-// Feature: kcg-bridge, Property 9: Riwayat status bersifat append-only
+// Feature: kcg-code, Property 9: Riwayat status bersifat append-only
 test("Property 9: riwayat status append-only — jumlah baris tidak pernah berkurang", () => {
   fc.assert(
     fc.property(
@@ -112,7 +112,7 @@ test("Property 9: riwayat status append-only — jumlah baris tidak pernah berku
   );
 });
 
-// Feature: kcg-bridge, Property 10: Query terhadap Session tidak ditemukan
+// Feature: kcg-code, Property 10: Query terhadap Session tidak ditemukan
 test("Property 10: query Session tidak ditemukan -> not-found tanpa data", () => {
   fc.assert(
     fc.property(fc.string(), fc.string(), (sid1, sid2) => {

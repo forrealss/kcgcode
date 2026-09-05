@@ -1,7 +1,7 @@
 # dependencies (bun install)
 node_modules
 
-# kcg-bridge runtime data (sqlite database)
+# kcg-code runtime data (sqlite database)
 data
 
 # output

@@ -1,11 +1,11 @@
 /**
- * KCG Bridge — entry server utama (task 20).
+ * KCG Code — entry server utama (task 20).
  *
  * Wiring `Bun.serve` diimplementasikan di `src/server/app.ts`
  * (`createKcgServer`) agar dapat diuji secara e2e (task 20.2). File ini:
  * - mendaftarkan rute halaman yang menyajikan shell SPA (`index.html`)
  *   secara eksplisit — `spaPaths` di bawah, pola yang sama dengan daftar
- *   rute SPA di entry kcgrouter; path lain di luar daftar mengembalikan 404
+ *   rute SPA di entry kcgcode; path lain di luar daftar mengembalikan 404
  *   (bukan catch-all seperti sebelumnya),
  * - memulai server,
  * - mendaftarkan handler shutdown SIGINT/SIGTERM yang menyimpan status
@@ -21,7 +21,7 @@ if (import.meta.main) {
     // (`/projects/:projectId/sessions/:sessionId` — tercakup wildcard).
     spaPaths: ["/", "/projects", "/projects/*"],
   });
-  console.log(`🚀 KCG Bridge berjalan di ${app.server.url}`);
+  console.log(`🚀 KCG Code berjalan di ${app.server.url}`);
 
   let shuttingDown = false;
   async function shutdown(signal: string): Promise<void> {

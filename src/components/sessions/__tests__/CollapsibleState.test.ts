@@ -1,7 +1,7 @@
 /**
  * Property test collapsible thinking block (task 24.8).
  *
- * // Feature: kcg-bridge, Property 25: Toggle collapsible thinking independen antar pesan
+ * // Feature: kcg-code, Property 25: Toggle collapsible thinking independen antar pesan
  * // Validates: Requirements 8.3
  *
  * For any himpunan pesan dan sembarang urutan aksi toggle collapsible pada
@@ -22,7 +22,7 @@ import {
 } from "../CollapsibleState";
 
 describe("collapsible-state — Property 25", () => {
-  // Feature: kcg-bridge, Property 25: Toggle collapsible thinking independen antar pesan
+  // Feature: kcg-code, Property 25: Toggle collapsible thinking independen antar pesan
   test("toggle independen antar pesan terhadap default expanded (Req 8.3)", () => {
     fc.assert(
       fc.property(

@@ -36,7 +36,7 @@ afterAll(() => {
   rmSync(outsideDir, { recursive: true, force: true });
 });
 
-// Feature: kcg-bridge, Property 27: Folder_Browser mengembalikan persis sub-direktori dalam sandbox
+// Feature: kcg-code, Property 27: Folder_Browser mengembalikan persis sub-direktori dalam sandbox
 test("Property 27: listDirectory mengembalikan persis sub-direktori untuk sub-path valid", () => {
   const pm = createProjectManager(root, store);
   const validPaths = ["", "a", "a/a1", "a/a2", "b", "b/b1", "b/b2"];
@@ -69,7 +69,7 @@ test("Property 27: listDirectory mengembalikan persis sub-direktori untuk sub-pa
   );
 });
 
-// Feature: kcg-bridge, Property 28: Path di luar Sandbox_Root selalu ditolak
+// Feature: kcg-code, Property 28: Path di luar Sandbox_Root selalu ditolak
 test("Property 28: path dengan '..' selalu ditolak sebagai outside_sandbox", () => {
   fc.assert(
     fc.property(
