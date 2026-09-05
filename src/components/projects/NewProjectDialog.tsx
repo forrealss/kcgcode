@@ -83,7 +83,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
       await onCreated();
       handleOpenChange(false);
     } catch (e) {
-      setFormError(e instanceof ApiError ? e.message : "Gagal membuat Project");
+      setFormError(e instanceof ApiError ? e.message : "Failed to create project");
     } finally {
       setCreating(false);
     }
@@ -108,13 +108,13 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
                 )}
               />
             </div>
-            <span className="text-xs font-medium text-muted-foreground">Langkah {step} dari 2</span>
+            <span className="text-xs font-medium text-muted-foreground">Step {step} of 2</span>
           </div>
-          <DialogTitle>{step === 1 ? "Pilih direktori kerja" : "Beri nama project"}</DialogTitle>
+          <DialogTitle>{step === 1 ? "Choose working directory" : "Name your project"}</DialogTitle>
           <DialogDescription>
             {step === 1
-              ? "Jelajahi Sandbox dan pilih folder yang akan dijadikan working directory."
-              : "Nama ini dipakai untuk mengenali project di daftar."}
+              ? "Browse the Sandbox and pick the folder to use as the working directory."
+              : "This name identifies the project in the list."}
           </DialogDescription>
         </DialogHeader>
 
@@ -125,7 +125,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
             </div>
             <DialogFooter>
               <Button type="button" onClick={goToNaming}>
-                Lanjut
+                Next
                 <ArrowRightIcon data-icon="inline-end" />
               </Button>
             </DialogFooter>
@@ -135,7 +135,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
               <FieldGroup>
                 <Field>
-                  <FieldLabel htmlFor="project-name">Nama project</FieldLabel>
+                  <FieldLabel htmlFor="project-name">Project name</FieldLabel>
                   <Input
                     id="project-name"
                     value={name}
@@ -143,13 +143,13 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
                       setName(e.target.value);
                       setNameTouched(true);
                     }}
-                    placeholder="mis. web-app"
+                    placeholder="e.g. web-app"
                     maxLength={120}
                     autoFocus
                   />
                 </Field>
                 <Field>
-                  <FieldLabel>Direktori kerja</FieldLabel>
+                  <FieldLabel>Working directory</FieldLabel>
                   <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-sm">
                     <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                     <span className="min-w-0 flex-1 truncate font-mono text-muted-foreground">
@@ -163,7 +163,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
                       onClick={backToFolder}
                       disabled={creating}
                     >
-                      Ganti
+                      Change
                     </Button>
                   </div>
                 </Field>
@@ -171,7 +171,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
 
               {formError && (
                 <Alert variant="destructive">
-                  <AlertTitle>Gagal membuat Project</AlertTitle>
+                  <AlertTitle>Failed to create project</AlertTitle>
                   <AlertDescription>{formError}</AlertDescription>
                 </Alert>
               )}
@@ -180,18 +180,18 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
             <DialogFooter>
               <Button type="button" variant="ghost" onClick={backToFolder} disabled={creating}>
                 <ArrowLeftIcon data-icon="inline-start" />
-                Kembali
+                Back
               </Button>
               <Button type="submit" disabled={creating || name.trim() === ""}>
                 {creating ? (
                   <>
                     <Spinner data-icon="inline-start" />
-                    Membuat…
+                    Creating…
                   </>
                 ) : (
                   <>
                     <FolderPlusIcon data-icon="inline-start" />
-                    Buat project
+                    Create project
                   </>
                 )}
               </Button>

@@ -3,7 +3,7 @@
  *
  * Berbeda dari versi PTY/TUI (yang me-render chunk byte terminal TUI):
  * - Pesan datang sebagai `SessionMessage` terstruktur (`role` + `parts`):
- *   text, reasoning (collapsible per part), tool/step.
+ *   text, reasoning (collapsible per part, urut sesuai alur), tool/step.
  * - Interactive_Prompt (permission/question) dirender via `PromptCard.tsx`.
  * - Saat model merespon (`turn_active` true / pesan streaming) tombol kirim
  *   berubah jadi tombol Stop (kirim `{ type: "interrupt" }`) — menghentikan
@@ -17,23 +17,30 @@
  *   `error` ditampilkan.
  */
 import {
-  BotIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   CircleAlertIcon,
+  CircleCheckBigIcon,
+  ClockFadingIcon,
   FileIcon,
+  FolderIcon,
+  GlobeIcon,
   ImagePlusIcon,
+  type LucideIcon,
   MoonIcon,
   MoreVerticalIcon,
+  PenLineIcon,
   PlayIcon,
+  SearchIcon,
   SendHorizontalIcon,
   SquareIcon,
   SunIcon,
+  TerminalIcon,
   Trash2Icon,
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { MarkdownContent } from "@/components/sessions/MarkdownContent";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
 import {
@@ -57,7 +64,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Message, MessageContent, MessageFooter, MessageHeader } from "@/components/ui/message";
+import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -94,12 +101,11 @@ import type { ServerMessage } from "@/ws-protocol";
 import {
   type CollapsibleState,
   extendCollapsed,
-  initialCollapsedState,
   isCollapsibleExpanded,
   toggleCollapsible,
 } from "./CollapsibleState";
+import { Mascot } from "./Mascot";
 import { PromptCard } from "./PromptCard";
-import { TypewriterText } from "./TypewriterText";
 
 export interface SessionViewProps {
   session: Session;
@@ -115,13 +121,13 @@ export interface SessionViewProps {
 function wsStatusLabel(status: WsConnectionStatus): string {
   switch (status) {
     case "connected":
-      return "terhubung";
+      return "connected";
     case "connecting":
-      return "menghubungkan…";
+      return "connecting…";
     case "reconnecting":
-      return "menyambung ulang…";
+      return "reconnecting…";
     default:
-      return "terputus";
+      return "disconnected";
   }
 }
 
@@ -162,30 +168,290 @@ export function textOf(parts: MessagePart[]): string {
     .join("\n");
 }
 
+/** Satu segmen render turn assistant (urut sesuai alur kerja model). */
+export type TurnSegment =
+  | { kind: "reasoning"; key: string; part: MessagePart }
+  | { kind: "tool"; key: string; part: MessagePart }
+  | { kind: "error"; key: string; part: MessagePart }
+  | {
+      kind: "text";
+      key: string;
+      text: string /** Jawaban akhir turn (bukan interim). */;
+      final: boolean;
+    };
+
 /**
- * Deteksi pertumbuhan teks part yang di-stream LIVE (SSE `message_part`).
- * - `prevLen > 0`: part sudah pernah tampil (bukan kemunculan pertama, yang
- *   sering kali kosong / snapshot awal).
- * - `newLen > prevLen`: teks bertambah -> provider benar-benar men-stream
- *   token bertahap. Bila true, pesan ditandai "live" dan tidak perlu efek
- *   typewriter (teks sudah tampil bertambah di layar).
+ * Ratakan seluruh parts satu turn (bisa beberapa pesan assistant) menjadi
+ * daftar segmen BERURUTAN: setiap part reasoning jadi satu segmen Thinking
+ * tersendiri (bisa tampil lebih dari sekali, sesuai urutan berpikir model),
+ * tool jadi segmen badge, part `text` berurutan digabung, dan segmen teks
+ * non-kosong TERAKHIR ditandai `final` (jawaban akhir — satu-satunya yang
+ * dapat efek typewriter).
  */
-export function isLiveTextGrowth(prevLen: number, newLen: number): boolean {
-  return prevLen > 0 && newLen > prevLen;
+export function turnSegments(messages: readonly SessionMessage[]): TurnSegment[] {
+  const segments: TurnSegment[] = [];
+  for (const msg of messages) {
+    msg.parts.forEach((part, i) => {
+      const key = `${msg.id}:${part.id ?? i}`;
+      if (part.type === "reasoning" || part.type === "error") {
+        segments.push({ kind: part.type, key, part });
+        return;
+      }
+      if (part.type === "tool" || part.type === "shell" || part.type === "file") {
+        segments.push({ kind: "tool", key, part });
+        return;
+      }
+      if (part.type !== "text") return;
+      const text = partText(part) ?? "";
+      const last = segments[segments.length - 1];
+      // Part text berdempetan digabung agar tidak pecah jadi beberapa bubble.
+      if (last?.kind === "text") last.text = last.text === "" ? text : `${last.text}\n${text}`;
+      else segments.push({ kind: "text", key, text, final: false });
+    });
+  }
+  // Segmen teks non-kosong terakhir = jawaban akhir turn.
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (seg?.kind !== "text") continue;
+    if (seg.text.trim() !== "") seg.final = true;
+    break;
+  }
+  return segments;
+}
+
+/** Key kandidat `state.input` tool yang berisi target utama (path/argumen). */
+const TOOL_TARGET_KEYS = [
+  "filePath",
+  "path",
+  "file",
+  "dir",
+  "directory",
+  "pattern",
+  "query",
+  "url",
+  "command",
+  "description",
+] as const;
+
+/**
+ * Target utama sebuah tool call (mis. path file yang di-read) — diambil
+ * dari `state.input` part tool opencode dengan toleransi beberapa nama key.
+ * Part `file` (echo @file) memakai `filename`-nya langsung.
+ */
+export function toolTarget(part: MessagePart): string | null {
+  if (part.type === "file" && typeof part.filename === "string" && part.filename.trim() !== "") {
+    return part.filename;
+  }
+  const state = part.state;
+  if (typeof state !== "object" || state === null) return null;
+  const input = (state as { input?: unknown }).input;
+  if (typeof input !== "object" || input === null) return null;
+  for (const key of TOOL_TARGET_KEYS) {
+    const v = (input as Record<string, unknown>)[key];
+    if (typeof v === "string" && v.trim() !== "") return v;
+  }
+  return null;
+}
+
+/** Label badge tool: nama tool + target (mis. `read package.json`). */
+export function toolLabel(part: MessagePart): string {
+  const name = typeof part.tool === "string" && part.tool.trim() !== "" ? part.tool : part.type;
+  const target = toolTarget(part);
+  return target === null ? name : `${name} ${target}`;
+}
+
+/** Ikon badge tool mengikuti nama tool (fallback: kunci inggris). */
+const TOOL_ICONS: Record<string, LucideIcon> = {
+  read: FileIcon,
+  list: FolderIcon,
+  glob: FolderIcon,
+  edit: PenLineIcon,
+  write: PenLineIcon,
+  patch: PenLineIcon,
+  bash: TerminalIcon,
+  shell: TerminalIcon,
+  grep: SearchIcon,
+  webfetch: GlobeIcon,
+};
+
+function toolIcon(part: MessagePart): LucideIcon {
+  const name = (typeof part.tool === "string" ? part.tool : part.type).toLowerCase();
+  return (name !== "" && TOOL_ICONS[name]) || WrenchIcon;
+}
+
+/** Sekelompok pesan assistant berurutan dari satu turn balasan model. */
+export interface AssistantTurnGroup {
+  kind: "assistant";
+  /** Id pesan pertama — dipakai sebagai key React & key collapsible turn. */
+  id: string;
+  messages: SessionMessage[];
+}
+
+export type MessageGroup = { kind: "user"; message: SessionMessage } | AssistantTurnGroup;
+
+/**
+ * Kelompokkan pesan berurutan: assistant yang berdempetan (satu turn —
+ * sering dipecah opencode menjadi beberapa `msg_...` saat reasoning/tool/
+ * sub-agent) menjadi SATU grup sehingga tampil sebagai satu kesatuan;
+ * pesan user selalu grup tersendiri.
+ */
+export function groupTurns(messages: readonly SessionMessage[]): MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  for (const m of messages) {
+    const last = groups[groups.length - 1];
+    if (m.role === "assistant") {
+      if (last?.kind === "assistant") last.messages.push(m);
+      else groups.push({ kind: "assistant", id: m.id, messages: [m] });
+    } else {
+      groups.push({ kind: "user", message: m });
+    }
+  }
+  return groups;
 }
 
 /**
- * Keputusan efek mengetik untuk satu pesan assistant (murni, diuji):
- * - `typingIds` berisi id pesan final yang baru tiba (kandidat typewriter).
- * - `liveTextIds` berisi id pesan yang teksnya ter-stream live bertahap —
- *   pesan ini TIDAK boleh di-typewrite (teks sudah tampil apa adanya).
+ * Apakah satu turn sudah menampilkan sesuatu ke user: reasoning non-kosong,
+ * tool call, error, maupun teks. Dipakai untuk memutuskan kapan indikator
+ * "Memproses…" perlu tampil (respon masih kosong sama sekali).
  */
-export function shouldTypewrite(
-  messageId: string,
-  typingIds: ReadonlySet<string>,
-  liveTextIds: ReadonlySet<string>,
-): boolean {
-  return typingIds.has(messageId) && !liveTextIds.has(messageId);
+export function hasVisibleContent(segments: readonly TurnSegment[]): boolean {
+  return segments.some(
+    (s) =>
+      s.kind === "tool" ||
+      s.kind === "error" ||
+      (s.kind === "reasoning" && (partText(s.part) ?? "").trim() !== "") ||
+      (s.kind === "text" && s.text.trim() !== ""),
+  );
+}
+
+/**
+ * Status LIVE satu turn untuk maskot (murni, diuji):
+ * - `null`       -> turn belum ada / selesai (maskot disembunyikan).
+ * - "Memproses…" -> belum ada konten apa pun (baru mulai).
+ * - "Thinking…"  -> reasoning part terakhir masih berjalan.
+ * - "Writing…"   -> model sedang menulis jawaban (segmen teks terakhir tampil).
+ * - lainnya      -> label tool yang sedang dijalankan (mis. "read package.json").
+ *
+ * Catatan: akhir turn ditandai `streaming=false` (pesan final menggantikan
+ * versi streaming), jadi penilaian "selesai" cukup dari flag itu.
+ */
+export function turnStatus(messages: readonly SessionMessage[], streaming: boolean): string | null {
+  if (!streaming || messages.length === 0) return null;
+  const segments = turnSegments(messages);
+  if (!hasVisibleContent(segments)) return "Working…";
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const seg = segments[i];
+    if (!seg) continue;
+    if (seg.kind === "text") return "Writing…";
+    if (seg.kind === "reasoning") return "Thinking…";
+    if (seg.kind === "tool") return toolLabel(seg.part);
+    // error: proses berhenti di error -> selesai.
+    return null;
+  }
+  return "Working…";
+}
+
+/**
+ * Total durasi thinking (ms) dari satu turn — dipakai untuk label "thoughts Xs"
+ * di footer setelah turn selesai.
+ *
+ * Strategi (urut prioritas):
+ * 1. Pakai `time.start`/`time.end` dari `ReasoningPart` asli opencode jika ada.
+ * 2. Fallback ke `time.start` part pertama vs `time.end` part terakhir dari
+ *    seluruh parts reasoning yang ada (estimasi kasar).
+ * 3. Jika tidak ada timing sama sekali, kembalikan null.
+ */
+export function turnThoughtDuration(messages: readonly SessionMessage[]): number | null {
+  let earliest: number | null = null;
+  let latest: number | null = null;
+  for (const msg of messages) {
+    for (const part of msg.parts) {
+      if (part.type !== "reasoning") continue;
+      const t = part.time;
+      if (!t) continue;
+      const start = t.start ?? t.created;
+      if (typeof start === "number") {
+        if (earliest === null || start < earliest) earliest = start;
+      }
+      const end = t.end;
+      if (typeof end === "number") {
+        if (latest === null || end > latest) latest = end;
+      }
+    }
+  }
+  if (earliest !== null && latest !== null && latest > earliest) {
+    return latest - earliest;
+  }
+  return null;
+}
+
+/**
+ * Format durasi ms ke string ringkas: "1s", "12s", "1m 5s".
+ */
+function formatDuration(ms: number): string {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem === 0 ? `${m}m` : `${m}m ${rem}s`;
+}
+
+/**
+ * Kelompokkan segmen satu turn menjadi blok berurutan untuk render in-order.
+ * Setiap blok berisi kluster steps (reasoning/tool) opsional diikuti teks/error
+ * opsional. Ini memungkinkan pola multi-round:
+ *   [thinking] → [text] → [thinking] → [text]
+ * dirender sebagai beberapa "Thought process" terpisah, bukan satu blok di atas.
+ */
+export interface TurnBlock {
+  /** Key unik blok (dari key segmen pertama). */
+  key: string;
+  steps: Extract<TurnSegment, { kind: "reasoning" | "tool" }>[];
+  /** Teks atau error setelah kluster steps ini (bisa null kalau blok masih streaming). */
+  content: Extract<TurnSegment, { kind: "text" | "error" }> | null;
+}
+
+export function turnBlocks(segments: readonly TurnSegment[]): TurnBlock[] {
+  const blocks: TurnBlock[] = [];
+  let pendingSteps: Extract<TurnSegment, { kind: "reasoning" | "tool" }>[] = [];
+
+  for (const seg of segments) {
+    if (seg.kind === "reasoning" || seg.kind === "tool") {
+      pendingSteps.push(seg);
+    } else if (seg.kind === "text" || seg.kind === "error") {
+      blocks.push({
+        key: pendingSteps[0]?.key ?? seg.key,
+        steps: pendingSteps,
+        content: seg,
+      });
+      pendingSteps = [];
+    }
+  }
+  // Steps tersisa tanpa teks (masih streaming atau turn selesai tanpa teks akhir)
+  const firstPending = pendingSteps[0];
+  if (firstPending) {
+    blocks.push({ key: firstPending.key, steps: pendingSteps, content: null });
+  }
+  return blocks;
+}
+
+/**
+ * Baris ringkas isi reasoning di timeline. Saat masih di-stream (teks belum
+ * lengkap) tampil redup; setelah selesai tampil apa adanya — keduanya bisa
+ * panjang, jadi tinggi dibatasi + scroll internal.
+ */
+function ReasoningStep({ text }: { text: string }) {
+  const dim = text.trim() === "";
+  return (
+    <div
+      className={cn(
+        "max-h-40 overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed",
+        dim && "text-muted-foreground/50",
+      )}
+    >
+      {dim ? "organizing thoughts…" : text}
+    </div>
+  );
 }
 
 /**
@@ -285,77 +551,30 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     el.style.height = "auto";
     el.style.height = `${el.scrollHeight}px`;
   };
-  /**
-   * Id pesan assistant final yang baru tiba -> kandidat efek mengetik.
-   * Hanya fallback: bila teks sudah ter-stream live, pesan dirender penuh.
-   */
-  const [typingIds, setTypingIds] = useState<Set<string>>(new Set());
-  /** Id pesan yang teksnya ter-stream LIVE (bertambah bertahap) — tanpa typewriter. */
-  const [liveTextIds, setLiveTextIds] = useState<Set<string>>(new Set());
-  /** Panjang teks part terakhir (key `${messageId}:${partId}`) untuk deteksi growth. */
-  const partLenRef = useRef<Map<string, number>>(new Map());
-
   const onMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
       case "history":
         setError(null);
         setMessages(msg.messages);
         setPrompts(msg.prompts);
-        // Pesan lama tampil penuh tanpa efek mengetik; reset status live & turn.
-        setTypingIds(new Set());
-        setLiveTextIds(new Set());
+        // Pesan lama tampil penuh; turn tidak mungkin aktif saat reattach.
         setTurnActive(false);
-        partLenRef.current.clear();
-        // Reasoning tampil collapsed (baris "Thinking"), bisa di-expand per part.
-        // Key berbasis part.id agar stabil walau parts bertambah saat streaming.
-        setCollapsible(
-          initialCollapsedState(
-            msg.messages.flatMap((m) =>
-              m.parts
-                .map((p, i) => (p.type === "reasoning" ? `${m.id}:${p.id ?? i}` : null))
-                .filter((k): k is string => k !== null),
-            ),
-          ),
-        );
+        // Blok "Thought process" di-reset: state collapsible diisi ulang oleh
+        // effect sinkronisasi di bawah (default collapsed per turn).
+        setCollapsible({});
         break;
       case "message":
         setError(null);
         // Replace versi streaming (id sama) atau tambahkan pesan baru.
         setMessages((prev) => upsertMessage(prev, msg.message));
-        // Pesan assistant final yang baru tiba -> efek mengetik dari kosong.
-        if (msg.message.role === "assistant") {
-          setTypingIds((prev) => new Set(prev).add(msg.message.id));
-        }
-        // Reasoning final juga default collapsed (extendCollapsed tidak mengubah
-        // status key yang sudah ada, termasuk yang sudah di-toggle user).
-        setCollapsible((prev) =>
-          extendCollapsed(
-            prev,
-            msg.message.parts
-              .map((p, i) => (p.type === "reasoning" ? `${msg.message.id}:${p.id ?? i}` : null))
-              .filter((k): k is string => k !== null),
-          ),
-        );
         break;
       case "message_part":
         setError(null);
+        // Upsert part streaming: teks yang tiba bertahap langsung tampil di layar
+        // (provider yang men-stream token); yang tiba sekaligus di pesan final
+        // (provider non-streaming) muncul penuh saat versi final menggantikan
+        // placeholder streaming ini — tanpa efek mengetik.
         setMessages((prev) => upsertMessagePart(prev, msg.sessionId, msg.messageId, msg.part));
-        // Part text yang bertambah bertahap (provider streaming asli) -> tandai
-        // live agar pesan final tidak memulai ulang efek mengetik atas teks yang
-        // sudah tampil. Kemunculan pertama (biasanya kosong) tidak dihitung.
-        if (msg.part.type === "text" && msg.part.id !== undefined) {
-          const key = `${msg.messageId}:${msg.part.id}`;
-          const prevLen = partLenRef.current.get(key) ?? 0;
-          const newLen = typeof msg.part.text === "string" ? msg.part.text.length : 0;
-          if (isLiveTextGrowth(prevLen, newLen)) {
-            setLiveTextIds((prev) => new Set(prev).add(msg.messageId));
-          }
-          partLenRef.current.set(key, newLen);
-        }
-        // Reasoning yang baru mulai di-stream: default collapsed.
-        if (msg.part.type === "reasoning" && msg.part.id !== undefined) {
-          setCollapsible((prev) => extendCollapsed(prev, [`${msg.messageId}:${msg.part.id}`]));
-        }
         break;
       case "prompt":
         setError(null);
@@ -406,6 +625,30 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     return () => disconnect();
   }, [attach, disconnect, session.id]);
 
+  /**
+   * Sinkronisasi key collapsible "Thought process": satu blok per turn
+   * (id pesan pertama grup), default collapsed. `extendCollapsed` tidak
+   * mengubah key yang sudah ada sehingga toggle user tetap dipertahankan
+   * saat daftar pesan bertambah/berubah saat streaming.
+   */
+  useEffect(() => {
+    setCollapsible((prev) => {
+      const keys: string[] = [];
+      for (const g of groupTurns(messages)) {
+        if (g.kind !== "assistant") continue;
+        if (
+          !g.messages.some((m) => m.parts.some((p) => p.type === "reasoning" || p.type === "tool"))
+        )
+          continue;
+        const segs = turnSegments(g.messages);
+        for (const block of turnBlocks(segs)) {
+          if (block.steps.length > 0) keys.push(`${g.id}:${block.key}`);
+        }
+      }
+      return extendCollapsed(prev, keys);
+    });
+  }, [messages]);
+
   const resolvePrompt = useCallback(
     (promptId: string, response: PromptResponse) => {
       send({ type: "prompt_response", sessionId: session.id, promptId, response });
@@ -430,11 +673,11 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     const picked: { key: string; file: File; previewUrl: string }[] = [];
     for (const file of files) {
       if (!file.type.startsWith("image/")) {
-        setError(`"${file.name}" bukan gambar.`);
+        setError(`"${file.name}" is not an image.`);
         continue;
       }
       if (file.size > MAX_IMAGE_BYTES) {
-        setError(`"${file.name}" melebihi batas 20 MiB.`);
+        setError(`"${file.name}" exceeds the 20 MiB limit.`);
         continue;
       }
       picked.push({ key: crypto.randomUUID(), file, previewUrl: URL.createObjectURL(file) });
@@ -496,9 +739,16 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     [addImages],
   );
 
-  /** Hentikan balasan model (interrupt ala opencode) — Session tetap aktif. */
+  /**
+   * Hentikan balasan model (interrupt ala opencode) — Session tetap aktif.
+   * Server membuang parts turn parsial (tidak disimpan), dan di sini kita
+   * juga membersihkan respon parsial yang sudah tampil di UI agar hilang
+   * dari percakapan (pesan user & turn sebelumnya tetap utuh).
+   */
   const interrupt = () => {
     send({ type: "interrupt", sessionId: session.id });
+    setMessages((prev) => prev.filter((m) => !(m.role === "assistant" && m.streaming === true)));
+    setTurnActive(false);
   };
 
   /** Resume via API langsung — hasil status baru tiba via WS `session_status`. */
@@ -510,7 +760,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
       await apiFetch(`/api/sessions/${session.id}`, { method: "POST" });
       // Status baru dikirim gateway ke semua subscriber; tak perlu setState di sini.
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Gagal menghidupkan Session");
+      setError(e instanceof ApiError ? e.message : "Failed to start session");
     } finally {
       setStarting(false);
     }
@@ -527,7 +777,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     try {
       await apiFetch(`/api/sessions/${session.id}/stop`, { method: "POST" });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Gagal menghentikan Session");
+      setError(e instanceof ApiError ? e.message : "Failed to stop session");
     } finally {
       setStopping(false);
     }
@@ -544,7 +794,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
       setDeleteOpen(false);
       (onDeleted ?? onBack)();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Gagal menghapus Session");
+      setError(e instanceof ApiError ? e.message : "Failed to delete session");
     } finally {
       setDeleting(false);
     }
@@ -561,128 +811,194 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const canInput = wsStatus === "connected" && status === "running" && !sending && !busy;
   const canSubmit = canInput && (text.trim() !== "" || pendingImages.length > 0);
 
+  /**
+   * Maskot GLOBAL (satu instance, bukan per-turn): status dihitung dari
+   * grup assistant TERAKHIR saja, ditampilkan tetap di atas composer —
+   * tidak ikut scroll bersama riwayat percakapan.
+   */
+  const lastGroup = groupTurns(messages).findLast(
+    (g): g is AssistantTurnGroup => g.kind === "assistant",
+  );
+  const mascotStatus = generating
+    ? ((lastGroup ? turnStatus(lastGroup.messages, true) : null) ?? "Working…")
+    : null;
+
   const toggleMessage = (key: string) => {
     setCollapsible((s) => toggleCollapsible(s, key));
   };
 
-  const renderAssistantMessage = (m: SessionMessage) => {
-    const reasoning = m.parts
-      .map((p, i) => ({ part: p, index: i }))
-      .filter(({ part }) => part.type === "reasoning");
-    const tools = m.parts.filter(
-      (p) => p.type === "tool" || p.type === "shell" || p.type === "file",
-    );
-    // Part `type: "error"` (pesan gagal turn dari session-manager) dirender
-    // sebagai bubble destructive — beda dari balasan normal.
-    const errors = m.parts.filter((p) => p.type === "error");
-    const body = textOf(m.parts);
+  /**
+   * Satu langkah timeline di dalam blok "Thought process": ikon status di
+   * kiri (dengan garis penghubung antar langkah) + isi di kanan.
+   *
+   * Garis digambar ABSOLUT (bukan flex-1 di kolom stretch): `align-self:
+   * stretch` hanya membentang sampai content box sehingga di langkah
+   * satu-baris sisa ruang garisnya ~0px (tak terlihat). Absolut terhadap
+   * PADDING box -> `bottom-0` menyentuh dasar `pb-5`, artinya garis selalu
+   * tersambung ke langkah berikutnya berapa pun tinggi kontennya.
+   */
+  const renderTimelineStep = (
+    icon: ReactNode,
+    content: ReactNode,
+    opts?: { last?: boolean; streaming?: boolean },
+  ) => (
+    <div className={cn("relative flex gap-2.5", !opts?.last && "pb-5")}>
+      {/* Garis penghubung: mulai tepat di bawah ikon (mt-0.5 + size-5 =
+          22px) sampai dasar row; x=10px = pusat kolom ikon (size-5). */}
+      {!opts?.last && (
+        <span className="absolute top-6 bottom-0 left-2.5 -ml-px w-px bg-border" aria-hidden />
+      )}
+      <span
+        className={cn(
+          "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full",
+          opts?.streaming && "animate-pulse text-foreground/70",
+        )}
+      >
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1 text-sm text-muted-foreground">{content}</div>
+    </div>
+  );
+
+  /** Ikon kecil (14px) untuk langkah timeline & indikator status. */
+  const stepIcon = (Icon: LucideIcon, className?: string) => (
+    <Icon className={cn("size-3.5 shrink-0", className)} data-icon="inline-start" />
+  );
+
+  /** Satu kesatuan respon: header + blok Thought process per round + jawaban. */
+  const renderAssistantTurn = (group: AssistantTurnGroup) => {
+    const m = group.messages[0];
+    if (!m) return null;
+    const segments = turnSegments(group.messages);
+    const streaming = m.streaming === true || group.messages.some((msg) => msg.streaming === true);
+    const blocks = turnBlocks(segments);
+    // Durasi thinking untuk footer — hanya dihitung setelah turn selesai.
+    const thoughtMs = !streaming ? turnThoughtDuration(group.messages) : null;
+
+    /** Render satu blok "Thought process" collapsible dari kluster steps. */
+    const renderThoughtBlock = (
+      steps: Extract<TurnSegment, { kind: "reasoning" | "tool" }>[],
+      blockKey: string,
+      isLastBlock: boolean,
+    ) => {
+      if (steps.length === 0) return null;
+      // Key collapsible per blok: gabungkan group.id + blockKey agar tiap blok
+      // bisa toggle independen.
+      const collapsibleKey = `${group.id}:${blockKey}`;
+      const expanded = isCollapsibleExpanded(collapsible, collapsibleKey);
+      // Blok terakhir yang masih streaming: "Done" belum tampil.
+      const blockStreaming = streaming && isLastBlock;
+      return (
+        <Collapsible key={collapsibleKey} open={expanded}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-7 self-start gap-1 px-2 text-xs text-muted-foreground"
+            onClick={() => toggleMessage(collapsibleKey)}
+            aria-expanded={expanded}
+          >
+            <ChevronRightIcon
+              data-icon="inline-start"
+              className={cn("transition-transform", expanded && "rotate-90")}
+            />
+            Thought process
+          </Button>
+          <CollapsibleContent>
+            <div className="flex flex-col px-3 pt-1">
+              {steps.map((seg, i) =>
+                seg.kind === "reasoning" ? (
+                  <div key={seg.key}>
+                    {renderTimelineStep(
+                      stepIcon(ClockFadingIcon, "text-muted-foreground"),
+                      <ReasoningStep text={partText(seg.part) ?? ""} />,
+                      {
+                        last: blockStreaming && i === steps.length - 1,
+                        streaming: blockStreaming && i === steps.length - 1,
+                      },
+                    )}
+                  </div>
+                ) : (
+                  <div key={seg.key}>
+                    {renderTimelineStep(
+                      stepIcon(toolIcon(seg.part), "text-muted-foreground"),
+                      <span className="font-mono text-[13px]">{toolLabel(seg.part)}</span>,
+                      { last: blockStreaming && i === steps.length - 1, streaming: false },
+                    )}
+                  </div>
+                ),
+              )}
+              {!blockStreaming &&
+                renderTimelineStep(
+                  stepIcon(CircleCheckBigIcon, "text-muted-foreground"),
+                  <span>Done</span>,
+                  { last: true },
+                )}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      );
+    };
 
     return (
-      <Message key={m.id} align="start">
+      <Message key={group.id} align="start">
         <MessageContent>
-          <MessageHeader className="gap-1.5">
-            <BotIcon className="size-3.5" data-icon="inline-start" />
-            OpenCode
-          </MessageHeader>
-          {reasoning.map(({ part, index }) => {
-            const key = `${m.id}:${part.id ?? index}`;
-            const expanded = isCollapsibleExpanded(collapsible, key);
+          {blocks.map((block, bi) => {
+            const isLastBlock = bi === blocks.length - 1;
             return (
-              <Collapsible key={key} open={expanded}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-7 gap-1 px-2 text-xs text-muted-foreground"
-                  onClick={() => toggleMessage(key)}
-                  aria-expanded={expanded}
-                >
-                  <ChevronRightIcon
-                    data-icon="inline-start"
-                    className={cn("transition-transform", expanded && "rotate-90")}
-                  />
-                  Thinking
-                </Button>
-                <CollapsibleContent>
-                  <div className="pt-1.5">
-                    <Bubble variant="outline">
-                      {/* Tinggi konten dibatasi + scroll internal agar reasoning
-                          panjang tidak memenuhi layar (tetap bisa di-expand). */}
-                      <BubbleContent className="font-mono whitespace-pre-wrap">
-                        <div className="max-h-64 overflow-y-auto">{partText(part)}</div>
-                      </BubbleContent>
-                    </Bubble>
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
+              <div key={block.key}>
+                {/* Thought process block — pisah per round thinking */}
+                {renderThoughtBlock(block.steps, block.key, isLastBlock)}
+                {/* Konten teks/error setelah thinking round ini */}
+                {block.content?.kind === "error" && (
+                  <Bubble key={block.content.key} variant="destructive">
+                    <BubbleContent>
+                      <div className="flex gap-2">
+                        <CircleAlertIcon
+                          className="mt-0.5 size-4 shrink-0"
+                          data-icon="inline-start"
+                        />
+                        <span className="whitespace-pre-wrap">
+                          {partText(block.content.part) ??
+                            "Something went wrong while processing the prompt."}
+                        </span>
+                      </div>
+                    </BubbleContent>
+                  </Bubble>
+                )}
+                {block.content?.kind === "text" && block.content.text !== "" && (
+                  <Bubble key={block.content.key} variant="ghost" className="max-w-full">
+                    <BubbleContent className="w-full">
+                      <MarkdownContent>{block.content.text}</MarkdownContent>
+                    </BubbleContent>
+                  </Bubble>
+                )}
+              </div>
             );
           })}
-          {body !== "" && (
-            // `max-w-full`: bubble balasan boleh selebar kolom percakapan —
-            // tabel & blok kode butuh ruang, dan keduanya punya scroll sendiri.
-            <Bubble variant="secondary" className="max-w-full">
-              <BubbleContent className="w-full">
-                <TypewriterText
-                  text={body}
-                  // Efek mengetik hanya fallback: teks yang sudah ter-stream
-                  // live (bertambah bertahap) dirender penuh apa adanya.
-                  active={shouldTypewrite(m.id, typingIds, liveTextIds)}
-                >
-                  {(shown, typing) => (
-                    <>
-                      {/* Markdown di-parse ulang tiap tick; parser remark
-                          recoverable sehingga sintaks setengah jadi aman. */}
-                      <MarkdownContent>{shown}</MarkdownContent>
-                      {typing && <span className="animate-pulse">▍</span>}
-                    </>
-                  )}
-                </TypewriterText>
-              </BubbleContent>
-            </Bubble>
+          {/* Footer: tersembunyi saat streaming, muncul dengan animasi fade +
+              slide dari kanan setelah turn selesai. Format:
+              HH:MM:SS · ● · thoughts Xs */}
+          {!streaming && (
+            <MessageFooter className="animate-in fade-in-0 slide-in-from-right-4 duration-500">
+              {formatTime(m.createdAt)}
+              {thoughtMs !== null && (
+                <>
+                  <span className="mx-1.5 text-muted-foreground/40" aria-hidden>
+                    ●
+                  </span>
+                  <span>thoughts {formatDuration(thoughtMs)}</span>
+                </>
+              )}
+            </MessageFooter>
           )}
-          {errors.length > 0 && (
-            <div className="flex flex-col gap-1.5">
-              {errors.map((p) => (
-                <Bubble key={p.id ?? `${m.id}-err`} variant="destructive">
-                  <BubbleContent>
-                    <div className="flex gap-2">
-                      <CircleAlertIcon
-                        className="mt-0.5 size-4 shrink-0"
-                        data-icon="inline-start"
-                      />
-                      <span className="whitespace-pre-wrap">
-                        {partText(p) ?? "Terjadi kesalahan saat memproses prompt."}
-                      </span>
-                    </div>
-                  </BubbleContent>
-                </Bubble>
-              ))}
-            </div>
-          )}
-          {m.streaming && (
-            <span className="animate-pulse px-3 text-xs text-muted-foreground">
-              sedang mengetik…
-            </span>
-          )}
-          {tools.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 px-3">
-              {tools.map((p) => (
-                <Badge
-                  key={p.id ?? `${m.id}-${p.tool ?? p.type}`}
-                  variant="outline"
-                  className="gap-1 font-mono text-[11px]"
-                >
-                  <WrenchIcon className="size-3" data-icon="inline-start" />
-                  {p.tool ?? p.type}
-                </Badge>
-              ))}
-            </div>
-          )}
-          <MessageFooter>{formatTime(m.createdAt)}</MessageFooter>
         </MessageContent>
       </Message>
     );
   };
+
+  const renderMessageGroup = (group: MessageGroup): ReactNode =>
+    group.kind === "user" ? renderUserMessage(group.message) : renderAssistantTurn(group);
 
   /** Part `file` yang merupakan gambar lampiran (punya attachmentId + mime image). */
   const isImageAttachment = (
@@ -715,7 +1031,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                   <img
                     key={p.attachmentId}
                     src={attachmentUrl(m.sessionId, p.attachmentId)}
-                    alt={p.filename ?? "gambar lampiran"}
+                    alt={p.filename ?? "attached image"}
                     className="max-h-40 w-full rounded-md border object-contain"
                     loading="lazy"
                   />
@@ -760,7 +1076,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             variant="ghost"
             size="icon"
             onClick={onBack}
-            aria-label="Kembali"
+            aria-label="Back"
             className="size-10 shrink-0 sm:size-9"
           >
             <ChevronLeftIcon data-icon="inline-start" />
@@ -792,8 +1108,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               size="icon"
               onClick={() => void stopSession()}
               disabled={stopping}
-              aria-label="Hentikan Session"
-              title="Hentikan Session"
+              aria-label="Stop session"
+              title="Stop session"
               className="size-10 shrink-0 sm:size-9"
             >
               {stopping ? <Spinner className="size-4" /> : <SquareIcon />}
@@ -805,8 +1121,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               size="icon"
               onClick={() => void start()}
               disabled={starting}
-              aria-label="Hidupkan Session"
-              title="Hidupkan Session"
+              aria-label="Start session"
+              title="Start session"
               className="size-10 shrink-0 sm:size-9"
             >
               {starting ? <Spinner className="size-4" /> : <PlayIcon />}
@@ -833,7 +1149,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Aksi session"
+                aria-label="Session actions"
                 className="size-10 shrink-0 sm:size-9"
               >
                 <MoreVerticalIcon />
@@ -842,12 +1158,12 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={toggleTheme}>
                 {isDark ? <SunIcon /> : <MoonIcon />}
-                {isDark ? "Mode terang" : "Mode gelap"}
+                {isDark ? "Light mode" : "Dark mode"}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={() => setDeleteOpen(true)}>
                 <Trash2Icon />
-                Hapus session
+                Delete session
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -873,13 +1189,26 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               {messages.length === 0 && prompts.length === 0 ? (
                 <MessageScrollerItem messageId="empty">
                   <p className="py-8 text-center text-sm text-muted-foreground">
-                    Belum ada percakapan. Kirim pesan pertama untuk mulai.
+                    No conversation yet. Send the first message to get started.
                   </p>
                 </MessageScrollerItem>
               ) : (
-                messages.map((m) =>
-                  m.role === "user" ? renderUserMessage(m) : renderAssistantMessage(m),
-                )
+                groupTurns(messages).map((group) => renderMessageGroup(group))
+              )}
+              {/* Maskot GLOBAL — selalu menjadi item paling bawah di scroller,
+                  ikut scroll bersama konten (ala Claude). Status:
+                  - "Starting…" saat generating tapi respons belum datang
+                  - mascotStatus (Working/Thinking/Writing/tool) saat ada turn aktif
+                  - standby (logo diam) setelah selesai, selama ada riwayat */}
+              {messages.length > 0 && (
+                <MessageScrollerItem messageId="mascot">
+                  <Mascot
+                    label={generating ? (mascotStatus ?? "Starting…") : null}
+                    active={generating}
+                    standby
+                    className="px-1"
+                  />
+                </MessageScrollerItem>
               )}
               {prompts.map((prompt) => (
                 <MessageScrollerItem key={prompt.id} messageId={prompt.id}>
@@ -889,7 +1218,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               {status !== "running" && messages.length > 0 && (
                 <MessageScrollerItem messageId="status-note">
                   <p className="text-xs text-muted-foreground">
-                    Session {status}. Input dinonaktifkan.
+                    Session {status}. Input is disabled.
                   </p>
                 </MessageScrollerItem>
               )}
@@ -916,7 +1245,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             <div className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-md border bg-popover shadow-md">
               <div className="max-h-56 overflow-y-auto">
                 {mention.loading && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">Mencari file…</div>
+                  <div className="px-3 py-2 text-xs text-muted-foreground">Searching files…</div>
                 )}
                 {!mention.loading && mention.error && (
                   <div className="px-3 py-2 text-xs text-destructive">{mention.error}</div>
@@ -963,7 +1292,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             onPaste={handlePaste}
             onBlur={() => mention.close()}
             placeholder={composerPlaceholder({ busy, canInput, compact: isMobile })}
-            aria-label="Input bebas"
+            aria-label="Free-form input"
             disabled={!canInput}
             rows={1}
             /**
@@ -980,8 +1309,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             size="icon"
             onClick={() => fileInputRef.current?.click()}
             disabled={!canInput}
-            aria-label="Lampirkan gambar"
-            title="Lampirkan gambar (PNG/JPEG/GIF/WebP, maks 20 MiB)"
+            aria-label="Attach image"
+            title="Attach image (PNG/JPEG/GIF/WebP, max 20 MiB)"
             className="size-11 sm:size-9"
           >
             <ImagePlusIcon data-icon="inline-start" />
@@ -1007,8 +1336,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               size="icon"
               onClick={interrupt}
               disabled={wsStatus !== "connected"}
-              aria-label="Hentikan balasan"
-              title="Hentikan balasan model"
+              aria-label="Stop response"
+              title="Stop the model response"
               className="size-11 border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive sm:size-9"
             >
               <SquareIcon className="size-4" />
@@ -1042,7 +1371,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                 <button
                   type="button"
                   onClick={() => removeImage(img.key)}
-                  aria-label={`Hapus ${img.file.name}`}
+                  aria-label={`Remove ${img.file.name}`}
                   className="absolute -top-1.5 -right-1.5 rounded-full bg-background/90 p-0.5 text-foreground shadow-sm transition-opacity group-hover:opacity-100"
                 >
                   <XIcon className="size-3.5" />
@@ -1062,14 +1391,14 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Hapus Session ini?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this session?</AlertDialogTitle>
             <AlertDialogDescription>
-              Riwayat percakapan di server opencode juga ikut terhapus permanen. Aksi ini tidak bisa
-              dibatalkan.
+              The conversation history on the opencode server will also be permanently deleted. This
+              action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Batal</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={(e) => {
@@ -1081,10 +1410,10 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               {deleting ? (
                 <>
                   <Spinner data-icon="inline-start" />
-                  Menghapus…
+                  Deleting…
                 </>
               ) : (
-                "Hapus permanen"
+                "Delete permanently"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>

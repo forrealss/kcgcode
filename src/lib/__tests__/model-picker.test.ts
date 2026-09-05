@@ -126,7 +126,7 @@ describe("filterModels", () => {
 
 describe("activeModelLabel", () => {
   test("model null -> label default", () => {
-    expect(activeModelLabel(null, [OPUS])).toBe("Model default");
+    expect(activeModelLabel(null, [OPUS])).toBe("Default model");
   });
 
   test("model dikenal -> nama ramah dari daftar", () => {
@@ -144,9 +144,9 @@ describe("activeModelLabel", () => {
 
 describe("describeModelCount", () => {
   test("nol, satu, dan banyak", () => {
-    expect(describeModelCount(0)).toBe("Tidak ada model yang cocok");
+    expect(describeModelCount(0)).toBe("No matching models");
     expect(describeModelCount(1)).toBe("1 model");
-    expect(describeModelCount(7)).toBe("7 model");
+    expect(describeModelCount(7)).toBe("7 models");
   });
 });
 

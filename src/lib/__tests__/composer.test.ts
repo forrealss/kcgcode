@@ -5,38 +5,38 @@ import { describe, expect, test } from "bun:test";
 import { composerPlaceholder } from "../composer";
 
 describe("composerPlaceholder", () => {
-  test("layar lebar: petunjuk lengkap saat input siap", () => {
+  test("wide screen: full hint when input is ready", () => {
     expect(composerPlaceholder({ busy: false, canInput: true, compact: false })).toBe(
-      "Ketik pesan… ketik @ untuk referensi file, atau tempel gambar",
+      "Type a message… type @ for file references, or paste an image",
     );
   });
 
-  test("layar sempit: teks pendek agar tidak terpotong", () => {
+  test("narrow screen: short text to avoid truncation", () => {
     expect(composerPlaceholder({ busy: false, canInput: true, compact: true })).toBe(
-      "Ketik pesan…",
+      "Type a message…",
     );
   });
 
-  test("model merespon: status lebih penting dari petunjuk", () => {
+  test("model responding: status outranks the typing hint", () => {
     expect(composerPlaceholder({ busy: true, canInput: false, compact: false })).toBe(
-      "Model sedang merespon…",
+      "Model is responding…",
     );
-    expect(composerPlaceholder({ busy: true, canInput: false, compact: true })).toBe("Merespon…");
+    expect(composerPlaceholder({ busy: true, canInput: false, compact: true })).toBe("Responding…");
   });
 
-  test("session mati: teks sama di kedua ukuran (sudah pendek)", () => {
+  test("session down: same text at both sizes (already short)", () => {
     expect(composerPlaceholder({ busy: false, canInput: false, compact: false })).toBe(
-      "Session tidak aktif",
+      "Session is not active",
     );
     expect(composerPlaceholder({ busy: false, canInput: false, compact: true })).toBe(
-      "Session tidak aktif",
+      "Session is not active",
     );
   });
 
-  test("busy diperiksa lebih dulu daripada canInput", () => {
-    // Kombinasi tak lazim (busy + canInput) tetap melaporkan status merespon.
+  test("busy is checked before canInput", () => {
+    // Unusual combination (busy + canInput) still reports the responding status.
     expect(composerPlaceholder({ busy: true, canInput: true, compact: false })).toBe(
-      "Model sedang merespon…",
+      "Model is responding…",
     );
   });
 });

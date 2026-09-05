@@ -74,7 +74,7 @@ export function AppShell() {
                   navigate(projectsPath());
                 }}
                 className="flex min-w-0 items-center gap-2"
-                aria-label="Kembali ke daftar Project"
+                aria-label="Back to projects"
               >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-sm">
                   <img src={logo} alt="" className="size-full" />

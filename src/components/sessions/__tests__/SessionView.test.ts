@@ -9,9 +9,12 @@
 import { expect, test } from "bun:test";
 import type { MessagePart, SessionMessage } from "@/types";
 import {
-  isLiveTextGrowth,
-  shouldTypewrite,
+  groupTurns,
+  hasVisibleContent,
   textOf,
+  toolLabel,
+  turnSegments,
+  turnStatus,
   upsertMessage,
   upsertMessagePart,
 } from "../SessionView";
@@ -49,34 +52,6 @@ test("textOf: tanpa part text -> string kosong", () => {
     { type: "step-start" },
   ];
   expect(textOf(parts)).toBe("");
-});
-
-test("isLiveTextGrowth: kemunculan pertama (dari kosong) bukan growth", () => {
-  // Part text sering dibuat kosong dulu (provider non-streaming), lalu teks
-  // penuh melompat sekali — itu bukan streaming live, jadi jangan ditandai.
-  expect(isLiveTextGrowth(0, 0)).toBe(false);
-  expect(isLiveTextGrowth(0, 701)).toBe(false);
-});
-
-test("isLiveTextGrowth: teks bertambah bertahap -> live", () => {
-  expect(isLiveTextGrowth(10, 30)).toBe(true);
-  expect(isLiveTextGrowth(30, 90)).toBe(true);
-  expect(isLiveTextGrowth(90, 701)).toBe(true);
-});
-
-test("isLiveTextGrowth: teks sama/berkurang bukan growth", () => {
-  expect(isLiveTextGrowth(10, 10)).toBe(false);
-  expect(isLiveTextGrowth(30, 10)).toBe(false);
-});
-
-test("shouldTypewrite: fallback hanya untuk pesan non-live yang baru tiba", () => {
-  // Pesan final baru + teks tidak pernah ter-stream live -> typewriter.
-  expect(shouldTypewrite("msg_1", new Set(["msg_1"]), new Set())).toBe(true);
-  // Pesan lama (tidak ada di typingIds) -> tanpa animasi.
-  expect(shouldTypewrite("msg_1", new Set(), new Set())).toBe(false);
-  // Pesan yang teksnya ter-stream live bertahap -> tanpa typewriter,
-  // walau id-nya ikut masuk typingIds saat pesan final tiba.
-  expect(shouldTypewrite("msg_1", new Set(["msg_1"]), new Set(["msg_1"]))).toBe(false);
 });
 
 test("upsertMessagePart: pesan belum ada -> placeholder streaming", () => {
@@ -166,4 +141,246 @@ test("upsertMessage: id baru -> ditambahkan", () => {
   };
   const next = upsertMessage([existing], { ...existing, id: "msg_2" });
   expect(next).toHaveLength(2);
+});
+
+test("groupTurns: assistant berdempetan (satu turn) menjadi satu grup", () => {
+  const messages: SessionMessage[] = [
+    { id: "u1", sessionId: "s1", role: "user", parts: [], createdAt: 1 },
+    {
+      id: "a1",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [{ type: "reasoning", text: "pikir" }],
+      createdAt: 2,
+    },
+    {
+      id: "a2",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [{ type: "tool", tool: "read" }],
+      createdAt: 3,
+    },
+    {
+      id: "a3",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [{ type: "text", text: "jawaban" }],
+      createdAt: 4,
+    },
+  ];
+  const groups = groupTurns(messages);
+  expect(groups).toHaveLength(2);
+  expect(groups[0]).toMatchObject({ kind: "user" });
+  expect(groups[1]).toMatchObject({ kind: "assistant", id: "a1" });
+  if (groups[1]?.kind === "assistant") {
+    expect(groups[1].messages.map((m) => m.id)).toEqual(["a1", "a2", "a3"]);
+  }
+});
+
+test("groupTurns: user memisahkan dua turn assistant", () => {
+  const mk = (id: string, role: "user" | "assistant"): SessionMessage => ({
+    id,
+    sessionId: "s1",
+    role,
+    parts: [],
+    createdAt: 1,
+  });
+  const groups = groupTurns([mk("a1", "assistant"), mk("u1", "user"), mk("a2", "assistant")]);
+  expect(groups).toHaveLength(3);
+  expect(groups[0]).toMatchObject({ kind: "assistant", id: "a1" });
+  expect(groups[1]).toMatchObject({ kind: "user" });
+  expect(groups[2]).toMatchObject({ kind: "assistant", id: "a2" });
+});
+
+test("turnSegments: reasoning tampil terpisah sesuai urutan (ala terminal)", () => {
+  const messages: SessionMessage[] = [
+    {
+      id: "a1",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [
+        { type: "reasoning", id: "r1", text: "pikir pertama" },
+        { type: "tool", id: "t1", tool: "read" },
+        { type: "reasoning", id: "r2", text: "pikir kedua" },
+        { type: "text", id: "x1", text: "jawaban" },
+      ],
+      createdAt: 1,
+    },
+  ];
+  const segs = turnSegments(messages);
+  expect(segs.map((s) => s.kind)).toEqual(["reasoning", "tool", "reasoning", "text"]);
+  expect(segs[0]).toMatchObject({ kind: "reasoning", key: "a1:r1" });
+  expect(segs[2]).toMatchObject({ kind: "reasoning", key: "a1:r2" });
+  // Segmen teks terakhir = jawaban final.
+  expect(segs[3]).toMatchObject({ kind: "text", final: true, text: "jawaban" });
+});
+
+test("turnSegments: antar pesan dalam satu turn tetap berurutan", () => {
+  const messages: SessionMessage[] = [
+    {
+      id: "a1",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [{ type: "reasoning", id: "r1", text: "pikir A" }],
+      createdAt: 1,
+    },
+    {
+      id: "a2",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [
+        { type: "tool", id: "t1", tool: "bash" },
+        { type: "reasoning", id: "r2", text: "pikir B" },
+        { type: "text", id: "x1", text: "jawaban" },
+      ],
+      createdAt: 2,
+    },
+  ];
+  const segs = turnSegments(messages);
+  expect(segs.map((s) => s.kind)).toEqual(["reasoning", "tool", "reasoning", "text"]);
+  expect(segs.map((s) => s.key)).toEqual(["a1:r1", "a2:t1", "a2:r2", "a2:x1"]);
+});
+
+test("turnSegments: part text berdempetan digabung; teks interim bukan final", () => {
+  const messages: SessionMessage[] = [
+    {
+      id: "a1",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [
+        { type: "text", id: "x1", text: "progres..." },
+        { type: "tool", id: "t1", tool: "read" },
+        { type: "text", id: "x2", text: "jawaban" },
+        { type: "text", id: "x3", text: "lanjutan" },
+      ],
+      createdAt: 1,
+    },
+  ];
+  const segs = turnSegments(messages);
+  expect(segs.map((s) => s.kind)).toEqual(["text", "tool", "text"]);
+  expect(segs[0]).toMatchObject({ kind: "text", final: false, text: "progres..." });
+  expect(segs[2]).toMatchObject({ kind: "text", final: true, text: "jawaban\nlanjutan" });
+});
+
+test("turnSegments: step & part lain dilewati, error jadi segmen sendiri", () => {
+  const messages: SessionMessage[] = [
+    {
+      id: "a1",
+      sessionId: "s1",
+      role: "assistant",
+      parts: [
+        { type: "step-start" },
+        { type: "error", id: "e1", text: "gagal" },
+        { type: "step-finish" },
+      ],
+      createdAt: 1,
+    },
+  ];
+  const segs = turnSegments(messages);
+  expect(segs).toHaveLength(1);
+  expect(segs[0]).toMatchObject({ kind: "error", key: "a1:e1" });
+});
+
+test("toolLabel: part tool dengan state.input.filePath -> nama + target", () => {
+  const part: MessagePart = {
+    type: "tool",
+    tool: "read",
+    state: { input: { filePath: "src/index.ts" } },
+  };
+  expect(toolLabel(part)).toBe("read src/index.ts");
+});
+
+test("toolLabel: fallback key path/command/pattern", () => {
+  expect(toolLabel({ type: "tool", tool: "bash", state: { input: { command: "bun test" } } })).toBe(
+    "bash bun test",
+  );
+  expect(toolLabel({ type: "tool", tool: "glob", state: { input: { pattern: "**/*.ts" } } })).toBe(
+    "glob **/*.ts",
+  );
+});
+
+test("toolLabel: part file (echo @file) memakai filename", () => {
+  expect(toolLabel({ type: "file", mime: "text/plain", filename: "package.json" })).toBe(
+    "file package.json",
+  );
+});
+
+test("toolLabel: tanpa target -> nama tool saja", () => {
+  expect(toolLabel({ type: "tool", tool: "read" })).toBe("read");
+  // tool kosong -> fallback ke tipe part.
+  expect(toolLabel({ type: "tool" })).toBe("tool");
+});
+
+test("hasVisibleContent: reasoning/tool/error/teks dianggap konten", () => {
+  const mk = (parts: MessagePart[]): SessionMessage[] => [
+    { id: "a1", sessionId: "s1", role: "assistant", parts, createdAt: 1 },
+  ];
+  expect(hasVisibleContent(turnSegments(mk([{ type: "reasoning", text: "pikir" }])))).toBe(true);
+  expect(hasVisibleContent(turnSegments(mk([{ type: "tool", tool: "read" }])))).toBe(true);
+  expect(hasVisibleContent(turnSegments(mk([{ type: "error", text: "gagal" }])))).toBe(true);
+  expect(hasVisibleContent(turnSegments(mk([{ type: "text", text: "jawaban" }])))).toBe(true);
+});
+
+test("hasVisibleContent: step & part kosong bukan konten (indikator tetap tampil)", () => {
+  const mk = (parts: MessagePart[]): SessionMessage[] => [
+    { id: "a1", sessionId: "s1", role: "assistant", parts, createdAt: 1 },
+  ];
+  expect(hasVisibleContent(turnSegments(mk([{ type: "step-start" }])))).toBe(false);
+  expect(hasVisibleContent(turnSegments(mk([{ type: "text", text: "" }])))).toBe(false);
+  expect(hasVisibleContent(turnSegments(mk([{ type: "reasoning", text: "  " }])))).toBe(false);
+  expect(hasVisibleContent(turnSegments(mk([])))).toBe(false);
+});
+
+test("turnStatus: full cycle Working -> Thinking -> tool -> Writing -> null", () => {
+  const mk = (parts: MessagePart[]): SessionMessage[] => [
+    { id: "a1", sessionId: "s1", role: "assistant", parts, createdAt: 1 },
+  ];
+  // Belum ada konten apa pun.
+  expect(turnStatus(mk([{ type: "step-start" }]), true)).toBe("Working…");
+  // Reasoning terakhir masih berjalan.
+  expect(turnStatus(mk([{ type: "reasoning", text: "pikir" }]), true)).toBe("Thinking…");
+  // Tool call terakhir: label tool + target.
+  expect(
+    turnStatus(
+      mk([
+        { type: "reasoning", text: "pikir" },
+        { type: "tool", tool: "read", state: { input: { filePath: "package.json" } } },
+      ]),
+      true,
+    ),
+  ).toBe("read package.json");
+  // Teks mulai diketik (belum final).
+  expect(
+    turnStatus(
+      mk([
+        { type: "reasoning", text: "pikir" },
+        { type: "text", text: "jawaban" },
+      ]),
+      true,
+    ),
+  ).toBe("Writing…");
+  // Turn selesai -> maskot disembunyikan.
+  expect(turnStatus(mk([{ type: "text", text: "jawaban" }]), false)).toBeNull();
+  // Tidak ada pesan sama sekali.
+  expect(turnStatus([], true)).toBeNull();
+});
+
+test("turnStatus: akhir turn ditandai streaming=false (pesan final menggantikan)", () => {
+  const mk = (parts: MessagePart[]): SessionMessage[] => [
+    { id: "a1", sessionId: "s1", role: "assistant", parts, createdAt: 1 },
+  ];
+  // Segmen teks terakhir ditandai final...
+  const segs = turnSegments(mk([{ type: "text", text: "jawaban" }]));
+  expect(segs[0]).toMatchObject({ final: true });
+  // ...tapi penanda selesai turn adalah streaming=false: pesan final selalu
+  // menggantikan versi streaming, sehingga kontraknya sederhana.
+  expect(turnStatus(mk([{ type: "text", text: "jawaban" }]), true)).toBe("Writing…");
+  expect(turnStatus(mk([{ type: "text", text: "jawaban" }]), false)).toBeNull();
+});
+
+test("turnStatus: error menghentikan proses -> null", () => {
+  const mk = (parts: MessagePart[]): SessionMessage[] => [
+    { id: "a1", sessionId: "s1", role: "assistant", parts, createdAt: 1 },
+  ];
+  expect(turnStatus(mk([{ type: "error", text: "gagal" }]), true)).toBeNull();
 });

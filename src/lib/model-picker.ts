@@ -94,7 +94,7 @@ export function activeModelLabel(
   model: SessionModel | null,
   models: readonly ModelOption[],
 ): string {
-  if (model === null) return "Model default";
+  if (model === null) return "Default model";
   const found = models.find(
     (m) => m.providerID === model.providerID && m.modelID === model.modelID,
   );
@@ -128,6 +128,6 @@ export function shortModelName(label: string, maxLength: number = MODEL_NAME_MAX
  * Ringkasan jumlah hasil pencarian untuk pembaca layar / footer dialog.
  */
 export function describeModelCount(count: number): string {
-  if (count === 0) return "Tidak ada model yang cocok";
-  return count === 1 ? "1 model" : `${count} model`;
+  if (count === 0) return "No matching models";
+  return count === 1 ? "1 model" : `${count} models`;
 }

@@ -65,8 +65,8 @@ export function ModelSearchList({
         <Input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Cari model atau provider…"
-          aria-label="Cari model"
+          placeholder="Search models or providers…"
+          aria-label="Search models"
           className="pl-9"
         />
       </div>
@@ -75,18 +75,18 @@ export function ModelSearchList({
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
             <Spinner className="size-4" />
-            Memuat model…
+            Loading models…
           </div>
         ) : empty ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Tidak ada model yang cocok dengan “{query.trim()}”.
+            No models match “{query.trim()}”.
           </p>
         ) : (
           <div className="flex flex-col gap-1 pb-1">
             {showDefault && (
               <ModelRow
-                name="Model default"
-                hint="Ikuti konfigurasi opencode"
+                name="Default model"
+                hint="Follow opencode configuration"
                 selected={activeKey === DEFAULT_MODEL_KEY}
                 disabled={disabled}
                 onSelect={() => onSelect(null)}
@@ -114,7 +114,7 @@ export function ModelSearchList({
       </div>
 
       <p className="shrink-0 text-xs text-muted-foreground">
-        {loading ? "Memuat…" : describeModelCount(filtered.length)}
+        {loading ? "Loading…" : describeModelCount(filtered.length)}
       </p>
     </div>
   );

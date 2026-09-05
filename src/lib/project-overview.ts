@@ -93,21 +93,21 @@ export function totalRunningSessions(overviews: readonly ProjectOverview[]): num
 }
 
 /**
- * Label relatif singkat untuk waktu aktivitas ("baru saja", "3 jam lalu").
+ * Short relative label for activity time ("just now", "3 hours ago").
  * `now` diinjeksi agar deterministik saat diuji.
  */
 export function formatRelativeTime(ts: number, now: number = Date.now()): string {
   const diff = now - ts;
-  if (diff < 0) return "baru saja";
+  if (diff < 0) return "just now";
 
   const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
 
-  if (diff < minute) return "baru saja";
-  if (diff < hour) return `${Math.floor(diff / minute)} menit lalu`;
-  if (diff < day) return `${Math.floor(diff / hour)} jam lalu`;
-  if (diff < 7 * day) return `${Math.floor(diff / day)} hari lalu`;
+  if (diff < minute) return "just now";
+  if (diff < hour) return `${Math.floor(diff / minute)} minutes ago`;
+  if (diff < day) return `${Math.floor(diff / hour)} hours ago`;
+  if (diff < 7 * day) return `${Math.floor(diff / day)} days ago`;
 
   return new Date(ts).toLocaleDateString(undefined, {
     day: "2-digit",

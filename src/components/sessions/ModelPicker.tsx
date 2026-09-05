@@ -75,7 +75,7 @@ export function ModelPicker({
       const body = (await res.json()) as { models: ModelOption[] };
       setModels(body.models);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Gagal memuat daftar model");
+      setError(e instanceof ApiError ? e.message : "Failed to load model list");
       setModels([]);
     } finally {
       setLoading(false);
@@ -99,7 +99,7 @@ export function ModelPicker({
       onChanged(next);
       setOpen(false);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Gagal mengganti model");
+      setError(e instanceof ApiError ? e.message : "Failed to change model");
     } finally {
       setSaving(false);
     }
@@ -115,7 +115,7 @@ export function ModelPicker({
           onClick={() => setOpen(true)}
           disabled={saving}
           className="h-7 max-w-full min-w-0 gap-1 px-2 text-sm font-medium"
-          aria-label={`Model: ${label}. Ketuk untuk mengganti model`}
+          aria-label={`Model: ${label}. Tap to change model`}
           title={`Model: ${label}`}
         >
           <span className="min-w-0 truncate">{headingLabel}</span>
@@ -133,7 +133,7 @@ export function ModelPicker({
           onClick={() => setOpen(true)}
           disabled={saving}
           className="h-8 max-w-full min-w-0 justify-between gap-1.5 px-2 font-normal"
-          aria-label={`Model: ${label}. Ketuk untuk mengganti`}
+          aria-label={`Model: ${label}. Tap to change`}
           title={label}
         >
           <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground" />
@@ -158,15 +158,15 @@ export function ModelPicker({
             bukan menumbuhkan dialog melewati layar HP. */}
         <DialogContent className="flex h-[70dvh] max-h-[560px] flex-col sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Pilih model</DialogTitle>
+            <DialogTitle>Choose a model</DialogTitle>
             <DialogDescription>
-              Berlaku untuk pesan berikutnya — Session tidak perlu di-restart.
+              Applies to the next messages — no session restart needed.
             </DialogDescription>
           </DialogHeader>
 
           {error && (
             <Alert variant="destructive">
-              <AlertTitle>Gagal</AlertTitle>
+              <AlertTitle>Failed</AlertTitle>
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}

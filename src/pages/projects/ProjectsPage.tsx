@@ -76,7 +76,7 @@ export function ProjectsPage() {
       setOverviews(buildProjectOverviews(projects, sessions));
     } catch (e) {
       setOverviews([]);
-      setLoadError(e instanceof ApiError ? e.message : "Gagal memuat daftar Project");
+      setLoadError(e instanceof ApiError ? e.message : "Failed to load projects");
     } finally {
       setLoading(false);
     }
@@ -110,15 +110,15 @@ export function ProjectsPage() {
             <h1 className="truncate text-lg font-semibold tracking-tight">KCG Bridge</h1>
             <p className="truncate text-xs text-muted-foreground">
               {running > 0
-                ? `${running} session sedang berjalan`
-                : "Kontrol CLI_Agent dari mana saja"}
+                ? `${running} session${running === 1 ? "" : "s"} running`
+                : "Control CLI_Agent from anywhere"}
             </p>
           </div>
         </div>
         <Button type="button" onClick={() => setDialogOpen(true)} className="shrink-0 shadow-sm">
           <FolderPlusIcon data-icon="inline-start" />
-          <span className="hidden sm:inline">Project baru</span>
-          <span className="sm:hidden">Baru</span>
+          <span className="hidden sm:inline">New project</span>
+          <span className="sm:hidden">New</span>
         </Button>
       </div>
 
@@ -141,13 +141,13 @@ export function ProjectsPage() {
                 variant="ghost"
                 size="icon-sm"
                 onClick={() => void refresh()}
-                aria-label="Muat ulang daftar Project"
+                aria-label="Reload project list"
                 disabled={loading}
               >
                 <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Muat ulang</TooltipContent>
+            <TooltipContent>Reload</TooltipContent>
           </Tooltip>
         </div>
 
@@ -157,8 +157,8 @@ export function ProjectsPage() {
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Cari nama atau path project…"
-              aria-label="Cari project"
+              placeholder="Search name or path…"
+              aria-label="Search projects"
               className="pl-9"
             />
           </div>
@@ -168,7 +168,7 @@ export function ProjectsPage() {
           <ProjectListSkeleton />
         ) : loadError ? (
           <Alert variant="destructive">
-            <AlertTitle>Gagal memuat Project</AlertTitle>
+            <AlertTitle>Failed to load projects</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
         ) : overviews.length === 0 ? (
@@ -177,15 +177,15 @@ export function ProjectsPage() {
               <EmptyMedia variant="icon">
                 <FoldersIcon />
               </EmptyMedia>
-              <EmptyTitle>Belum ada project</EmptyTitle>
+              <EmptyTitle>No projects yet</EmptyTitle>
               <EmptyDescription>
-                Tambah project dulu — pilih direktori kerja di Sandbox, lalu jalankan CLI_Agent di
-                dalamnya.
+                Add a project first — pick a working directory in the Sandbox, then run CLI_Agent
+                inside it.
               </EmptyDescription>
               <EmptyContent>
                 <Button type="button" onClick={() => setDialogOpen(true)}>
                   <FolderPlusIcon data-icon="inline-start" />
-                  Tambah project
+                  Add project
                 </Button>
               </EmptyContent>
             </EmptyHeader>
@@ -196,13 +196,11 @@ export function ProjectsPage() {
               <EmptyMedia variant="icon">
                 <SearchXIcon />
               </EmptyMedia>
-              <EmptyTitle>Tidak ada yang cocok</EmptyTitle>
-              <EmptyDescription>
-                Tidak ada project dengan nama atau path “{query.trim()}”.
-              </EmptyDescription>
+              <EmptyTitle>No matches</EmptyTitle>
+              <EmptyDescription>No project with name or path “{query.trim()}”.</EmptyDescription>
               <EmptyContent>
                 <Button type="button" variant="outline" onClick={() => setQuery("")}>
-                  Hapus pencarian
+                  Clear search
                 </Button>
               </EmptyContent>
             </EmptyHeader>
@@ -241,9 +239,7 @@ function ProjectRow({ overview, onOpen }: ProjectRowProps) {
       onClick={onOpen}
       className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
       aria-label={
-        hasSession
-          ? `Lanjutkan session terakhir project ${project.name}`
-          : `Buka project ${project.name}`
+        hasSession ? `Resume last session of ${project.name}` : `Open project ${project.name}`
       }
     >
       <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary uppercase">
@@ -262,15 +258,17 @@ function ProjectRow({ overview, onOpen }: ProjectRowProps) {
         </span>
         <span className="truncate font-mono text-xs text-muted-foreground">{project.path}</span>
         <span className="truncate text-xs text-muted-foreground">
-          {sessionCount === 0 ? "Belum ada session" : `${sessionCount} session`}
-          {runningCount > 0 && ` · ${runningCount} berjalan`}
+          {sessionCount === 0
+            ? "No sessions"
+            : `${sessionCount} session${sessionCount === 1 ? "" : "s"}`}
+          {runningCount > 0 && ` · ${runningCount} running`}
           {" · "}
           {formatRelativeTime(lastActivityAt)}
         </span>
       </span>
 
       <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-primary">
-        <span className="hidden sm:inline">{hasSession ? "Lanjutkan" : "Buka"}</span>
+        <span className="hidden sm:inline">{hasSession ? "Resume" : "Open"}</span>
         <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
       </span>
     </button>

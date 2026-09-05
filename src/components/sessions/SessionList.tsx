@@ -108,9 +108,9 @@ export interface SessionListProps {
 const AGENT_TYPES: AgentType[] = ["opencode"];
 
 const STATUS_LABEL: Record<SessionStatus, string> = {
-  running: "Berjalan",
-  stopped: "Berhenti",
-  crashed: "Crash",
+  running: "Running",
+  stopped: "Stopped",
+  crashed: "Crashed",
 };
 
 const STATUS_DOT: Record<SessionStatus, string> = {
@@ -160,7 +160,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       const body = (await res.json()) as { sessions: Session[] };
       setSessions(body.sessions.filter((s) => s.projectId === project.id));
     } catch (e) {
-      setLoadError(e instanceof ApiError ? e.message : "Gagal memuat daftar Session");
+      setLoadError(e instanceof ApiError ? e.message : "Failed to load sessions");
     } finally {
       setLoading(false);
     }
@@ -188,7 +188,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       const body = (await res.json()) as { models: ModelOption[] };
       setModels(body.models);
     } catch (e) {
-      setModelsError(e instanceof ApiError ? e.message : "Gagal memuat daftar model");
+      setModelsError(e instanceof ApiError ? e.message : "Failed to load models");
       setModels([]);
     } finally {
       setModelsLoading(false);
@@ -218,7 +218,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       setFormOpen(false);
       await refresh();
     } catch (e) {
-      setCreateError(e instanceof ApiError ? e.message : "Gagal membuat Session");
+      setCreateError(e instanceof ApiError ? e.message : "Failed to create session");
     } finally {
       setCreating(false);
     }
@@ -233,7 +233,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       await apiFetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
       await refresh();
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : "Gagal menghentikan Session");
+      setActionError(e instanceof ApiError ? e.message : "Failed to stop session");
     } finally {
       setStopping(null);
     }
@@ -247,7 +247,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       await apiFetch(`/api/sessions/${sessionId}`, { method: "POST" });
       await refresh();
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : "Gagal menghidupkan Session");
+      setActionError(e instanceof ApiError ? e.message : "Failed to start session");
     } finally {
       setStarting(null);
     }
@@ -268,7 +268,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       setPendingDelete(null);
       await refresh();
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : "Gagal menghapus Session");
+      setActionError(e instanceof ApiError ? e.message : "Failed to delete session");
     } finally {
       setDeleting(null);
     }
@@ -286,7 +286,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       setProjectDeleteOpen(false);
       onDeleted?.();
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : "Gagal menghapus Project");
+      setActionError(e instanceof ApiError ? e.message : "Failed to delete project");
     } finally {
       setDeletingProject(false);
     }
@@ -302,7 +302,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
             variant="ghost"
             size="icon-sm"
             onClick={onBack}
-            aria-label="Kembali ke daftar Project"
+            aria-label="Back to projects"
             className="shrink-0"
           >
             <ArrowLeftIcon />
@@ -310,7 +310,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-base font-semibold leading-tight">{project.name}</h1>
             <p className="truncate text-xs text-muted-foreground">
-              {loading ? "Memuat session…" : describeSessionSummary(summary)}
+              {loading ? "Loading sessions…" : describeSessionSummary(summary)}
             </p>
           </div>
           <DropdownMenu>
@@ -319,7 +319,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
                 type="button"
                 variant="ghost"
                 size="icon-sm"
-                aria-label="Aksi project"
+                aria-label="Project actions"
                 className="shrink-0"
               >
                 <MoreVerticalIcon />
@@ -328,12 +328,12 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
             <DropdownMenuContent align="end">
               <DropdownMenuItem onSelect={() => void refresh()} disabled={loading}>
                 <RefreshCwIcon />
-                Muat ulang
+                Reload
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="destructive" onSelect={() => setProjectDeleteOpen(true)}>
                 <Trash2Icon />
-                Hapus project
+                Delete project
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -345,7 +345,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
 
       {actionError && (
         <Alert variant="destructive">
-          <AlertTitle>Aksi gagal</AlertTitle>
+          <AlertTitle>Action failed</AlertTitle>
           <AlertDescription>{actionError}</AlertDescription>
         </Alert>
       )}
@@ -363,7 +363,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
           </div>
           <Button type="button" size="sm" onClick={openForm} className="shrink-0">
             <PlusIcon data-icon="inline-start" />
-            Session baru
+            New session
           </Button>
         </div>
 
@@ -371,7 +371,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
           <SessionListSkeleton />
         ) : loadError ? (
           <Alert variant="destructive">
-            <AlertTitle>Gagal memuat Session</AlertTitle>
+            <AlertTitle>Failed to load sessions</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
         ) : ordered.length === 0 ? (
@@ -380,14 +380,14 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
               <EmptyMedia variant="icon">
                 <BotIcon />
               </EmptyMedia>
-              <EmptyTitle>Belum ada Session</EmptyTitle>
+              <EmptyTitle>No sessions yet</EmptyTitle>
               <EmptyDescription>
-                Buat Session untuk menjalankan CLI_Agent di Project ini.
+                Create a session to run CLI_Agent in this project.
               </EmptyDescription>
               <EmptyContent>
                 <Button type="button" onClick={openForm}>
                   <PlusIcon data-icon="inline-start" />
-                  Session baru
+                  New session
                 </Button>
               </EmptyContent>
             </EmptyHeader>
@@ -424,17 +424,18 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
             di dalam dialog — bukan dialog yang tumbuh melewati layar HP. */}
         <DialogContent className="flex h-[80dvh] max-h-[620px] flex-col sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Session baru</DialogTitle>
+            <DialogTitle>New session</DialogTitle>
             <DialogDescription>
-              Session berjalan di server headless OpenCode dengan direktori kerja path Project.
+              The session runs on a headless OpenCode server with the project path as working
+              directory.
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={create} className="flex min-h-0 flex-1 flex-col gap-4">
             <Field>
-              <FieldLabel htmlFor="agent-type">Tipe CLI_Agent</FieldLabel>
+              <FieldLabel htmlFor="agent-type">CLI_Agent type</FieldLabel>
               <Select value={agentType} onValueChange={(v) => setAgentType(v as AgentType)}>
                 <SelectTrigger id="agent-type" className="w-full">
-                  <SelectValue placeholder="Pilih tipe" />
+                  <SelectValue placeholder="Choose type" />
                 </SelectTrigger>
                 <SelectContent>
                   {AGENT_TYPES.map((t) => (
@@ -450,7 +451,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
               <FieldLabel>Model</FieldLabel>
               {modelsError ? (
                 <Alert variant="destructive">
-                  <AlertTitle>Gagal memuat model</AlertTitle>
+                  <AlertTitle>Failed to load models</AlertTitle>
                   <AlertDescription>{modelsError}</AlertDescription>
                 </Alert>
               ) : (
@@ -467,7 +468,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
 
             {createError && (
               <Alert variant="destructive">
-                <AlertTitle>Gagal membuat Session</AlertTitle>
+                <AlertTitle>Failed to create session</AlertTitle>
                 <AlertDescription>{createError}</AlertDescription>
               </Alert>
             )}
@@ -479,16 +480,16 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
                 onClick={() => setFormOpen(false)}
                 disabled={creating}
               >
-                Batal
+                Cancel
               </Button>
               <Button type="submit" disabled={creating}>
                 {creating ? (
                   <>
                     <Spinner data-icon="inline-start" />
-                    Membuat…
+                    Creating…
                   </>
                 ) : (
-                  "Buat Session"
+                  "Create session"
                 )}
               </Button>
             </DialogFooter>
@@ -505,14 +506,14 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Hapus Session ini?</AlertDialogTitle>
+            <AlertDialogTitle>Delete this session?</AlertDialogTitle>
             <AlertDialogDescription>
-              Riwayat percakapan di server opencode juga ikut terhapus permanen. Aksi ini tidak bisa
-              dibatalkan.
+              The conversation history on the opencode server will also be permanently deleted. This
+              action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting !== null}>Batal</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting !== null}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={(e) => {
@@ -524,10 +525,10 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
               {deleting !== null ? (
                 <>
                   <Spinner data-icon="inline-start" />
-                  Menghapus…
+                  Deleting…
                 </>
               ) : (
-                "Hapus permanen"
+                "Delete permanently"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -543,17 +544,17 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Hapus project “{project.name}”?</AlertDialogTitle>
+            <AlertDialogTitle>Delete project “{project.name}”?</AlertDialogTitle>
             <AlertDialogDescription>
               {summary.total > 0
-                ? `${summary.total} session milik project ini ikut dihapus permanen, termasuk riwayat percakapannya di server opencode. `
+                ? `${summary.total} session${summary.total === 1 ? "" : "s"} of this project will also be permanently deleted, including their conversation history on the opencode server. `
                 : ""}
-              Folder kerja di server tidak dihapus — hanya pendaftaran project di KCG Bridge. Aksi
-              ini tidak bisa dibatalkan.
+              The working folder on the server is not deleted — only the project registration in KCG
+              Bridge. This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deletingProject}>Batal</AlertDialogCancel>
+            <AlertDialogCancel disabled={deletingProject}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
               onClick={(e) => {
@@ -565,10 +566,10 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
               {deletingProject ? (
                 <>
                   <Spinner data-icon="inline-start" />
-                  Menghapus…
+                  Deleting…
                 </>
               ) : (
-                "Hapus project"
+                "Delete project"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -603,7 +604,7 @@ function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }: Sessio
         onClick={onOpen}
         disabled={busy}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-3 text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60 sm:px-4"
-        aria-label={`Buka session ${session.agentType}`}
+        aria-label={`Open session ${session.agentType}`}
       >
         <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           {busy ? <Spinner className="size-4" /> : <BotIcon />}
@@ -633,7 +634,7 @@ function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }: Sessio
             variant="ghost"
             size="icon"
             disabled={busy}
-            aria-label={`Aksi session ${session.agentType}`}
+            aria-label={`Session actions ${session.agentType}`}
             className="shrink-0"
           >
             <MoreVerticalIcon />
@@ -643,18 +644,18 @@ function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }: Sessio
           {running ? (
             <DropdownMenuItem onSelect={onStop}>
               <SquareIcon />
-              Hentikan
+              Stop
             </DropdownMenuItem>
           ) : (
             <DropdownMenuItem onSelect={onStart}>
               <PlayIcon />
-              Hidupkan
+              Start
             </DropdownMenuItem>
           )}
           <DropdownMenuSeparator />
           <DropdownMenuItem variant="destructive" onSelect={onDelete}>
             <Trash2Icon />
-            Hapus permanen
+            Delete permanently
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

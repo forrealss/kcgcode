@@ -144,18 +144,18 @@ describe("formatRelativeTime", () => {
   const now = Date.UTC(2026, 0, 15, 12, 0, 0);
   const minute = 60_000;
 
-  test("kurang dari satu menit -> baru saja", () => {
-    expect(formatRelativeTime(now - 30_000, now)).toBe("baru saja");
+  test("kurang dari satu menit -> just now", () => {
+    expect(formatRelativeTime(now - 30_000, now)).toBe("just now");
   });
 
-  test("timestamp di masa depan tetap baru saja", () => {
-    expect(formatRelativeTime(now + minute, now)).toBe("baru saja");
+  test("timestamp di masa depan tetap just now", () => {
+    expect(formatRelativeTime(now + minute, now)).toBe("just now");
   });
 
   test("skala menit, jam, dan hari", () => {
-    expect(formatRelativeTime(now - 5 * minute, now)).toBe("5 menit lalu");
-    expect(formatRelativeTime(now - 3 * 60 * minute, now)).toBe("3 jam lalu");
-    expect(formatRelativeTime(now - 2 * 24 * 60 * minute, now)).toBe("2 hari lalu");
+    expect(formatRelativeTime(now - 5 * minute, now)).toBe("5 minutes ago");
+    expect(formatRelativeTime(now - 3 * 60 * minute, now)).toBe("3 hours ago");
+    expect(formatRelativeTime(now - 2 * 24 * 60 * minute, now)).toBe("2 days ago");
   });
 
   test("lebih dari sepekan -> tanggal absolut", () => {

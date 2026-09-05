@@ -1,3 +1,9 @@
 [serve.static]
 plugins = ["bun-plugin-tailwind"]
 env = "BUN_PUBLIC_*"
+
+# Loader asset (.svg) untuk `bun test` — runtime app mendapatkannya dari
+# bun-plugin-tailwind ([serve.static] di atas), test runner tidak; tanpa ini
+# import logo.svg di komponen gagal ("Missing 'default' export").
+[test]
+preload = ["./tests/preload.ts"]

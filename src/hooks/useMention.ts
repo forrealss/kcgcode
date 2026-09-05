@@ -147,7 +147,7 @@ export function useFileMention(
         })
         .catch((e) => {
           if ((e as Error).name === "AbortError") return;
-          setError("Gagal mencari file");
+          setError("Failed to search files");
           setSuggestions([]);
         })
         .finally(() => {

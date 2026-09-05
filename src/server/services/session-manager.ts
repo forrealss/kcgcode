@@ -233,24 +233,24 @@ function describeSessionError(ev: OpenCodeEvent): string {
   const hint = (() => {
     switch (name) {
       case "ProviderAuthError":
-        return "Autentikasi provider model gagal. Periksa login opencode (`opencode auth`).";
+        return "Model provider authentication failed. Check the opencode login (`opencode auth`).";
       case "APIError":
-        return "Provider model mengembalikan error API. Coba lagi atau ganti model.";
+        return "The model provider returned an API error. Try again or switch models.";
       case "ContentFilterError":
-        return "Balasan model diblokir oleh filter konten.";
+        return "The model response was blocked by a content filter.";
       case "ContextOverflowError":
-        return "Konteks percakapan melebihi batas model. Mulai Session baru atau compact.";
+        return "The conversation context exceeded the model limit. Start a new session or compact.";
       case "MessageOutputLengthError":
-        return "Output model melebihi batas panjang pesan.";
+        return "The model output exceeded the message length limit.";
       case "MessageAbortedError":
-        return "Pemrosesan prompt dibatalkan.";
+        return "Prompt processing was aborted.";
       case "StructuredOutputError":
-        return "Output terstruktur model gagal diparse.";
+        return "Failed to parse the model's structured output.";
       default:
         return null;
     }
   })();
-  if (hint === null) return line || "Terjadi kesalahan saat memproses prompt.";
+  if (hint === null) return line || "Something went wrong while processing the prompt.";
   return line ? `${hint} — ${line}` : hint;
 }
 
@@ -258,23 +258,23 @@ function describeSessionError(ev: OpenCodeEvent): string {
 function friendlySendError(raw: string): string {
   const r = raw.trim();
   if (r === "TURN_TIMEOUT") {
-    return "Model tidak membalas dalam batas waktu yang ditentukan. Coba kirim ulang pesan.";
+    return "The model did not respond within the time limit. Try sending the message again.";
   }
   const asyncMatch = r.match(/^OC_PROMPT_ASYNC_FAILED(?:\((\d+)\))?(?::\s*(.*))?$/);
   if (asyncMatch) {
     const status = asyncMatch[1];
     const detail = asyncMatch[2];
-    if (status) return `Gagal mengirim prompt ke opencode (status ${status}). Coba lagi.`;
+    if (status) return `Failed to send the prompt to opencode (status ${status}). Try again.`;
     if (detail)
-      return `Gagal mengirim prompt ke opencode: ${detail.split("\n")[0]?.trim() ?? detail}`;
-    return "Gagal mengirim prompt ke opencode. Coba lagi.";
+      return `Failed to send the prompt to opencode: ${detail.split("\n")[0]?.trim() ?? detail}`;
+    return "Failed to send the prompt to opencode. Try again.";
   }
   const sendFail = r.match(/^SEND_FAILED:\s*(.*)$/);
   if (sendFail) {
     const detail = sendFail[1];
     return detail
-      ? `Gagal mengirim prompt: ${detail.split("\n")[0]?.trim() ?? detail}`
-      : "Gagal mengirim prompt: koneksi ke opencode bermasalah.";
+      ? `Failed to send the prompt: ${detail.split("\n")[0]?.trim() ?? detail}`
+      : "Failed to send the prompt: the opencode connection is having trouble.";
   }
   return r.split("\n")[0] ?? r;
 }
@@ -428,6 +428,21 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * kegagalan terlihat dan bertahan setelah reattach. `onError` tetap
    * dipanggil untuk banner instan di Client.
    */
+  /**
+   * Buang turn yang sedang di-stream TANPA menyimpan parts-nya. Dipakai saat
+   * user meng-interrupt: balasan parsial yang belum selesai dibuang agar
+   * tidak tersimpan & tidak muncul kembali di riwayat/Client. Broadcast turn
+   * tidak aktif tetap dikirim agar tombol stop di UI mati.
+   */
+  function discardTurn(sessionId: string): void {
+    const turn = streamingTurns.get(sessionId);
+    if (!turn || turn.finalized) return;
+    turn.finalized = true;
+    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
+    streamingTurns.delete(sessionId);
+    onTurnChange?.(sessionId, false);
+  }
+
   function failTurn(sessionId: string, message: string): void {
     const turn = streamingTurns.get(sessionId);
     if (!turn || turn.finalized) return;
@@ -718,7 +733,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   /**
    * Hentikan balasan model yang sedang berlangsung (interrupt ala opencode):
    * - Turn remote di-abort (best-effort, tidak menunggu).
-   * - Parts yang sudah ter-stream disimpan sebagai pesan assistant final.
+   * - Parts yang sudah ter-stream DIBUANG (tidak disimpan) — user membatalkan
+   *   balasan, sehingga respon parsial tidak boleh muncul di riwayat/UI.
    * - Session TETAP `running` dan pemetaan SSE dipertahankan — user bisa
    *   langsung mengirim pesan baru tanpa Start ulang.
    * Idempoten: tanpa turn aktif tidak ada yang berubah (tetap `ok`).
@@ -731,8 +747,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const handle = servers.getServer(cur.data.projectId);
       void handle?.client.abortSession(cur.data.ocSessionId);
     }
-    // Tutup turn bila ada: parts tersimpan + broadcast turn tidak aktif.
-    finalizeTurn(sessionId);
+    // Buang turn parsial (tidak disimpan) + broadcast turn tidak aktif.
+    discardTurn(sessionId);
     return { ok: true };
   }
 

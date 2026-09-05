@@ -24,9 +24,9 @@ export interface ComposerPlaceholderState {
  * keduanya diperiksa lebih dulu.
  */
 export function composerPlaceholder(state: ComposerPlaceholderState): string {
-  if (state.busy) return state.compact ? "Merespon…" : "Model sedang merespon…";
-  if (!state.canInput) return "Session tidak aktif";
+  if (state.busy) return state.compact ? "Responding…" : "Model is responding…";
+  if (!state.canInput) return "Session is not active";
   return state.compact
-    ? "Ketik pesan…"
-    : "Ketik pesan… ketik @ untuk referensi file, atau tempel gambar";
+    ? "Type a message…"
+    : "Type a message… type @ for file references, or paste an image";
 }

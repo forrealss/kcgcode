@@ -840,7 +840,7 @@ test("interruptSession: turn dimulai -> turn_active true; selesai -> false", asy
   }
 });
 
-test("interruptSession: abort remote + simpan parts ter-stream; session tetap running", async () => {
+test("interruptSession: abort remote + BUANG parts parsial (tidak disimpan); session tetap running", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
@@ -862,11 +862,13 @@ test("interruptSession: abort remote + simpan parts ter-stream; session tetap ru
     const res = h.sm.interruptSession(sid);
     expect(res.ok).toBe(true);
 
-    // Turn remote di-abort; parts parsial disimpan sebagai pesan assistant.
+    // Turn remote di-abort.
     expect(client.calls).toContain("abortSession:ses_remote1");
+    // User membatalkan balasan -> parts parsial TIDAK disimpan (tidak muncul
+    // di riwayat / tidak di-broadcast sebagai pesan assistant).
     const assistants = h.messages.filter((m) => m.role === "assistant");
-    expect(assistants).toHaveLength(1);
-    expect(assistants[0]?.parts[0]?.text).toBe("separuh jalan");
+    expect(assistants).toHaveLength(0);
+    // Turn ditutup (turn_active false).
     expect(h.turns).toContainEqual([sid, false]);
 
     // Beda dari stopSession: status TETAP running (tanpa resume).

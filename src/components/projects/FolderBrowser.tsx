@@ -39,7 +39,7 @@ export function FolderBrowser({ path, onNavigate }: FolderBrowserProps) {
       setEntries(body.entries);
     } catch (e) {
       setEntries([]);
-      setError(e instanceof ApiError ? e.message : "Gagal memuat direktori");
+      setError(e instanceof ApiError ? e.message : "Failed to load directory");
     } finally {
       setLoading(false);
     }
@@ -94,12 +94,12 @@ export function FolderBrowser({ path, onNavigate }: FolderBrowserProps) {
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
             <Spinner className="size-4" />
-            Memuat direktori…
+            Loading directories…
           </div>
         ) : error ? (
           <p className="px-2 py-4 text-sm text-destructive">{error}</p>
         ) : entries.length === 0 ? (
-          <p className="px-2 py-4 text-sm text-muted-foreground">Tidak ada sub-direktori.</p>
+          <p className="px-2 py-4 text-sm text-muted-foreground">No subdirectories.</p>
         ) : (
           <div className="flex flex-col gap-1">
             {path !== "" && (
@@ -111,7 +111,7 @@ export function FolderBrowser({ path, onNavigate }: FolderBrowserProps) {
                 onClick={() => onNavigate(segments.slice(0, -1).join("/"))}
               >
                 <Undo2Icon data-icon="inline-start" />
-                Kembali
+                Back
               </Button>
             )}
             {entries.map((name) => (
@@ -134,7 +134,7 @@ export function FolderBrowser({ path, onNavigate }: FolderBrowserProps) {
       {/* Path aktif saat ini — selalu nempel di bawah, tidak ikut naik saat
           daftar sub-direktori pendek. */}
       <div className="flex min-w-0 shrink-0 items-center gap-1.5 text-sm">
-        <span className="shrink-0 text-muted-foreground">Direktori aktif:</span>
+        <span className="shrink-0 text-muted-foreground">Current directory:</span>
         <span className="min-w-0 flex-1 truncate font-mono">{path === "" ? "/" : path}</span>
       </div>
     </div>

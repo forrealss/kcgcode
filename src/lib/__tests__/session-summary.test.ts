@@ -79,26 +79,26 @@ describe("summarizeSessions", () => {
 describe("describeSessionSummary", () => {
   test("tanpa Session -> teks pengarah", () => {
     expect(describeSessionSummary({ total: 0, running: 0, stopped: 0, crashed: 0 })).toBe(
-      "Belum ada session",
+      "No sessions yet",
     );
   });
 
   test("hanya total bila tidak ada yang berjalan/crash", () => {
     expect(describeSessionSummary({ total: 2, running: 0, stopped: 2, crashed: 0 })).toBe(
-      "2 session",
+      "2 sessions",
     );
   });
 
   test("menyebut yang berjalan dan crash", () => {
     expect(describeSessionSummary({ total: 3, running: 1, stopped: 1, crashed: 1 })).toBe(
-      "3 session · 1 berjalan · 1 crash",
+      "3 sessions · 1 running · 1 crashed",
     );
   });
 });
 
 describe("describeSessionModel", () => {
   test("model kosong -> model default", () => {
-    expect(describeSessionModel(session("a", "running", 1))).toBe("model default");
+    expect(describeSessionModel(session("a", "running", 1))).toBe("default model");
   });
 
   test("model terpilih -> modelID", () => {

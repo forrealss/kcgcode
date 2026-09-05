@@ -51,18 +51,18 @@ export function summarizeSessions(sessions: readonly Session[]): SessionSummary 
 }
 
 /**
- * Kalimat ringkas status Project untuk header ("2 session · 1 berjalan").
- * Tanpa Session -> teks pengarah, bukan "0 session".
+ * Kalimat ringkas status Project untuk header ("2 sessions · 1 running").
+ * Tanpa Session -> teks pengarah, bukan "0 sessions".
  */
 export function describeSessionSummary(summary: SessionSummary): string {
-  if (summary.total === 0) return "Belum ada session";
-  const parts = [`${summary.total} session`];
-  if (summary.running > 0) parts.push(`${summary.running} berjalan`);
-  if (summary.crashed > 0) parts.push(`${summary.crashed} crash`);
+  if (summary.total === 0) return "No sessions yet";
+  const parts = [`${summary.total} session${summary.total === 1 ? "" : "s"}`];
+  if (summary.running > 0) parts.push(`${summary.running} running`);
+  if (summary.crashed > 0) parts.push(`${summary.crashed} crashed`);
   return parts.join(" · ");
 }
 
 /** Label model Session untuk baris daftar. */
 export function describeSessionModel(session: Session): string {
-  return session.model ? session.model.modelID : "model default";
+  return session.model ? session.model.modelID : "default model";
 }

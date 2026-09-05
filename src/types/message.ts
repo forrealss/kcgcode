@@ -8,7 +8,8 @@
  * Satu part pesan opencode (subset skema `Part` OpenAPI): `text`, `reasoning`,
  * `tool`, `step-start`, `step-finish`, `file`, `agent`, `subtask`, dll.
  * Dibiarkan toleran (indeks dinamis) agar renderer frontend tahan terhadap
- * bentuk part baru dari opencode.
+ * bentuk part baru dari opencode. Field `state` (tool call) dipakai renderer
+ * untuk label target tool (mis. `state.input.filePath`).
  *
  * Field `file` (mime/filename/url/attachmentId) dipakai untuk part `file`:
  * echo `@file` teks maupun gambar yang di-upload. `attachmentId` adalah id
@@ -28,6 +29,18 @@ export interface MessagePart {
   url?: string;
   /** Id lampiran gambar di Attachment_Store (gambar upload dari perangkat). */
   attachmentId?: string;
+  /**
+   * State tool call dari opencode: `status` (pending/running/error/done),
+   * `input` (argumen tool, mis. `filePath` untuk read/edit), dan `output`
+   * (hasil). Dipakai renderer untuk menampilkan target tiap tool call.
+   */
+  state?: { input?: Record<string, unknown>; output?: unknown };
+  /**
+   * Timing asli dari opencode (ReasoningPart, TextPart, ToolState).
+   * `start`/`end` adalah Unix ms. Hadir di part yang sudah selesai di-stream;
+   * saat masih di-stream `end` bisa undefined.
+   */
+  time?: { start?: number; end?: number; created?: number };
   [k: string]: unknown;
 }
 

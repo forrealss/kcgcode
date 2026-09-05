@@ -81,7 +81,7 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
           }}
           className="text-sm font-medium underline underline-offset-4"
         >
-          Kembali ke daftar Project
+          Back to projects
         </a>
       </div>
     );

@@ -39,59 +39,59 @@ export function apiErrorMessage(code: string): string {
   // Kode dari server headless opencode membawa detail status, mis.
   // "OC_LIST_MODELS_FAILED(500)" -> cocokkan berdasarkan prefiks.
   if (code.startsWith("OC_LIST_MODELS_FAILED")) {
-    return "Gagal memuat daftar model dari server opencode.";
+    return "Failed to load the model list from the opencode server.";
   }
   if (code.startsWith("OC_CREATE_SESSION_FAILED")) {
-    return "Gagal membuat session di server opencode.";
+    return "Failed to create the session on the opencode server.";
   }
   if (code.startsWith("OC_DELETE_SESSION_FAILED")) {
-    return "Gagal menghapus session di server opencode.";
+    return "Failed to delete the session on the opencode server.";
   }
   if (code.startsWith("SERVER_START_FAILED")) {
-    return "Gagal menjalankan server opencode untuk Project ini.";
+    return "Failed to start the opencode server for this project.";
   }
 
   switch (code) {
     case "NAME_REQUIRED":
-      return "Nama Project wajib diisi.";
+      return "Project name is required.";
     case "NAME_TAKEN":
-      return "Nama Project sudah digunakan.";
+      return "That project name is already in use.";
     case "PATH_TAKEN":
-      return "Path tersebut sudah digunakan oleh Project lain.";
+      return "That path is already used by another project.";
     case "PATH_OUTSIDE_SANDBOX":
-      return "Path berada di luar Sandbox_Root.";
+      return "The path is outside the Sandbox root.";
     case "INVALID_PATH_CHARS":
-      return "Path mengandung karakter yang tidak valid.";
+      return "The path contains invalid characters.";
     case "PROJECT_NOT_FOUND":
-      return "Project tidak ditemukan.";
+      return "Project not found.";
     case "PROJECT_DIR_NOT_FOUND":
-      return "Direktori Project tidak ditemukan di server.";
+      return "The project directory was not found on the server.";
     case "PROJECT_HAS_SESSIONS":
-      return "Project masih punya Session. Hapus Session-nya lebih dulu.";
+      return "The project still has sessions. Delete them first.";
     case "UNSUPPORTED_AGENT_TYPE":
-      return "Tipe CLI_Agent tidak didukung.";
+      return "This CLI_Agent type is not supported.";
     case "SESSION_NOT_FOUND":
-      return "Session tidak ditemukan.";
+      return "Session not found.";
     case "SESSION_NOT_RUNNING":
-      return "Session tidak sedang berjalan.";
+      return "The session is not running.";
     case "SESSION_ALREADY_RUNNING":
-      return "Session sudah berjalan.";
+      return "The session is already running.";
     case "MODEL_NOT_FOUND":
-      return "Model tidak tersedia pada server opencode Project ini.";
+      return "The model is not available on this project's opencode server.";
     case "INVALID_JSON":
-      return "Format JSON permintaan tidak valid.";
+      return "The request JSON format is invalid.";
     case "UNSUPPORTED_IMAGE_MIME":
-      return "Format gambar tidak didukung. Gunakan PNG, JPEG, GIF, atau WebP.";
+      return "Unsupported image format. Use PNG, JPEG, GIF, or WebP.";
     case "IMAGE_TOO_LARGE":
-      return "Ukuran gambar melebihi batas 20 MiB.";
+      return "The image exceeds the 20 MiB limit.";
     case "ATTACHMENT_NOT_FOUND":
-      return "Lampiran gambar tidak ditemukan (mungkin sudah dihapus).";
+      return "The image attachment was not found (it may have been deleted).";
     case "AUTH_FAILED":
-      return "Otentikasi gagal. Periksa token.";
+      return "Authentication failed. Check your token.";
     case "HTTP_401":
-      return "Otentikasi diperlukan (401).";
+      return "Authentication required (401).";
     default:
-      return `Terjadi kesalahan (${code}).`;
+      return `Something went wrong (${code}).`;
   }
 }
 
@@ -152,7 +152,7 @@ export async function apiUploadImage(
     upload?: { id: string; filename: string; mime: string; size: number };
   };
   if (typeof parsed.upload?.id !== "string") {
-    throw new ApiError(res.status, "INVALID_UPLOAD_RESPONSE", "Respons upload tidak valid.");
+    throw new ApiError(res.status, "INVALID_UPLOAD_RESPONSE", "Invalid upload response.");
   }
   return parsed.upload;
 }

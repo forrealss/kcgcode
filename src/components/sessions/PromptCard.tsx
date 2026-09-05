@@ -69,7 +69,7 @@ export function PromptCard({ prompt, onResolve }: PromptCardProps) {
           ) : (
             <HelpCircleIcon className="size-4 text-muted-foreground" data-icon="inline-start" />
           )}
-          {isPermission ? "Izin tool" : isMenu ? "Pertanyaan" : "Interactive Prompt"}
+          {isPermission ? "Tool permission" : isMenu ? "Question" : "Interactive Prompt"}
         </CardTitle>
         <CardDescription className="flex flex-col items-start gap-1.5 text-xs">
           <span className="flex items-center gap-2">
@@ -79,7 +79,7 @@ export function PromptCard({ prompt, onResolve }: PromptCardProps) {
           {/* wrap-anywhere: path file panjang tanpa spasi tidak boleh
               meluapkan kartu di layar sempit (bug mobile). */}
           {prompt.title && <span className="wrap-anywhere font-mono">{prompt.title}</span>}
-          {isMenu ? "Pilih salah satu opsi" : "Setujui atau tolak permintaan CLI_Agent"}
+          {isMenu ? "Pick one of the options" : "Approve or deny the CLI_Agent request"}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-wrap gap-2 px-4">
