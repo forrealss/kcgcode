@@ -81,7 +81,7 @@ function MarkdownCode({ node: _node, className, ...props }: MarkdownProps<"code"
       className={cn(
         "font-mono",
         isBlock
-          ? "bg-transparent p-0 text-[13px]"
+          ? "bg-transparent p-0 text-sm"
           : "rounded bg-muted px-1 py-0.5 text-[0.9em] wrap-anywhere",
         className,
       )}
@@ -96,7 +96,7 @@ function MarkdownCode({ node: _node, className, ...props }: MarkdownProps<"code"
 function MarkdownTable({ node: _node, className, ...props }: MarkdownProps<"table">) {
   return (
     <div className="my-2 max-w-full overflow-x-auto rounded-lg border first:mt-0 last:mb-0">
-      <table {...props} className={cn("w-full border-collapse text-left text-[13px]", className)} />
+      <table {...props} className={cn("w-full border-collapse text-left text-sm", className)} />
     </div>
   );
 }
@@ -112,15 +112,15 @@ const COMPONENTS = {
   // Blok kode: scroll horizontal sendiri agar baris panjang tidak melebarkan bubble.
   pre: styled(
     "pre",
-    "my-2 max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 text-[13px] leading-relaxed first:mt-0 last:mb-0",
+    "my-2 max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 text-sm leading-relaxed first:mt-0 last:mb-0",
   ),
   p: styled("p", "my-2 first:mt-0 last:mb-0"),
-  h1: styled("h1", "mt-4 mb-2 text-base font-semibold first:mt-0"),
-  h2: styled("h2", "mt-4 mb-2 text-base font-semibold first:mt-0"),
-  h3: styled("h3", "mt-3 mb-1.5 text-sm font-semibold first:mt-0"),
-  h4: styled("h4", "mt-3 mb-1.5 text-sm font-semibold first:mt-0"),
-  h5: styled("h5", "mt-3 mb-1 text-sm font-semibold first:mt-0"),
-  h6: styled("h6", "mt-3 mb-1 text-sm font-semibold first:mt-0"),
+  h1: styled("h1", "mt-4 mb-2 text-lg font-semibold first:mt-0"),
+  h2: styled("h2", "mt-4 mb-2 text-lg font-semibold first:mt-0"),
+  h3: styled("h3", "mt-3 mb-1.5 text-base font-semibold first:mt-0"),
+  h4: styled("h4", "mt-3 mb-1.5 text-base font-semibold first:mt-0"),
+  h5: styled("h5", "mt-3 mb-1 text-base font-semibold first:mt-0"),
+  h6: styled("h6", "mt-3 mb-1 text-base font-semibold first:mt-0"),
   ul: styled("ul", "my-2 list-disc space-y-1 ps-5 first:mt-0 last:mb-0"),
   ol: styled("ol", "my-2 list-decimal space-y-1 ps-5 first:mt-0 last:mb-0"),
   li: styled("li", "marker:text-muted-foreground"),

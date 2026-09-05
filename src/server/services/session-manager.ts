@@ -42,6 +42,7 @@ import type {
 import type { Result, SimpleResult } from "../result";
 import type { AttachmentManager } from "./attachments";
 import type {
+  AgentOption,
   ModelOption,
   OpenCodeClient,
   OpenCodeEvent,
@@ -79,6 +80,8 @@ export interface CreateSessionRequest {
   projectId: string;
   /** Model pilihan user; null/undefined = model default opencode. */
   model?: SessionModel | null;
+  /** Agent (mode) pilihan user; null/undefined = default opencode. */
+  agent?: string | null;
 }
 
 export type CreateSessionResult = { ok: true; session: Session } | { ok: false; error: string };
@@ -107,6 +110,12 @@ export interface SessionManagerOptions {
   onMessagePart?: (sessionId: string, messageId: string, part: MessagePart) => void;
   /** Hook Interactive_Prompt baru — disambungkan ke WebSocket_Gateway. */
   onPrompt?: (prompt: InteractivePrompt) => void;
+  /**
+   * Hook prompt kembar yang ikut ter-resolve lewat fan-out jawaban kartu
+   * grup (lihat `permissionGroupKey`) — agar kartu kembar hilang dari UI
+   * client lain tanpa menunggu reattach.
+   */
+  onPromptResolved?: (sessionId: string, promptId: string) => void;
   /** Hook perubahan status Session — disambungkan ke WebSocket_Gateway. */
   onStatusChange?: (sessionId: string, status: SessionStatus) => void;
   /** Hook Session dihapus permanen — disambungkan ke WebSocket_Gateway. */
@@ -153,10 +162,20 @@ export interface SessionManager {
   releaseProject(projectId: string): Promise<SimpleResult>;
   /** Daftar model yang tersedia pada server headless milik Project. */
   listModels(projectId: string): Promise<Result<ModelOption[]>>;
+  /**
+   * Daftar agent (mode) opencode milik Project — primary/all saja, siap
+   * ditampilkan di pemilih mode composer.
+   */
+  listAgents(projectId: string): Promise<Result<AgentOption[]>>;
   /** Cari file project untuk autocomplete `@file` di composer. */
   findFiles(projectId: string, query: string): Promise<Result<string[]>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
   setSessionModel(sessionId: string, model: SessionModel | null): SimpleResult;
+  /**
+   * Ganti agent (mode) pilihan Session — `build`, `plan`, atau agent kustom
+   * (`null` = default opencode). Berlaku pada prompt berikutnya.
+   */
+  setSessionAgent(sessionId: string, agent: string | null): SimpleResult;
   /**
    * Kirim input bebas. `files` = path relatif project (`@file`); `images` =
    * id lampiran di Attachment_Store (gambar upload dari perangkat).
@@ -279,7 +298,7 @@ function friendlySendError(raw: string): string {
   return r.split("\n")[0] ?? r;
 }
 
-/** Bangun Interactive_Prompt dari event `permission.asked`. */
+/** Bangun Interactive_Prompt dari event `permission.asked` (lihat juga `permissionGroupKey`). */
 function promptFromPermission(
   ev: OpenCodeEvent,
   sessionId: string,
@@ -305,7 +324,11 @@ function promptFromQuestion(ev: OpenCodeEvent, sessionId: string, now: number): 
   const questions = field(ev, "questions");
   const first =
     Array.isArray(questions) && questions.length > 0
-      ? (questions[0] as { question?: unknown; options?: unknown })
+      ? (questions[0] as {
+          question?: unknown;
+          options?: unknown;
+          custom?: unknown;
+        })
       : null;
   const options =
     first && Array.isArray(first.options)
@@ -320,10 +343,25 @@ function promptFromQuestion(ev: OpenCodeEvent, sessionId: string, now: number): 
     type: "menu",
     title: first && typeof first.question === "string" ? first.question : null,
     options: options.length > 0 ? options : null,
+    custom: first?.custom !== false,
     status: "pending",
     createdAt: now,
     resolvedAt: null,
   };
+}
+
+/**
+ * Kunci pengelompokan prompt permission yang identik.
+ *
+ * opencode memancarkan SATU request permission per tool call, tanpa
+ * deduplikasi — meminta akses yang sama berulang (mis. `bash` pada direktori
+ * eksternal yang sama) membanjiri UI dengan kartu identik. Request dengan
+ * kind + judul yang sama dianggap satu keputusan yang sama: tampil sebagai
+ * SATU kartu, dan jawaban user diteruskan ke SELURUH request anggota grup
+ * (fan-out di `resolvePrompt`) agar turn tidak menggantung.
+ */
+function permissionGroupKey(p: InteractivePrompt): string {
+  return `${p.kind}\u0000${p.title ?? ""}`;
 }
 
 /**
@@ -343,6 +381,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   const onMessage = opts.onMessage;
   const onPrompt = opts.onPrompt;
+  const onPromptResolved = opts.onPromptResolved;
   const onStatusChange = opts.onStatusChange;
   const onDeleted = opts.onDeleted;
   const onError = opts.onError;
@@ -692,6 +731,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       status: "running",
       ocSessionId: created.data.id,
       model,
+      agent: req.agent ?? null,
       createdAt,
       updatedAt: createdAt,
     };
@@ -844,6 +884,19 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
+   * Daftar agent (mode) untuk Project — server headless Project di-ensure
+   * lebih dulu karena daftar agent dibaca dari konfigurasi opencode di
+   * direktori Project (agent kustom user ikut masuk).
+   */
+  async function listAgents(projectId: string): Promise<Result<AgentOption[]>> {
+    const project = store.getProjectById(projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    if (!serverRes.ok) return { ok: false, error: serverRes.error };
+    return serverRes.data.client.listAgents();
+  }
+
+  /**
    * Cari file di Project untuk autocomplete `@file` — index pencarian
    * milik server headless opencode (sesuai perilaku `@` di opencode TUI).
    * `query` kosong juga valid (mengembalikan daftar awal).
@@ -864,6 +917,18 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const cur = store.getSession(sessionId);
     if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
     const upd = store.updateSessionModel(sessionId, model);
+    return upd.ok ? { ok: true } : { ok: false, error: upd.error };
+  }
+
+  /**
+   * Ganti agent (mode) pilihan Session. Berlaku untuk prompt berikutnya
+   * (prompt_async selalu mengirim agent tersimpan di Session).
+   */
+  function setSessionAgent(sessionId: string, agent: string | null): SimpleResult {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    if (agent !== null && agent.trim() === "") return { ok: false, error: "INVALID_AGENT" };
+    const upd = store.updateSessionAgent(sessionId, agent);
     return upd.ok ? { ok: true } : { ok: false, error: upd.error };
   }
 
@@ -1016,7 +1081,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       try {
         // `prompt_async` balas 204 begitu prompt diterima; hasil turn tiba
         // lewat SSE dan ditutup oleh `session.idle`.
-        const res = await handle.client.promptAsync(ocSessionId, text, cur.data.model, promptFiles);
+        const res = await handle.client.promptAsync(
+          ocSessionId,
+          text,
+          cur.data.model,
+          promptFiles,
+          cur.data.agent,
+        );
         if (!res.ok) {
           failTurn(sessionId, friendlySendError(res.error ?? "OC_PROMPT_ASYNC_FAILED"));
         }
@@ -1043,22 +1114,39 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const handle = servers.getServer(cur.data.projectId);
     if (!handle) return { ok: false, error: "SESSION_NOT_ACTIVE" };
 
+    // Kumpulkan request pending yang identik (grup kartu yang sama di UI):
+    // jawaban satu kartu diteruskan ke seluruh anggota grup. Tanpa ini,
+    // kartu kembar yang tertinggal di server membuat turn berikutnya
+    // menggantung menunggu keputusan yang sudah diambil user.
+    const targets = store
+      .listPendingPrompts(sessionId)
+      .filter((q) => q.id !== promptId && permissionGroupKey(q) === permissionGroupKey(p.data));
+
+    /**
+     * Reply satu request permission. `always` = "Always allow" — opencode
+     * mengingat pola yang disetujui sehingga request identik berikutnya tidak
+     * lagi menampilkan kartu.
+     */
+    const replyPermission = (id: string, r: PromptResponse): Promise<SimpleResult> => {
+      if (r === "approve") return handle.client.replyPermission(id, "once");
+      if (r === "always") return handle.client.replyPermission(id, "always");
+      if (r === "deny" || r === "cancel") {
+        // Cancel == tolak (tanpa meneruskan input), setara deny di mode TUI.
+        return handle.client.replyPermission(id, "reject");
+      }
+      return Promise.resolve({ ok: false, error: "INVALID_PROMPT_RESPONSE" });
+    };
+
     let res: SimpleResult;
     if (p.data.kind === "permission") {
-      if (response === "approve") {
-        res = await handle.client.replyPermission(promptId, "once");
-      } else if (response === "deny" || response === "cancel") {
-        // Cancel == tolak (tanpa meneruskan input), setara deny di mode TUI.
-        res = await handle.client.replyPermission(promptId, "reject");
-      } else {
-        return { ok: false, error: "INVALID_PROMPT_RESPONSE" };
-      }
+      res = await replyPermission(promptId, response);
     } else {
-      // kind === "question" — opsi harus bagian dari daftar (Requirement 6.6)
+      // kind === "question" — opsi harus bagian dari daftar (Requirement 6.6).
+      // Opsi tidak dikenal TIDAK ditolak keras bila daftar tersimpan tidak
+      // cocok dengan opsi live (baris DB lama / skema server berubah):
+      // diteruskan apa adanya ke opencode yang tahu daftar sebenarnya —
+      // menolak di sini membuat tombol opsi terasa mati tanpa feedback.
       if (typeof response === "object" && response !== null) {
-        if (!p.data.options?.includes(response.option)) {
-          return { ok: false, error: "INVALID_PROMPT_OPTION" };
-        }
         res = await handle.client.replyQuestion(promptId, [response.option]);
       } else if (response === "cancel") {
         res = await handle.client.rejectQuestion(promptId);
@@ -1068,6 +1156,22 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     }
     if (!res.ok) return { ok: false, error: res.error };
     updatePromptResolved(promptId);
+    // Jawaban question cukup lewat reply API — tidak di-echo ke riwayat chat
+    // agar transcript bersih (agent tetap menerima jawabannya).
+    // Fan-out best-effort ke kartu kembar; kegagalan satu request tidak
+    // menggagalkan jawaban utama yang sudah diterima server.
+    for (const twin of targets) {
+      const twinRes =
+        p.data.kind === "permission"
+          ? await replyPermission(twin.id, response)
+          : typeof response === "object" && response !== null
+            ? await handle.client.replyQuestion(twin.id, [response.option])
+            : await handle.client.rejectQuestion(twin.id);
+      if (twinRes.ok) {
+        updatePromptResolved(twin.id);
+        onPromptResolved?.(sessionId, twin.id);
+      }
+    }
     return { ok: true };
   }
 
@@ -1129,7 +1233,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     deleteSession,
     releaseProject,
     listModels,
+    listAgents,
     setSessionModel,
+    setSessionAgent,
     findFiles,
     sendFreeTextInput,
     resolvePrompt,

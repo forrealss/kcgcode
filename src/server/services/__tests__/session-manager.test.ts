@@ -27,6 +27,7 @@ import type {
 } from "../../../types";
 import { type AttachmentManager, createAttachmentManager } from "../attachments";
 import type {
+  AgentOption,
   ModelOption,
   OpenCodeClient,
   OpenCodeEvent,
@@ -65,6 +66,10 @@ interface FakeClient extends OpenCodeClient {
   availableModels: ModelOption[];
   /** Model yang diterima tiap panggilan promptAsync (null = default). */
   promptModels: (string | null)[];
+  /** Agent yang tersedia untuk listAgents (default: build + plan). */
+  availableAgents: AgentOption[];
+  /** Agent yang diterima tiap panggilan promptAsync (null = default). */
+  promptAgents: (string | null)[];
   /** Antrean jeda simulasi sebelum tiap sendMessage selesai (ms) — uji race. */
   sendDelays?: number[];
   emit(ev: OpenCodeEvent): void;
@@ -99,6 +104,11 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
       },
     ],
     promptModels: [],
+    availableAgents: [
+      { name: "build", mode: "primary", description: "Full tool access" },
+      { name: "plan", mode: "primary", description: "Planning only" },
+    ],
+    promptAgents: [],
     async createSession(opts) {
       calls.push(`createSession:${opts?.title ?? ""}`);
       if (!client.createSessionResult.ok) {
@@ -123,6 +133,10 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
       }
       return { ok: true, data: client.availableModels };
     },
+    async listAgents() {
+      calls.push("listAgents");
+      return { ok: true, data: client.availableAgents };
+    },
     async findFiles(query) {
       calls.push(`findFiles:${query}`);
       if (!client.findFilesResult.ok) {
@@ -145,10 +159,11 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         },
       };
     },
-    async promptAsync(_sessionId, text, model, files) {
+    async promptAsync(_sessionId, text, model, files, agent) {
       calls.push(`promptAsync:${text}`);
       client.promptFilesCalls.push(files ?? []);
       client.promptModels.push(model ? `${model.providerID}/${model.modelID}` : null);
+      client.promptAgents.push(agent ?? null);
       const delay = client.sendDelays?.shift();
       if (delay) await Bun.sleep(delay);
       if (!client.promptAsyncResult.ok) {
@@ -274,6 +289,8 @@ interface Harness {
   errors: [string, string][];
   /** Perubahan status turn (onTurnChange): [sessionId, active]. */
   turns: [string, boolean][];
+  /** Prompt kembar yang ikut resolved lewat fan-out (onPromptResolved). */
+  promptResolved: [string, string][];
   project: Project;
   root: string;
   close(): void;
@@ -302,6 +319,7 @@ function freshHarnessWithHooks(
   const statuses: [string, SessionStatus][] = [];
   const errors: [string, string][] = [];
   const turns: [string, boolean][] = [];
+  const promptResolved: [string, string][] = [];
 
   const attachments = extra.withAttachments
     ? createAttachmentManager(path.join(root, "uploads"))
@@ -316,6 +334,7 @@ function freshHarnessWithHooks(
     onMessage: (m) => messages.push(m),
     onMessagePart: (sid, mid, part) => messageParts.push([sid, mid, part]),
     onPrompt: (p) => prompts.push(p),
+    onPromptResolved: (sid, pid) => promptResolved.push([sid, pid]),
     onStatusChange: (id, st) => statuses.push([id, st]),
     onError: (id, m) => errors.push([id, m]),
     onTurnChange: (id, active) => turns.push([id, active]),
@@ -332,6 +351,7 @@ function freshHarnessWithHooks(
     statuses,
     errors,
     turns,
+    promptResolved,
     project,
     root,
     close() {
@@ -1240,6 +1260,35 @@ test("event question.asked -> prompt kind=question menu + options", async () => 
     expect(p.sessionId).toBe(sid);
     expect(p.title).toBe("Gunakan mode apa?");
     expect(p.options).toEqual(["Build", "Plan"]);
+    // Flag `custom` default true di skema question opencode.
+    expect(p.custom).toBe(true);
+  } finally {
+    h.close();
+  }
+});
+
+test("event question.asked custom=false -> prompt.custom false (tanpa input bebas)", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    client.emit({
+      type: "question.asked",
+      requestID: "que_c0",
+      sessionID: "ses_remote1",
+      questions: [
+        {
+          question: "Pilih salah satu",
+          header: "pilih",
+          custom: false,
+          options: [{ label: "A", description: "a" }],
+        },
+      ],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    expect(promptOf(h).custom).toBe(false);
+    expect(promptOf(h).sessionId).toBe(sid);
   } finally {
     h.close();
   }
@@ -1529,6 +1578,53 @@ test("event permission.v2.asked pada child sub-agent -> prompt untuk Session ind
   }
 });
 
+test("createSession + sendFreeTextInput meneruskan agent tersimpan ke promptAsync", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h, "opencode");
+    expect(h.sm.setSessionAgent(sid, "plan").ok).toBe(true);
+    // Status Session tetap terbaca dan agent tersimpan.
+    const cur = h.store.getSession(sid);
+    expect(cur.ok && cur.data.agent).toBe("plan");
+
+    const r = await h.sm.sendFreeTextInput(sid, "buatkan rencana");
+    expect(r.ok).toBe(true);
+    await flush();
+    expect(clientOf(h).promptAgents).toEqual(["plan"]);
+
+    // Kembali ke default -> tanpa field agent di prompt berikutnya.
+    expect(h.sm.setSessionAgent(sid, null).ok).toBe(true);
+    await h.sm.sendFreeTextInput(sid, "lanjut eksekusi");
+    await flush();
+    expect(clientOf(h).promptAgents).toEqual(["plan", null]);
+  } finally {
+    h.close();
+  }
+});
+
+test("setSessionAgent: session tidak ada / nama kosong -> ditolak", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    expect(h.sm.setSessionAgent("unknown", "plan").error).toBe("SESSION_NOT_FOUND");
+    expect(h.sm.setSessionAgent(sid, "   ").error).toBe("INVALID_AGENT");
+  } finally {
+    h.close();
+  }
+});
+
+test("listAgents -> daftar agent server headless", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h); // pastikan server sudah di-ensure
+    const res = await h.sm.listAgents("p1");
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.data.map((a) => a.name)).toEqual(["build", "plan"]);
+  } finally {
+    h.close();
+  }
+});
+
 test("event permission.asked dengan sessionID tak dikenal -> diabaikan", async () => {
   const h = freshHarness();
   try {
@@ -1610,10 +1706,132 @@ test("resolvePrompt question: option -> replyQuestion; cancel -> rejectQuestion"
     expect(r1.ok).toBe(true);
     expect(client.calls).toContain("replyQuestion:que_1:A");
 
+    // Jawaban question TIDAK di-echo ke riwayat chat (transcript bersih).
+    expect(h.messages.filter((m) => m.role === "user")).toHaveLength(0);
+
     const pid2 = await seedPrompt(h, sid, "question", "que_2");
     const r2 = await h.sm.resolvePrompt(sid, pid2, "cancel");
     expect(r2.ok).toBe(true);
     expect(client.calls).toContain("rejectQuestion:que_2");
+    expect(h.messages.filter((m) => m.role === "user")).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt permission approve -> TIDAK di-echo ke chat", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const pid = await seedPrompt(h, sid, "permission", "per_echo");
+    await h.sm.resolvePrompt(sid, pid, "approve");
+    expect(h.messages.filter((m) => m.role === "user")).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt permission identik bertumpuk -> satu jawaban di-fan-out ke semuanya", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    // Tiga request identik (opencode memancarkan satu per tool call).
+    for (const id of ["per_a", "per_b", "per_c"]) {
+      client.emit({
+        type: "permission.asked",
+        requestID: id,
+        sessionID: "ses_remote1",
+        permission: "external_directory",
+        patterns: ["D:\\Proj\\**"],
+      });
+    }
+    expect(h.prompts).toHaveLength(3);
+
+    // Satu klik Approve pada kartu grup -> ketiganya di-reply & resolved.
+    const r = await h.sm.resolvePrompt(sid, "per_b", "approve");
+    expect(r.ok).toBe(true);
+    for (const id of ["per_a", "per_b", "per_c"]) {
+      expect(client.calls).toContain(`replyPermission:${id}:once`);
+      const p = h.store.getPrompt(id);
+      expect(p.ok && p.data.status).toBe("resolved");
+    }
+
+    // Deny juga berlaku ke grup.
+    for (const id of ["per_d", "per_e"]) {
+      client.emit({
+        type: "permission.asked",
+        requestID: id,
+        sessionID: "ses_remote1",
+        permission: "external_directory",
+        patterns: ["D:\\Proj\\**"],
+      });
+    }
+    await h.sm.resolvePrompt(sid, "per_d", "deny");
+    for (const id of ["per_d", "per_e"]) {
+      expect(client.calls).toContain(`replyPermission:${id}:reject`);
+      const p = h.store.getPrompt(id);
+      expect(p.ok && p.data.status).toBe("resolved");
+    }
+    // Twin yang ikut resolved dilaporkan via hook (notif WS prompt_resolved).
+    expect(h.promptResolved).toContainEqual([sid, "per_e"]);
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt always -> replyPermission always; opsi tak dikenal tetap diteruskan", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    // Always allow: opencode mengingat pola -> request identik berikutnya
+    // tidak lagi menampilkan kartu.
+    const pid = await seedPrompt(h, sid, "permission", "per_always");
+    const r = await h.sm.resolvePrompt(sid, pid, "always");
+    expect(r.ok).toBe(true);
+    expect(client.calls).toContain("replyPermission:per_always:always");
+
+    // Opsi menu tidak ada di daftar tersimpan TETAP diteruskan ke opencode
+    // (validasi sebenarnya di server opencode) — menolak keras di sini
+    // membuat tombol opsi terasa mati tanpa feedback.
+    const qid = await seedPrompt(h, sid, "question", "que_opt");
+    const r2 = await h.sm.resolvePrompt(sid, qid, { option: "OpsiLive" });
+    expect(r2.ok).toBe(true);
+    expect(client.calls).toContain("replyQuestion:que_opt:OpsiLive");
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt permission beda judul TIDAK ikut ter-fan-out", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_bash",
+      sessionID: "ses_remote1",
+      permission: "bash",
+      patterns: ["ls"],
+    });
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_edit",
+      sessionID: "ses_remote1",
+      permission: "edit",
+      patterns: ["src/a.ts"],
+    });
+
+    await h.sm.resolvePrompt(sid, "per_bash", "approve");
+    expect(client.calls).toContain("replyPermission:per_bash:once");
+    expect(client.calls).not.toContain("replyPermission:per_edit:once");
+    const other = h.store.getPrompt("per_edit");
+    expect(other.ok && other.data.status).toBe("pending");
   } finally {
     h.close();
   }
@@ -1687,6 +1905,7 @@ test("reconcileOnStartup: session running -> crashed", () => {
       status: "running",
       ocSessionId: "ses_x",
       model: null,
+      agent: null,
       createdAt: 1,
       updatedAt: 1,
     });
@@ -1696,6 +1915,7 @@ test("reconcileOnStartup: session running -> crashed", () => {
       agentType: "opencode",
       cwd: h.project.path,
       status: "stopped",
+      agent: null,
       ocSessionId: null,
       model: null,
       createdAt: 1,

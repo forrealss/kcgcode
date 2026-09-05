@@ -27,6 +27,7 @@ function session(id: string, projectId: string, status: SessionStatus, updatedAt
     status,
     ocSessionId: null,
     model: null,
+    agent: null,
     createdAt: updatedAt,
     updatedAt,
   };

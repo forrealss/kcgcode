@@ -138,7 +138,13 @@ function makeFakeSessionManager(): FakeSessionManager {
     async listModels() {
       return { ok: false, error: "not-used" };
     },
+    async listAgents() {
+      return { ok: false, error: "not-used" };
+    },
     setSessionModel() {
+      return { ok: false, error: "not-used" };
+    },
+    setSessionAgent() {
       return { ok: false, error: "not-used" };
     },
     async sendFreeTextInput(sessionId, text) {
@@ -180,6 +186,7 @@ function freshHarness(): Harness {
     status: "running",
     ocSessionId: "ses_1",
     model: null,
+    agent: null,
     createdAt: 0,
     updatedAt: 0,
   });
@@ -292,7 +299,8 @@ test("prompt_response sukses -> notify prompt_resolved; gagal -> error", async (
     expect(resolved).toHaveLength(1);
     expect(resolved[0]?.promptId).toBe("pr1");
 
-    // Gagal -> error, tanpa notif resolved
+    // Gagal -> error berkode PROMPT_FAILED (ditampilkan DI kartu oleh client)
+    // dengan pesan ramah, tanpa notif resolved.
     h.sm.resolveResult = { ok: false, error: "PROMPT_NOT_FOUND" };
     h.gw.promptResponse(sub, "s1", "pr2", "approve");
     await Bun.sleep(0);
@@ -300,7 +308,10 @@ test("prompt_response sukses -> notify prompt_resolved; gagal -> error", async (
       return m.type === "error";
     });
     expect(err).toBeDefined();
-    if (err) expect(err.code).toBe(ErrorCodes.PROMPT_NOT_FOUND);
+    if (err) {
+      expect(err.code).toBe(ErrorCodes.PROMPT_FAILED);
+      expect(err.message).toContain("no longer waiting");
+    }
     expect(sub.sent.filter((m) => m.type === "prompt_resolved")).toHaveLength(1);
   } finally {
     h.close();
@@ -365,6 +376,7 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
       status: "running",
       ocSessionId: "ses_2",
       model: null,
+      agent: null,
       createdAt: 0,
       updatedAt: 0,
     });

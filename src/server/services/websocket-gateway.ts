@@ -89,6 +89,28 @@ function toErrorCode(error: string): string {
   return "ERROR";
 }
 
+/**
+ * Pesan ramah untuk kegagalan reply prompt (kartu tetap bisa dicoba lagi):
+ * error mentah dari opencode-client berupa kode seperti
+ * `OC_QUESTION_REPLY_FAILED(400)` — kurang berguna bagi user.
+ */
+function friendlyPromptError(raw: string): string {
+  if (
+    raw === ErrorCodes.PROMPT_NOT_FOUND ||
+    raw.startsWith("OC_QUESTION") ||
+    raw.startsWith("OC_PERMISSION")
+  ) {
+    return "The agent is no longer waiting for this answer (it may have moved on). Try again or send a new message.";
+  }
+  if (raw === "SESSION_NOT_ACTIVE" || raw === "SESSION_NOT_RUNNING") {
+    return "The session is not running. Start it again to answer.";
+  }
+  if (raw === ErrorCodes.PROMPT_ALREADY_RESOLVED) {
+    return "This prompt was already answered.";
+  }
+  return `Failed to send the answer (${raw.split("(")[0] ?? raw}). Try again.`;
+}
+
 export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocketGateway {
   const { store, sessionManager } = opts;
   const subs = new Map<Subscriber, AttachedInfo>();
@@ -161,14 +183,23 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
       .resolvePrompt(sessionId, promptId, response)
       .then((res) => {
         if (!res.ok) {
-          const code = toErrorCode(res.error ?? "");
-          sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
+          // Kode PROMPT_FAILED: client menampilkan error ini DI kartu prompt
+          // (bukan banner global) agar klik yang gagal tidak terasa mati.
+          sendSafe(sub, {
+            type: "error",
+            code: ErrorCodes.PROMPT_FAILED,
+            message: friendlyPromptError(res.error ?? "ERROR"),
+          });
           return;
         }
         notifyPromptResolved(sessionId, promptId);
       })
       .catch(() => {
-        sendSafe(sub, { type: "error", code: "ERROR", message: "Gagal memproses respon prompt" });
+        sendSafe(sub, {
+          type: "error",
+          code: ErrorCodes.PROMPT_FAILED,
+          message: "Failed to send the answer to the agent. Try again.",
+        });
       });
   }
 
@@ -278,6 +309,7 @@ export function bunWsSubscriber<T>(ws: ServerWebSocket<T>): Subscriber {
 function isPromptResponse(r: unknown): r is PromptResponse {
   return (
     r === "approve" ||
+    r === "always" ||
     r === "deny" ||
     r === "cancel" ||
     (typeof r === "object" && r !== null && typeof (r as { option?: unknown }).option === "string")

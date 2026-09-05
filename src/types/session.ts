@@ -18,6 +18,17 @@ export interface SessionModel {
   modelID: string;
 }
 
+/**
+ * Agent (mode) opencode pilihan untuk Session — dibaca dari `GET /agent`
+ * server headless, dipakai saat mengirim prompt (body `agent`).
+ * `null` = biarkan opencode memakai agent default-nya (biasanya `build`).
+ */
+export interface SessionAgent {
+  name: string;
+  mode: "primary" | "subagent" | "all";
+  description: string | null;
+}
+
 export interface Session {
   id: string;
   projectId: string;
@@ -28,6 +39,8 @@ export interface Session {
   ocSessionId: string | null;
   /** Model LLM pilihan; null = model default opencode. */
   model: SessionModel | null;
+  /** Agent (mode) pilihan; null = agent default opencode (build). */
+  agent: string | null;
   createdAt: number;
   updatedAt: number;
 }

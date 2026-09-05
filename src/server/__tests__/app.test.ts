@@ -77,6 +77,15 @@ function makeFakeClient(projectId: string): FakeClient {
         ],
       };
     },
+    async listAgents() {
+      return {
+        ok: true,
+        data: [
+          { name: "build", mode: "primary" as const, description: "Full tool access" },
+          { name: "plan", mode: "primary" as const, description: "Planning only" },
+        ],
+      };
+    },
     async sendMessage(_sessionId, text) {
       client.sendMessageCalls.push(text);
       return {

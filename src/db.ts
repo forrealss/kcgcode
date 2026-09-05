@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   status TEXT NOT NULL CHECK (status IN ('running','stopped','crashed')),
   oc_session_id TEXT,
   model TEXT,
+  agent TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS prompts (
   session_id TEXT NOT NULL REFERENCES sessions(id),
   kind TEXT NOT NULL DEFAULT 'permission',
   type TEXT NOT NULL CHECK (type IN ('confirmation','menu')),
+  custom INTEGER NOT NULL DEFAULT 0,
   title TEXT,
   options_json TEXT,
   status TEXT NOT NULL CHECK (status IN ('pending','resolved')),
@@ -121,6 +123,8 @@ export interface SessionStore {
   updateSessionOcId(sessionId: string, ocSessionId: string | null): Result<Session>;
   /** Perbarui model pilihan Session; `null` = kembali ke default opencode. */
   updateSessionModel(sessionId: string, model: SessionModel | null): Result<Session>;
+  /** Perbarui agent (mode) pilihan Session; `null` = default opencode. */
+  updateSessionAgent(sessionId: string, agent: string | null): Result<Session>;
   getSession(sessionId: string): Result<Session>;
   getSessionByOcId(ocSessionId: string): Result<Session>;
   listSessions(): Session[];
@@ -174,6 +178,7 @@ interface SessionRow {
   status: string;
   oc_session_id: string | null;
   model: string | null;
+  agent: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -183,6 +188,7 @@ interface PromptRow {
   session_id: string;
   kind: string;
   type: string;
+  custom: number;
   title: string | null;
   options_json: string | null;
   status: string;
@@ -228,6 +234,7 @@ function mapSession(r: SessionRow): Session {
     status: r.status as SessionStatus,
     ocSessionId: r.oc_session_id,
     model: parseModel(r.model),
+    agent: r.agent ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
@@ -239,6 +246,7 @@ function mapPrompt(r: PromptRow): InteractivePrompt {
     sessionId: r.session_id,
     kind: (r.kind as InteractivePrompt["kind"]) ?? "permission",
     type: r.type as InteractivePrompt["type"],
+    custom: r.custom === 1,
     title: r.title,
     options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null,
     status: r.status as PromptStatus,
@@ -285,6 +293,15 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     "ALTER TABLE prompts ADD COLUMN kind TEXT NOT NULL DEFAULT 'permission'",
   );
   ensureColumn(db, "prompts", "title", "ALTER TABLE prompts ADD COLUMN title TEXT");
+  // Question saja: boleh jawab bebas (flag `custom` skema question opencode).
+  ensureColumn(
+    db,
+    "prompts",
+    "custom",
+    "ALTER TABLE prompts ADD COLUMN custom INTEGER NOT NULL DEFAULT 0",
+  );
+  // Agent (mode) opencode pilihan Session — null = default opencode (build).
+  ensureColumn(db, "sessions", "agent", "ALTER TABLE sessions ADD COLUMN agent TEXT");
   // Model pilihan per Session (JSON `{providerID, modelID}`), NULL = default.
   ensureColumn(db, "sessions", "model", "ALTER TABLE sessions ADD COLUMN model TEXT");
 
@@ -304,7 +321,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     deleteProjectRow: db.query("DELETE FROM projects WHERE id = ?"),
 
     insertSession: db.query(
-      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, agent, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getSession: db.query("SELECT * FROM sessions WHERE id = ?"),
     getSessionByOcId: db.query("SELECT * FROM sessions WHERE oc_session_id = ?"),
@@ -314,6 +331,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
       "UPDATE sessions SET oc_session_id = ?, updated_at = ? WHERE id = ?",
     ),
     updateSessionModel: db.query("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?"),
+    updateSessionAgent: db.query("UPDATE sessions SET agent = ?, updated_at = ? WHERE id = ?"),
     deleteSessionMessages: db.query("DELETE FROM messages WHERE session_id = ?"),
     deleteSessionPrompts: db.query("DELETE FROM prompts WHERE session_id = ?"),
     deleteSessionHistory: db.query("DELETE FROM session_status_history WHERE session_id = ?"),
@@ -334,7 +352,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
     ),
 
     insertPrompt: db.query(
-      "INSERT INTO prompts (id, session_id, kind, type, title, options_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO prompts (id, session_id, kind, type, custom, title, options_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getPrompt: db.query("SELECT * FROM prompts WHERE id = ?"),
     pendingPrompts: db.query(
@@ -416,6 +434,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
           session.status,
           session.ocSessionId,
           session.model ? JSON.stringify(session.model) : null,
+          session.agent ?? null,
           session.createdAt,
           session.updatedAt,
         );
@@ -467,6 +486,23 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
         const existing = q.getSession.get(sessionId) as SessionRow | null;
         if (!existing) return errResult("SESSION_NOT_FOUND");
         q.updateSessionModel.run(model ? JSON.stringify(model) : null, Date.now(), sessionId);
+        const updated = mapSession(q.getSession.get(sessionId) as SessionRow);
+        return { ok: true, data: updated };
+      } catch (e) {
+        return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);
+      }
+    },
+
+    /**
+     * Perbarui agent (mode) pilihan Session tanpa mengubah status — dipakai
+     * rute `PUT /api/sessions/:id`. `null` berarti kembali ke agent default
+     * opencode (biasanya `build`).
+     */
+    updateSessionAgent(sessionId: string, agent: string | null): Result<Session> {
+      try {
+        const existing = q.getSession.get(sessionId) as SessionRow | null;
+        if (!existing) return errResult("SESSION_NOT_FOUND");
+        q.updateSessionAgent.run(agent ?? null, Date.now(), sessionId);
         const updated = mapSession(q.getSession.get(sessionId) as SessionRow);
         return { ok: true, data: updated };
       } catch (e) {
@@ -587,6 +623,7 @@ export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore
           prompt.sessionId,
           prompt.kind,
           prompt.type,
+          prompt.custom === true ? 1 : 0,
           prompt.title,
           prompt.options ? JSON.stringify(prompt.options) : null,
           prompt.status,

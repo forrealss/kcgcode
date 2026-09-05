@@ -31,6 +31,7 @@ import {
   MoreVerticalIcon,
   PenLineIcon,
   PlayIcon,
+  PlusIcon,
   SearchIcon,
   SendHorizontalIcon,
   SquareIcon,
@@ -40,7 +41,8 @@ import {
   WrenchIcon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgentModeList } from "@/components/sessions/AgentModeList";
 import { MarkdownContent } from "@/components/sessions/MarkdownContent";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
 import {
@@ -73,7 +75,16 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
+import { useAgentPicker } from "@/hooks/useAgentPicker";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
 import { useTheme } from "@/hooks/useTheme";
@@ -98,6 +109,7 @@ import type {
   SessionStatus,
 } from "@/types";
 import type { ServerMessage } from "@/ws-protocol";
+import { AgentPicker } from "./AgentPicker";
 import {
   type CollapsibleState,
   extendCollapsed,
@@ -105,7 +117,7 @@ import {
   toggleCollapsible,
 } from "./CollapsibleState";
 import { Mascot } from "./Mascot";
-import { PromptCard } from "./PromptCard";
+import { groupPrompts, PromptCard } from "./PromptCard";
 
 export interface SessionViewProps {
   session: Session;
@@ -143,6 +155,9 @@ const STATUS_DOT: Record<SessionStatus, string> = {
   stopped: "bg-muted-foreground/50",
   crashed: "bg-destructive",
 };
+
+/** Durasi animasi keluar kartu prompt (slide-down + fade) dalam ms. */
+const PROMPT_EXIT_MS = 220;
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString(undefined, {
@@ -514,7 +529,24 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const [status, setStatus] = useState<SessionStatus>(session.status);
   /** Model pilihan Session — dapat diganti live; null = default opencode. */
   const [model, setModel] = useState<SessionModel | null>(session.model);
+  /** Agent (mode) pilihan Session — build/plan/agent kustom; null = default. */
+  const [agent, setAgent] = useState<string | null>(session.agent);
+  /**
+   * Fetch + pick daftar agent untuk Sheet aksi mobile — dipakai langsung
+   * (tanpa nested popover) supaya tap satu mode langsung menerapkannya.
+   */
+  const agentPicker = useAgentPicker(session.projectId, session.id, setAgent);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Error resolusi prompt terakhir — diteruskan ke kartu via `errorSignal`
+   * agar tampil di kartu (bukan banner global yang jauh dari tempat klik).
+   */
+  const [promptError, setPromptError] = useState<string | null>(null);
+  /**
+   * Prompt yang sudah dijawab dan sedang memainkan animasi keluar
+   * (slide-down) sebelum dihapus dari daftar.
+   */
+  const [resolving, setResolving] = useState<Set<string>>(new Set());
   /**
    * Turn aktif dari server (`turn_active`): model sedang merespon. Fallback
    * klien: pesan assistant `streaming` (lihat `busy`).
@@ -531,6 +563,18 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   /** Upload lampiran sedang berjalan — cegah kirim ganda. */
   const [sending, setSending] = useState(false);
   /**
+   * Input sudah lebih dari satu baris — dipakai di mobile untuk memindahkan
+   * textarea ke barisnya sendiri (tombol aksi & kirim turun ke baris bawah).
+   */
+  const [multiline, setMultiline] = useState(false);
+  /** Sheet aksi mobile (attach image + agent mode) di tombol tunggal kiri input. */
+  const [actionSheetOpen, setActionSheetOpen] = useState(false);
+  // Muat daftar agent begitu Sheet aksi mobile pertama dibuka (lazy, sama
+  // seperti popover AgentPicker di desktop).
+  useEffect(() => {
+    if (actionSheetOpen) agentPicker.load();
+  }, [actionSheetOpen, agentPicker.load]);
+  /**
    * Autocomplete `@file`: deteksi token @query di sekitar kursor + daftar
    * saran dari server (index file milik opencode, seperti `@` di TUI-nya).
    */
@@ -546,11 +590,21 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h). */
-  const autoResize = (el: HTMLTextAreaElement) => {
+  /** Tinggi satu baris textarea (leading-6 + padding vertikal) — di atas ini dianggap multiline. */
+  const SINGLE_LINE_MAX_PX = 38;
+  /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h) + deteksi multiline. */
+  const autoResize = useCallback((el: HTMLTextAreaElement) => {
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  };
+    const next = el.scrollHeight;
+    el.style.height = `${next}px`;
+    setMultiline(next > SINGLE_LINE_MAX_PX);
+  }, []);
+  // Jaga tinggi & status multiline tetap akurat untuk perubahan `text` yang
+  // tidak lewat event `onChange` langsung (autocomplete @file, reset kirim).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` sengaja jadi trigger — nilainya dibaca dari DOM (scrollHeight), bukan dari closure.
+  useEffect(() => {
+    if (textareaRef.current) autoResize(textareaRef.current);
+  }, [text, autoResize]);
   const onMessage = useCallback((msg: ServerMessage) => {
     switch (msg.type) {
       case "history":
@@ -583,7 +637,20 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         );
         break;
       case "prompt_resolved":
-        setPrompts((prev) => prev.filter((p) => p.id !== msg.promptId));
+        // Kartu diberi jeda EXIT_MS untuk animasi keluar (slide-down + fade)
+        // sebelum benar-benar dihapus dari daftar.
+        setResolving((prev) => {
+          const next = new Set(prev).add(msg.promptId);
+          setTimeout(() => {
+            setPrompts((prevList) => prevList.filter((p) => p.id !== msg.promptId));
+            setResolving((prevSet) => {
+              const nextSet = new Set(prevSet);
+              nextSet.delete(msg.promptId);
+              return nextSet;
+            });
+          }, PROMPT_EXIT_MS);
+          return next;
+        });
         break;
       case "session_status":
         setStatus(msg.status);
@@ -598,6 +665,17 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         onBackRef.current();
         break;
       case "error":
+        // Error terkait prompt ditampilkan di kartunya masing-masing —
+        // banner global di atas chat tidak terlihat oleh user yang sedang
+        // fokus ke kartu (tombol terasa "mati" tanpa feedback).
+        if (
+          msg.code === "PROMPT_NOT_FOUND" ||
+          msg.code === "PROMPT_ALREADY_RESOLVED" ||
+          msg.code === "PROMPT_FAILED"
+        ) {
+          setPromptError(msg.message);
+          break;
+        }
         setError(msg.message);
         break;
     }
@@ -651,9 +729,14 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
 
   const resolvePrompt = useCallback(
     (promptId: string, response: PromptResponse) => {
+      // Melempar bila tidak terhubung: kartu menangkapnya dan menampilkan
+      // error — send() yang diam-diam dibuang membuat tombol terasa mati.
+      if (wsStatus !== "connected") {
+        throw new Error(`Not connected (${wsStatusLabel(wsStatus)}). Try again.`);
+      }
       send({ type: "prompt_response", sessionId: session.id, promptId, response });
     },
-    [send, session.id],
+    [send, session.id, wsStatus],
   );
 
   /** Cache path yang pernah disarankan autocomplete (validitas @ref saat kirim). */
@@ -823,6 +906,12 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     ? ((lastGroup ? turnStatus(lastGroup.messages, true) : null) ?? "Working…")
     : null;
 
+  /**
+   * Grup prompt pending untuk panel floating di atas composer — permission
+   * identik (kind+title sama) digroup jadi SATU kartu (bug kartu nyepam).
+   */
+  const promptGroups = useMemo(() => groupPrompts(prompts), [prompts]);
+
   const toggleMessage = (key: string) => {
     setCollapsible((s) => toggleCollapsible(s, key));
   };
@@ -951,27 +1040,31 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                 {renderThoughtBlock(block.steps, block.key, isLastBlock)}
                 {/* Konten teks/error setelah thinking round ini */}
                 {block.content?.kind === "error" && (
-                  <Bubble key={block.content.key} variant="destructive">
-                    <BubbleContent>
-                      <div className="flex gap-2">
-                        <CircleAlertIcon
-                          className="mt-0.5 size-4 shrink-0"
-                          data-icon="inline-start"
-                        />
-                        <span className="whitespace-pre-wrap">
-                          {partText(block.content.part) ??
-                            "Something went wrong while processing the prompt."}
-                        </span>
-                      </div>
-                    </BubbleContent>
-                  </Bubble>
+                  <div className={cn(block.steps.length > 0 && "mt-3")}>
+                    <Bubble key={block.content.key} variant="destructive">
+                      <BubbleContent>
+                        <div className="flex gap-2">
+                          <CircleAlertIcon
+                            className="mt-0.5 size-4 shrink-0"
+                            data-icon="inline-start"
+                          />
+                          <span className="whitespace-pre-wrap">
+                            {partText(block.content.part) ??
+                              "Something went wrong while processing the prompt."}
+                          </span>
+                        </div>
+                      </BubbleContent>
+                    </Bubble>
+                  </div>
                 )}
                 {block.content?.kind === "text" && block.content.text !== "" && (
-                  <Bubble key={block.content.key} variant="ghost" className="max-w-full">
-                    <BubbleContent className="w-full">
-                      <MarkdownContent>{block.content.text}</MarkdownContent>
-                    </BubbleContent>
-                  </Bubble>
+                  <div className={cn(block.steps.length > 0 && "mt-3")}>
+                    <Bubble key={block.content.key} variant="ghost" className="max-w-full">
+                      <BubbleContent className="w-full">
+                        <MarkdownContent>{block.content.text}</MarkdownContent>
+                      </BubbleContent>
+                    </Bubble>
+                  </div>
                 )}
               </div>
             );
@@ -1186,7 +1279,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                   <p className="text-sm text-destructive">{error}</p>
                 </MessageScrollerItem>
               )}
-              {messages.length === 0 && prompts.length === 0 ? (
+              {messages.length === 0 ? (
                 <MessageScrollerItem messageId="empty">
                   <p className="py-8 text-center text-sm text-muted-foreground">
                     No conversation yet. Send the first message to get started.
@@ -1210,11 +1303,6 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                   />
                 </MessageScrollerItem>
               )}
-              {prompts.map((prompt) => (
-                <MessageScrollerItem key={prompt.id} messageId={prompt.id}>
-                  <PromptCard prompt={prompt} onResolve={(r) => resolvePrompt(prompt.id, r)} />
-                </MessageScrollerItem>
-              ))}
               {status !== "running" && messages.length > 0 && (
                 <MessageScrollerItem messageId="status-note">
                   <p className="text-xs text-muted-foreground">
@@ -1228,93 +1316,267 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         </MessageScroller>
       </MessageScrollerProvider>
 
+      {/* Interactive_Prompt mengambang DI ATAS composer (ala dialog izin
+          Claude/opencode) — selalu terlihat tanpa scroll, bahkan di percakapan
+          panjang. Permission identik (kind+title sama) digroup jadi SATU kartu
+          agar request berulang opencode tidak membanjiri UI. */}
+      {promptGroups.length > 0 && (
+        <div className="pointer-events-auto relative z-30 mb-1.5 flex max-h-72 flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-2 sm:px-4">
+          {promptGroups.map((group) => (
+            <div key={group[0]?.id} className="pointer-events-auto mx-auto w-full max-w-3xl">
+              <PromptCard
+                prompts={group}
+                onResolve={(promptId, r) => resolvePrompt(promptId, r)}
+                errorSignal={promptError}
+                onConsumeError={() => setPromptError(null)}
+                exiting={group.every((p) => resolving.has(p.id))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Input bebas. `pb-[env(safe-area-inset-bottom)]` menjaga composer tidak
           tertutup home indicator saat dipasang sebagai PWA di HP. */}
-      <footer className="shrink-0 border-t px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
+      <footer className="shrink-0 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
         {/* Pemilih model kini jadi judul header — composer fokus ke input saja
             supaya area mengetik di HP tidak terpotong baris tambahan. */}
         {/* Composer sejajar dengan kolom percakapan di layar lebar. */}
-        <form
-          onSubmit={submitText}
-          className="relative mx-auto flex w-full max-w-3xl items-end gap-2"
-        >
-          {/* Dropdown saran @file (muncul di atas input saat token @ aktif).
-              Wrapper rounded + overflow-hidden memotong scrollbar sesuai
-              lengkungan, elemen di dalamnya yang men-scroll (Req kartu rounded). */}
-          {mention.mention !== null && (mention.suggestions.length > 0 || mention.loading) && (
-            <div className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-md border bg-popover shadow-md">
-              <div className="max-h-56 overflow-y-auto">
-                {mention.loading && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">Searching files…</div>
-                )}
-                {!mention.loading && mention.error && (
-                  <div className="px-3 py-2 text-xs text-destructive">{mention.error}</div>
-                )}
-                {mention.suggestions.map((file, i) => (
-                  <button
-                    key={file}
-                    type="button"
-                    className={`block w-full truncate px-3 py-2 text-left font-mono text-xs ${
-                      i === mention.highlighted ? "bg-accent text-accent-foreground" : ""
-                    }`}
-                    onMouseDown={(e) => {
-                      // mousedown (bukan click) agar textarea tidak blur duluan.
-                      e.preventDefault();
-                      const next = mention.pick(i);
-                      if (next !== null) applyPicked(next);
-                    }}
-                  >
-                    {file}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={(e) => {
-              setText(e.target.value);
-              mention.onInputChange(
-                e.target.value,
-                e.target.selectionStart ?? e.target.value.length,
-              );
-              autoResize(e.target);
-            }}
-            onKeyDown={(e) => {
-              // Dropdown aktif: panah/enter/tab/escape dikelola autocomplete.
-              if (mention.handleKeyDown(e)) return;
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                e.currentTarget.form?.requestSubmit();
-              }
-            }}
-            onPaste={handlePaste}
-            onBlur={() => mention.close()}
-            placeholder={composerPlaceholder({ busy, canInput, compact: isMobile })}
-            aria-label="Free-form input"
-            disabled={!canInput}
-            rows={1}
-            /**
-             * `min-h-11` di HP: tinggi 36px sebelumnya memotong placeholder
-             * satu baris. `text-base` mencegah Safari iOS auto-zoom saat
-             * fokus (terjadi di bawah 16px).
-             */
-            className="max-h-40 min-h-11 w-full flex-1 resize-none rounded-md border bg-transparent px-3 py-2.5 text-base shadow-xs transition-[color,box-shadow] outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-9 sm:py-2 sm:text-sm"
-          />
-          {/* Tombol setinggi textarea (44px di HP) agar sebaris rapi. */}
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!canInput}
-            aria-label="Attach image"
-            title="Attach image (PNG/JPEG/GIF/WebP, max 20 MiB)"
-            className="size-11 sm:size-9"
+        <form onSubmit={submitText} className="relative mx-auto flex w-full max-w-3xl flex-col">
+          {/* Composer compact: image picker di kiri, input prompt di tengah,
+              lalu mode agent di kanan. Model tetap dipilih dari header. */}
+          <div
+            className={cn(
+              "rounded-xl border bg-card/80 p-2 shadow-sm transition-colors",
+              "focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20",
+              !canInput && "opacity-70",
+            )}
           >
-            <ImagePlusIcon data-icon="inline-start" />
-          </Button>
+            {/* Dropdown saran @file (muncul di atas input saat token @ aktif). */}
+            {mention.mention !== null && (mention.suggestions.length > 0 || mention.loading) && (
+              <div className="absolute bottom-full left-0 right-0 z-10 mb-2 overflow-hidden rounded-xl border bg-popover shadow-md">
+                <div className="max-h-56 overflow-y-auto">
+                  {mention.loading && (
+                    <div className="px-3 py-2 text-xs text-muted-foreground">Searching files…</div>
+                  )}
+                  {!mention.loading && mention.error && (
+                    <div className="px-3 py-2 text-xs text-destructive">{mention.error}</div>
+                  )}
+                  {mention.suggestions.map((file, i) => (
+                    <button
+                      key={file}
+                      type="button"
+                      className={`block w-full truncate px-3 py-2 text-left font-mono text-base ${
+                        i === mention.highlighted ? "bg-accent text-accent-foreground" : ""
+                      }`}
+                      onMouseDown={(e) => {
+                        // mousedown (bukan click) agar textarea tidak blur duluan.
+                        e.preventDefault();
+                        const next = mention.pick(i);
+                        if (next !== null) applyPicked(next);
+                      }}
+                    >
+                      {file}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {(() => {
+              const stacked = isMobile && multiline;
+
+              const textareaEl = (
+                <textarea
+                  key="composer-textarea"
+                  ref={textareaRef}
+                  value={text}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    mention.onInputChange(
+                      e.target.value,
+                      e.target.selectionStart ?? e.target.value.length,
+                    );
+                  }}
+                  onKeyDown={(e) => {
+                    // Dropdown aktif: panah/enter/tab/escape dikelola autocomplete.
+                    if (mention.handleKeyDown(e)) return;
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      e.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  onPaste={handlePaste}
+                  onBlur={() => mention.close()}
+                  placeholder={composerPlaceholder({ busy, canInput, compact: isMobile })}
+                  aria-label="Free-form input"
+                  disabled={!canInput}
+                  rows={1}
+                  className={cn(
+                    "max-h-40 min-h-9 min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 text-base leading-6 shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0 disabled:cursor-not-allowed",
+                    stacked ? "w-full" : "flex-1 self-center",
+                  )}
+                />
+              );
+
+              const sendOrStopEl = generating ? (
+                // Saat model merespon: tombol kirim berubah jadi tombol Stop
+                // (hentikan balasan saja, Session tetap aktif ala opencode).
+                <Button
+                  key="composer-stop"
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  onClick={interrupt}
+                  disabled={wsStatus !== "connected"}
+                  aria-label="Stop response"
+                  title="Stop the model response"
+                  className="size-9 shrink-0 border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <SquareIcon className="size-3.5" />
+                </Button>
+              ) : (
+                // Tombol kirim baru muncul setelah user mengisi prompt.
+                text.trim() !== "" && (
+                  <Button
+                    key="composer-send"
+                    type="submit"
+                    size="icon"
+                    disabled={!canSubmit}
+                    aria-label="Send message"
+                    className="size-9 shrink-0"
+                  >
+                    {sending ? <Spinner className="size-4" /> : <SendHorizontalIcon />}
+                  </Button>
+                )
+              );
+
+              // Mobile: satu tombol aksi (attach image + agent mode) lewat Sheet,
+              // supaya baris composer HP tetap ringkas (3 elemen saja).
+              if (isMobile) {
+                const actionTrigger = (
+                  <SheetTrigger asChild key="composer-actions-trigger">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      disabled={!canInput}
+                      aria-label="More actions"
+                      title="Attach image or change agent mode"
+                      className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+                    >
+                      <PlusIcon data-icon="inline-start" />
+                    </Button>
+                  </SheetTrigger>
+                );
+
+                return (
+                  <Sheet open={actionSheetOpen} onOpenChange={setActionSheetOpen}>
+                    <div className={cn("flex gap-1", stacked ? "flex-col" : "items-center")}>
+                      {stacked ? (
+                        <>
+                          {textareaEl}
+                          <div className="flex items-center justify-between gap-1">
+                            {actionTrigger}
+                            {sendOrStopEl}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          {actionTrigger}
+                          {textareaEl}
+                          {sendOrStopEl}
+                        </>
+                      )}
+                    </div>
+                    <SheetContent
+                      side="bottom"
+                      className="gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]"
+                    >
+                      {/* Judul disembunyikan secara visual (a11y saja) — tampilan
+                          ala Gemini: langsung kartu aksi + daftar mode, tanpa header teks. */}
+                      <SheetHeader className="sr-only">
+                        <SheetTitle>Composer actions</SheetTitle>
+                        <SheetDescription>
+                          Attach an image or switch the agent mode for this Session.
+                        </SheetDescription>
+                      </SheetHeader>
+
+                      {/* Baris kartu aksi cepat (ikon di atas, label di bawah) —
+                          saat ini baru "Image", tapi baris scroll-x ini siap
+                          menampung aksi lain (mis. attach file) nanti. */}
+                      <div className="flex gap-3 overflow-x-auto px-4">
+                        <button
+                          type="button"
+                          disabled={!canInput}
+                          onClick={() => {
+                            setActionSheetOpen(false);
+                            fileInputRef.current?.click();
+                          }}
+                          className="flex shrink-0 flex-col items-center gap-1.5 rounded-2xl bg-muted px-5 py-3 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
+                        >
+                          <ImagePlusIcon className="size-5" />
+                          Image
+                        </button>
+                      </div>
+
+                      {/* Daftar mode agent — diberi label + keterangan singkat
+                          supaya jelas ini adalah SWITCH mode, bukan cuma nama
+                          agent aktif yang membingungkan (mis. "Default" polos). */}
+                      <div className="flex flex-col gap-0.5 overflow-y-auto px-2 pb-2">
+                        <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">
+                          Agent mode — choose how the agent handles your next message
+                        </p>
+                        <AgentModeList
+                          agents={agentPicker.agents}
+                          loading={agentPicker.loading}
+                          error={agentPicker.error}
+                          activeAgent={agent}
+                          saving={agentPicker.saving}
+                          disabled={!canInput}
+                          onPick={(name) => {
+                            setActionSheetOpen(false);
+                            void agentPicker.pick(name);
+                          }}
+                        />
+                      </div>
+                    </SheetContent>
+                  </Sheet>
+                );
+              }
+
+              // Desktop: attach image, agent mode, dan kirim/stop tetap tampil
+              // langsung sebagai kontrol terpisah di toolbar composer.
+              return (
+                <div className="flex items-center gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={!canInput}
+                    aria-label="Attach image"
+                    title="Attach image (PNG/JPEG/GIF/WebP, max 20 MiB)"
+                    className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+                  >
+                    <ImagePlusIcon data-icon="inline-start" />
+                  </Button>
+
+                  {textareaEl}
+
+                  <AgentPicker
+                    projectId={session.projectId}
+                    sessionId={session.id}
+                    agent={agent}
+                    onChanged={setAgent}
+                    disabled={!canInput}
+                  />
+
+                  {sendOrStopEl}
+                </div>
+              );
+            })()}
+          </div>
           <input
             ref={fileInputRef}
             type="file"
@@ -1327,36 +1589,6 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               e.target.value = ""; // izinkan memilih file yang sama lagi
             }}
           />
-          {generating ? (
-            // Saat model merespon: tombol kirim berubah jadi tombol Stop
-            // (hentikan balasan saja, Session tetap aktif ala opencode).
-            <Button
-              type="button"
-              variant="outline"
-              size="icon"
-              onClick={interrupt}
-              disabled={wsStatus !== "connected"}
-              aria-label="Stop response"
-              title="Stop the model response"
-              className="size-11 border-destructive/60 text-destructive hover:bg-destructive/10 hover:text-destructive sm:size-9"
-            >
-              <SquareIcon className="size-4" />
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              size="icon"
-              disabled={!canSubmit}
-              aria-label="Kirim"
-              className="size-11 sm:size-9"
-            >
-              {sending ? (
-                <Spinner className="size-4" />
-              ) : (
-                <SendHorizontalIcon data-icon="inline-start" />
-              )}
-            </Button>
-          )}
         </form>
         {/* Pratinjau gambar yang akan dilampirkan (bisa dihapus sebelum kirim). */}
         {pendingImages.length > 0 && (

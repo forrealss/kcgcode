@@ -5,10 +5,11 @@
  * - `parseSseFrame` / `normalizeEvent`: parsing & normalisasi event SSE.
  * - `parseListeningPort`: ekstraksi port dari baris log server.
  * - `flattenProviders`: respons GET /config/providers -> daftar model UI.
+ * - `flattenAgents`: respons GET /agent -> daftar mode (primary/all saja).
  */
 import { expect, test } from "bun:test";
 import fc from "fast-check";
-import { flattenProviders, normalizeEvent, parseSseFrame } from "../opencode-client";
+import { flattenAgents, flattenProviders, normalizeEvent, parseSseFrame } from "../opencode-client";
 import { parseListeningPort } from "../opencode-server";
 
 test("parseSseFrame: mengambil baris data; frame tanpa data -> null", () => {
@@ -40,6 +41,25 @@ test("normalizeEvent: {id,type,properties} -> event datar (type + properties)", 
   expect(normalizeEvent("x")).toBeNull();
   expect(normalizeEvent({})).toBeNull();
   expect(normalizeEvent({ id: 1 })).toBeNull();
+});
+
+test("flattenAgents: hanya primary/all; subagent murni disaring", () => {
+  const agents = flattenAgents([
+    { name: "build", mode: "primary", description: "Full tool access" },
+    { name: "plan", mode: "primary", description: "Planning only" },
+    { name: "general", mode: "subagent", description: "Sub-agent" },
+    { name: "explore", mode: "all", description: null },
+    { name: "", mode: "primary" },
+    "rusak",
+  ]);
+  expect(agents.map((a) => a.name)).toEqual(["build", "plan", "explore"]);
+  expect(agents[2]).toEqual({ name: "explore", mode: "all", description: null });
+});
+
+test("flattenAgents: payload bukan array / kosong -> []", () => {
+  expect(flattenAgents(null)).toEqual([]);
+  expect(flattenAgents({})).toEqual([]);
+  expect(flattenAgents([])).toEqual([]);
 });
 
 test("parseListeningPort: mengekstrak port dari baris log opencode", () => {

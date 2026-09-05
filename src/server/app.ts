@@ -130,6 +130,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onMessagePart: (sessionId, messageId, part) =>
       gateway.notifyMessagePart(sessionId, messageId, part),
     onPrompt: (prompt) => gateway.notifyPrompt(prompt.sessionId, prompt),
+    // Kartu kembar yang ikut terjawab lewat fan-out grup: kirim notif
+    // `prompt_resolved` agar hilang dari UI tanpa menunggu reattach.
+    onPromptResolved: (sessionId, promptId) => gateway.notifyPromptResolved(sessionId, promptId),
     onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
     onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),

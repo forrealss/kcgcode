@@ -33,6 +33,35 @@ export interface ModelOption {
   name: string;
 }
 
+/** Satu agent (mode) opencode — hasil `GET /agent` server headless. */
+export interface AgentOption {
+  name: string;
+  mode: "primary" | "subagent" | "all";
+  description: string | null;
+}
+
+/**
+ * Flatten respons `GET /agent` menjadi opsi siap pakai UI: hanya agent
+ * primary/all (subagent murni tidak bisa dipakai sebagai mode percakapan).
+ * Diekspor agar dapat diuji tanpa server.
+ */
+export function flattenAgents(payload: unknown): AgentOption[] {
+  if (!Array.isArray(payload)) return [];
+  const out: AgentOption[] = [];
+  for (const raw of payload) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const a = raw as { name?: unknown; mode?: unknown; description?: unknown };
+    if (typeof a.name !== "string" || a.name === "") continue;
+    if (a.mode === "subagent") continue; // bukan mode percakapan
+    out.push({
+      name: a.name,
+      mode: a.mode === "all" ? "all" : "primary",
+      description: typeof a.description === "string" && a.description !== "" ? a.description : null,
+    });
+  }
+  return out;
+}
+
 /**
  * Flatten respons `GET /config/providers` menjadi satu entri per model.
  * Bentuk sumber: `{ providers: [{ id, name, models: { [modelID]: {...} } }] }`.
@@ -106,6 +135,11 @@ export interface OpenCodeClient {
    */
   listModels(): Promise<Result<ModelOption[]>>;
   /**
+   * Daftar agent (mode) pada server (`GET /agent`) — hanya primary/all;
+   * subagent murni tidak bisa dipakai sebagai mode percakapan.
+   */
+  listAgents(): Promise<Result<AgentOption[]>>;
+  /**
    * Hapus Session di server headless (`DELETE /session/{id}`) beserta
    * seluruh riwayat pesannya di sisi opencode.
    */
@@ -131,6 +165,7 @@ export interface OpenCodeClient {
     text: string,
     model?: SessionModel | null,
     files?: OpenCodeFileRef[],
+    agent?: string | null,
   ): Promise<Result<null>>;
   /** Cari file project untuk autocomplete `@file` (path relatif). */
   findFiles(query: string): Promise<Result<string[]>>;
@@ -264,6 +299,7 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     text: string,
     model?: SessionModel | null,
     files: OpenCodeFileRef[] = [],
+    agent?: string | null,
   ): Promise<Result<null>> {
     try {
       // Parts prompt: teks bebas + satu part `file` per referensi (teks/gambar).
@@ -275,6 +311,9 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
       // Skema prompt_async menerima `model: { providerID, modelID }` opsional;
       // tanpa field ini opencode memakai model default-nya.
       if (model) body.model = { providerID: model.providerID, modelID: model.modelID };
+      // `agent` opsional (mis. build/plan atau agent kustom user); tanpa
+      // field ini opencode memakai agent default-nya.
+      if (agent) body.agent = agent;
       const { status } = await requestJson(
         baseUrl,
         "POST",
@@ -327,6 +366,16 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     }
   }
 
+  async function listAgents(): Promise<Result<AgentOption[]>> {
+    try {
+      const { status, json } = await requestJson(baseUrl, "GET", "/agent");
+      if (status !== 200) return errResult(`OC_LIST_AGENTS_FAILED(${status})`);
+      return { ok: true, data: flattenAgents(json) };
+    } catch (e) {
+      return errResult(`OC_LIST_AGENTS_FAILED: ${(e as Error).message}`);
+    }
+  }
+
   async function deleteSession(sessionId: string): Promise<SimpleResult> {
     try {
       const { status } = await requestJson(
@@ -364,12 +413,14 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
 
   async function replyQuestion(requestId: string, answers: string[]): Promise<Result<unknown>> {
     try {
-      const { status } = await requestJson(
-        baseUrl,
-        "POST",
-        `/question/${requestId}/reply`,
-        answers,
-      );
+      // Skema Question.Reply: `{ answers: Answer[] }` — SATU entri per
+      // pertanyaan, masing-masing berupa array label terpilih. Kita hanya
+      // mendukung satu pertanyaan pertama, jadi body `{ answers: [answers] }`.
+      // (Sebelumnya body dikirim sebagai array mentah -> ditolak 400 oleh
+      // server dan jawaban tidak pernah sampai ke agent.)
+      const { status } = await requestJson(baseUrl, "POST", `/question/${requestId}/reply`, {
+        answers: [answers],
+      });
       return status === 200
         ? { ok: true, data: null }
         : errResult(`OC_QUESTION_REPLY_FAILED(${status})`);
@@ -445,6 +496,7 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     createSession,
     getSession,
     listModels,
+    listAgents,
     deleteSession,
     sendMessage,
     promptAsync,

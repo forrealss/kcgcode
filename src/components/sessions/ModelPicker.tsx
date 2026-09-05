@@ -114,15 +114,15 @@ export function ModelPicker({
           variant="ghost"
           onClick={() => setOpen(true)}
           disabled={saving}
-          className="h-7 max-w-full min-w-0 gap-1 px-2 text-sm font-medium"
+          className="h-8 max-w-full min-w-0 gap-1 px-2 text-base font-semibold"
           aria-label={`Model: ${label}. Tap to change model`}
           title={`Model: ${label}`}
         >
           <span className="min-w-0 truncate">{headingLabel}</span>
           {saving ? (
-            <Spinner className="size-3.5 shrink-0" />
+            <Spinner className="size-4 shrink-0" />
           ) : (
-            <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+            <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
           )}
         </Button>
       ) : (

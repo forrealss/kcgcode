@@ -24,15 +24,17 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { agentType, projectId, model } = body.data as {
+          const { agentType, projectId, model, agent } = body.data as {
             agentType?: unknown;
             projectId?: unknown;
             model?: unknown;
+            agent?: unknown;
           };
           const res = await sessionManager.createSession({
             agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
             projectId: typeof projectId === "string" ? projectId : "",
             model: parseModelBody(model),
+            agent: typeof agent === "string" && agent.trim() !== "" ? agent.trim() : null,
           });
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ session: res.session }, 201);
@@ -78,19 +80,33 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         }
       }),
       /**
-       * Ganti model pilihan Session — body `{ model: {providerID, modelID} }`
-       * atau `{ model: null }` untuk kembali ke default opencode. Berlaku
-       * pada prompt berikutnya tanpa perlu restart Session.
+       * Ganti model dan/atau agent (mode) pilihan Session — body
+       * `{ model: {providerID, modelID} | null, agent: string | null }`.
+       * `null` mengembalikan ke default opencode. Berlaku pada prompt
+       * berikutnya tanpa perlu restart Session.
        */
       PUT: guard(async (req: BunRequest<"/api/sessions/:id">) => {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const raw = (body.data as { model?: unknown }).model;
-          const model = raw === null ? null : parseModelBody(raw);
-          const res = sessionManager.setSessionModel(req.params.id, model);
-          if (!res.ok) {
-            return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+          const { model: rawModel, agent: rawAgent } = body.data as {
+            model?: unknown;
+            agent?: unknown;
+          };
+          if (rawModel !== undefined) {
+            const model = rawModel === null ? null : parseModelBody(rawModel);
+            const res = sessionManager.setSessionModel(req.params.id, model);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
+          }
+          if (rawAgent !== undefined) {
+            const agent =
+              typeof rawAgent === "string" && rawAgent.trim() !== "" ? rawAgent.trim() : null;
+            const res = sessionManager.setSessionAgent(req.params.id, agent);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
           }
           const cur = sessionManager.getSession(req.params.id);
           return json({ session: cur.ok ? cur.data : undefined, ok: true });

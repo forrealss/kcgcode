@@ -21,9 +21,14 @@ export interface InteractivePrompt {
   /** Teks pertanyaan (question) atau deskripsi izin (permission). */
   title: string | null;
   options: string[] | null;
+  /**
+   * Question saja: user boleh mengetik jawaban bebas selain opsi yang
+   * terdaftar (flag `custom` di skema question opencode, default true).
+   */
+  custom?: boolean;
   status: PromptStatus;
   createdAt: number;
   resolvedAt: number | null;
 }
 
-export type PromptResponse = "approve" | "deny" | "cancel" | { option: string };
+export type PromptResponse = "approve" | "always" | "deny" | "cancel" | { option: string };

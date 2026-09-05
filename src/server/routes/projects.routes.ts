@@ -92,5 +92,18 @@ export function projectsRoutes(ctx: ApiRouteContext) {
         }
       }),
     },
+
+    // ---- Agent (mode) opencode: build/plan + agent kustom user ----
+    "/api/projects/:id/agents": {
+      GET: guard(async (req: BunRequest<"/api/projects/:id/agents">) => {
+        try {
+          const res = await sessionManager.listAgents(req.params.id);
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ agents: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      }),
+    },
   };
 }

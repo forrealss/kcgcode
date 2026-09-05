@@ -23,6 +23,7 @@ function makeSession(id = "s1", status: SessionStatus = "running"): Session {
     status,
     ocSessionId: id === "s1" ? "ses_1" : null,
     model: id === "s1" ? { providerID: "kcgcode", modelID: "kiro/claude-opus-5" } : null,
+    agent: null,
     createdAt: 1,
     updatedAt: 1,
   };
@@ -203,6 +204,7 @@ test("5.1: CRUD prompts — kind/title ikut tersimpan; update status", () => {
     sessionId: "s1",
     kind: "question" as const,
     type: "menu" as const,
+    custom: true,
     title: "Pilih mode",
     options: ["Build", "Plan"],
     status: "pending" as const,
@@ -225,6 +227,8 @@ test("5.1: CRUD prompts — kind/title ikut tersimpan; update status", () => {
     expect(got.data.kind).toBe("question");
     expect(got.data.title).toBe("Pilih mode");
     expect(got.data.options).toEqual(["Build", "Plan"]);
+    // Flag custom ikut roundtrip lewat kolom `prompts.custom`.
+    expect(got.data.custom).toBe(true);
   }
   expect(store.getPrompt("nope").ok).toBe(false);
   store.close();
