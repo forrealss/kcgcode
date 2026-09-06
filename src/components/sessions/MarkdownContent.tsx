@@ -81,7 +81,7 @@ function MarkdownCode({ node: _node, className, ...props }: MarkdownProps<"code"
       className={cn(
         "font-mono",
         isBlock
-          ? "bg-transparent p-0 text-sm"
+          ? "bg-transparent p-0 text-base"
           : "rounded bg-muted px-1 py-0.5 text-[0.9em] wrap-anywhere",
         className,
       )}
@@ -96,7 +96,7 @@ function MarkdownCode({ node: _node, className, ...props }: MarkdownProps<"code"
 function MarkdownTable({ node: _node, className, ...props }: MarkdownProps<"table">) {
   return (
     <div className="my-2 max-w-full overflow-x-auto rounded-lg border first:mt-0 last:mb-0">
-      <table {...props} className={cn("w-full border-collapse text-left text-sm", className)} />
+      <table {...props} className={cn("w-full border-collapse text-left text-base", className)} />
     </div>
   );
 }
@@ -112,7 +112,7 @@ const COMPONENTS = {
   // Blok kode: scroll horizontal sendiri agar baris panjang tidak melebarkan bubble.
   pre: styled(
     "pre",
-    "my-2 max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 text-sm leading-relaxed first:mt-0 last:mb-0",
+    "my-2 max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 text-base leading-relaxed first:mt-0 last:mb-0",
   ),
   p: styled("p", "my-2 first:mt-0 last:mb-0"),
   h1: styled("h1", "mt-4 mb-2 text-lg font-semibold first:mt-0"),

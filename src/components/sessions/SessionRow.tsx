@@ -72,10 +72,10 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium">{session.agentType}</span>
+            <span className="truncate text-base font-medium">{session.agentType}</span>
             <StatusBadge status={session.status} />
           </span>
-          <span className="truncate text-xs text-muted-foreground">
+          <span className="truncate text-sm text-muted-foreground">
             {describeSessionModel(session)} · {formatRelativeTime(session.updatedAt)}
           </span>
         </span>
@@ -126,8 +126,8 @@ export function SessionListSkeleton() {
         <div key={i} className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3">
           <Skeleton className="size-10 shrink-0 rounded-lg" />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <Skeleton className="h-4 w-28" />
-            <Skeleton className="h-3 w-40" />
+            <Skeleton className="h-5 w-28" />
+            <Skeleton className="h-4 w-40" />
           </div>
           <Skeleton className="size-8 shrink-0 rounded-md" />
         </div>

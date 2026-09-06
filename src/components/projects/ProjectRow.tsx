@@ -24,7 +24,7 @@ export function ProjectRow({ overview, onOpen }: ProjectRowProps) {
         hasSession ? `Resume last session of ${project.name}` : `Open project ${project.name}`
       }
     >
-      <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary uppercase">
+      <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-base font-semibold text-primary uppercase">
         {project.name.trim().charAt(0) || "?"}
         {runningCount > 0 && (
           <span
@@ -35,11 +35,11 @@ export function ProjectRow({ overview, onOpen }: ProjectRowProps) {
       </span>
 
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-sm font-medium group-hover:text-primary">
+        <span className="truncate text-base font-medium group-hover:text-primary">
           {project.name}
         </span>
-        <span className="truncate font-mono text-xs text-muted-foreground">{project.path}</span>
-        <span className="truncate text-xs text-muted-foreground">
+        <span className="truncate font-mono text-sm text-muted-foreground">{project.path}</span>
+        <span className="truncate text-sm text-muted-foreground">
           {sessionCount === 0
             ? "No sessions"
             : `${sessionCount} session${sessionCount === 1 ? "" : "s"}`}
@@ -49,7 +49,7 @@ export function ProjectRow({ overview, onOpen }: ProjectRowProps) {
         </span>
       </span>
 
-      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-primary">
+      <span className="flex shrink-0 items-center gap-1 text-sm font-medium text-muted-foreground group-hover:text-primary">
         <span className="hidden sm:inline">{hasSession ? "Resume" : "Open"}</span>
         <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
       </span>

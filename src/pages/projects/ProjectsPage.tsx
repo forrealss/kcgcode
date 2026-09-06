@@ -67,8 +67,8 @@ export function ProjectsPage() {
             <img src={logo} alt="" className="size-full" />
           </span>
           <div className="flex min-w-0 flex-col">
-            <h1 className="truncate text-lg font-semibold tracking-tight">KCG Code</h1>
-            <p className="truncate text-xs text-muted-foreground">
+            <h1 className="truncate text-xl font-semibold tracking-tight">KCG Code</h1>
+            <p className="truncate text-sm text-muted-foreground">
               {running > 0
                 ? `${running} session${running === 1 ? "" : "s"} running`
                 : "Control CLI_Agent from anywhere"}
@@ -87,9 +87,9 @@ export function ProjectsPage() {
       <section className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-muted-foreground">Project</h2>
+            <h2 className="text-base font-medium text-muted-foreground">Project</h2>
             {!loading && !loadError && overviews.length > 0 && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-sm font-medium text-muted-foreground">
                 {overviews.length}
               </span>
             )}
@@ -187,9 +187,9 @@ function ProjectListSkeleton() {
         <div key={i} className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3">
           <Skeleton className="size-10 shrink-0 rounded-lg" />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="h-3 w-48" />
-            <Skeleton className="h-3 w-24" />
+            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-4 w-24" />
           </div>
           <Skeleton className="size-4 shrink-0 rounded" />
         </div>

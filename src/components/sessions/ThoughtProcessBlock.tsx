@@ -149,11 +149,12 @@ export function ThoughtProcessBlock({
         onClick={() => onToggle(collapsibleKey)}
         aria-expanded={expanded}
       >
+        Thought process
+        {/* Ikon sengaja di KANAN label */}
         <ChevronRightIcon
-          data-icon="inline-start"
+          data-icon="inline-end"
           className={cn("transition-transform", expanded && "rotate-90")}
         />
-        Thought process
       </Button>
       <CollapsibleContent>
         <div className="flex flex-col px-3 pt-1">

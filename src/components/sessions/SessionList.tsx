@@ -82,8 +82,8 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
             <ArrowLeftIcon />
           </Button>
           <div className="min-w-0 flex-1">
-            <h1 className="truncate text-base font-semibold leading-tight">{project.name}</h1>
-            <p className="truncate text-xs text-muted-foreground">
+            <h1 className="truncate text-lg font-semibold leading-tight">{project.name}</h1>
+            <p className="truncate text-sm text-muted-foreground">
               {list.loading ? "Loading sessions…" : describeSessionSummary(list.summary)}
             </p>
           </div>
@@ -112,7 +112,7 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
-        <p className="truncate rounded-md bg-muted/50 px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
+        <p className="truncate rounded-md bg-muted/50 px-2 py-1.5 font-mono text-xs text-muted-foreground">
           {project.path}
         </p>
       </div>
@@ -128,9 +128,9 @@ export function SessionList({ project, onOpenSession, onBack, onDeleted }: Sessi
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-muted-foreground">Session</h2>
+            <h2 className="text-base font-medium text-muted-foreground">Session</h2>
             {!list.loading && !list.loadError && list.summary.total > 0 && (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+              <span className="rounded-full bg-muted px-2 py-0.5 text-sm font-medium text-muted-foreground">
                 {list.summary.total}
               </span>
             )}
