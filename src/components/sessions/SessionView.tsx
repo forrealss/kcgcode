@@ -38,6 +38,7 @@ export interface SessionViewProps {
 
 export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const chat = useSessionChat({ session, onBack, onDeleted });
+  const empty = chat.messages.length === 0;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -53,34 +54,63 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         starting={chat.starting}
       />
 
-      <SessionTimeline
-        error={chat.error}
-        status={chat.status}
-        messages={chat.messages}
-        collapsible={chat.collapsible}
-        onToggle={chat.toggleBlock}
-        generating={chat.generating}
-      />
+      {empty ? (
+        /* Empty-state ala Gemini: sapaan + composer dipusatkan vertikal.
+            Timeline & prompt panel belum dirender (tidak ada isinya); spacer
+            flex-1 di atas & bawah menjaga blok ini tepat di tengah kolom di
+            bawah header. Begitu pesan pertama masuk (echo WS), layout pindah
+            ke varian percakapan di bawah — composer turun ke dasar. */
+        <div className="flex min-h-0 flex-1 flex-col px-3 sm:px-4">
+          <div className="min-h-0 flex-[2]" />
+          <div className="mx-auto w-full max-w-3xl">
+            <h1 className="mb-6 text-center text-2xl font-medium tracking-tight sm:text-3xl">
+              No conversation yet
+            </h1>
+            <SessionComposer
+              session={session}
+              inputAllowed={chat.canInput}
+              busy={chat.busy}
+              generating={chat.generating}
+              wsStatus={chat.wsStatus}
+              send={chat.send}
+              reportError={chat.reportError}
+              onInterrupt={chat.interrupt}
+            />
+          </div>
+          <div className="min-h-0 flex-[3]" />
+        </div>
+      ) : (
+        <>
+          <SessionTimeline
+            error={chat.error}
+            status={chat.status}
+            messages={chat.messages}
+            collapsible={chat.collapsible}
+            onToggle={chat.toggleBlock}
+            generating={chat.generating}
+          />
 
-      {/* Interactive_Prompt mengambang DI ATAS composer */}
-      <PromptPanel
-        groups={chat.promptGroups}
-        resolving={chat.resolving}
-        errorSignal={chat.promptError}
-        onResolve={chat.resolvePrompt}
-        onConsumeError={chat.consumePromptError}
-      />
+          {/* Interactive_Prompt mengambang DI ATAS composer */}
+          <PromptPanel
+            groups={chat.promptGroups}
+            resolving={chat.resolving}
+            errorSignal={chat.promptError}
+            onResolve={chat.resolvePrompt}
+            onConsumeError={chat.consumePromptError}
+          />
 
-      <SessionComposer
-        session={session}
-        inputAllowed={chat.canInput}
-        busy={chat.busy}
-        generating={chat.generating}
-        wsStatus={chat.wsStatus}
-        send={chat.send}
-        reportError={chat.reportError}
-        onInterrupt={chat.interrupt}
-      />
+          <SessionComposer
+            session={session}
+            inputAllowed={chat.canInput}
+            busy={chat.busy}
+            generating={chat.generating}
+            wsStatus={chat.wsStatus}
+            send={chat.send}
+            reportError={chat.reportError}
+            onInterrupt={chat.interrupt}
+          />
+        </>
+      )}
 
       {/* Konfirmasi hapus Session dari menu aksi header */}
       <ConfirmSessionDeleteDialog

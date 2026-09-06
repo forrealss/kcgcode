@@ -110,25 +110,17 @@ export function SessionTimeline({
                 <p className="text-sm text-destructive">{error}</p>
               </MessageScrollerItem>
             )}
-            {messages.length === 0 ? (
-              <MessageScrollerItem messageId="empty">
-                <p className="py-8 text-center text-sm text-muted-foreground">
-                  No conversation yet. Send the first message to get started.
-                </p>
-              </MessageScrollerItem>
-            ) : (
-              groups.map((group) =>
-                group.kind === "user" ? (
-                  <UserMessage key={group.message.id} message={group.message} />
-                ) : (
-                  <AssistantTurn
-                    key={group.id}
-                    group={group}
-                    collapsible={collapsible}
-                    onToggle={onToggle}
-                  />
-                ),
-              )
+            {groups.map((group) =>
+              group.kind === "user" ? (
+                <UserMessage key={group.message.id} message={group.message} />
+              ) : (
+                <AssistantTurn
+                  key={group.id}
+                  group={group}
+                  collapsible={collapsible}
+                  onToggle={onToggle}
+                />
+              ),
             )}
             {/* Maskot GLOBAL — selalu menjadi item paling bawah di scroller,
                 ikut scroll bersama konten (ala Claude). Status:

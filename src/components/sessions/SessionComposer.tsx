@@ -14,7 +14,7 @@
  *   saat input lebih dari satu baris, textarea pindah ke baris sendiri.
  */
 import { ImagePlusIcon, PlusIcon, SendHorizontalIcon, SquareIcon } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
 import { ComposerActionSheet } from "@/components/sessions/ComposerActionSheet";
 import { FileMentionDropdown } from "@/components/sessions/FileMentionDropdown";
@@ -70,8 +70,8 @@ export function SessionComposer({
   /** Upload lampiran sedang berjalan — cegah kirim ganda. */
   const [sending, setSending] = useState(false);
   /**
-   * Input sudah lebih dari satu baris — dipakai di mobile untuk memindahkan
-   * textarea ke barisnya sendiri (tombol aksi & kirim turun ke baris bawah).
+   * Input butuh lebih dari satu baris — tombol aksi & kirim/stop pindah ke
+   * baris di bawah textarea (ala Gemini), di desktop maupun mobile.
    */
   const [multiline, setMultiline] = useState(false);
   /** Sheet aksi mobile (attach image + agent mode) di tombol tunggal kiri input. */
@@ -104,21 +104,59 @@ export function SessionComposer({
   useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  /** Tinggi satu baris textarea (leading-6 + padding vertikal) — di atas ini dianggap multiline. */
-  const SINGLE_LINE_MAX_PX = 38;
-  /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h) + deteksi multiline. */
+  const formRef = useRef<HTMLFormElement | null>(null);
+  /** Pengukur lebar teks satu baris — font identik dengan textarea. */
+  const measureRef = useRef<HTMLSpanElement | null>(null);
+  /**
+   * Perkiraan lebar kontrol yang berbagi baris dengan textarea saat inline —
+   * SENGAJA dilebihkan (attach + agent + kirim di desktop; plus + kirim di
+   * mobile) agar teks di dekat batas selalu dianggap multiline, bukan
+   * pas-pasan (sumber flip-flop). Mobile lebih kecil karena barisnya hanya
+   * dua tombol.
+   */
+  const INLINE_CONTROLS_RESERVE_PX = isMobile ? 88 : 192;
+  /**
+   * Putuskan `multiline` dari LEBAR TEKS terhadap lebar baris inline — BUKAN
+   * dari scrollHeight textarea. Mengukur tinggi membuat keputusan bergantung
+   * pada layout AKTIF: teks yang wrap di baris inline (sempit, dipotong
+   * tombol) bisa muat satu baris saat stacked (lebar penuh) → stacked →
+   * remeasure muat → inline → wrap lagi → … (flip-flop tiap ketik). Lebar
+   * teks (span tersembunyi) vs lebar form TIDAK berubah saat layout
+   * berganti, sehingga keputusannya selalu titik tetap yang stabil.
+   */
+  const updateMultiline = useCallback(() => {
+    const span = measureRef.current;
+    const form = formRef.current;
+    if (span === null || form === null) return;
+    const inlineTextWidth =
+      form.clientWidth -
+      16 /* p-2 kontainer */ -
+      16 /* px-2 textarea */ -
+      INLINE_CONTROLS_RESERVE_PX;
+    setMultiline(span.scrollWidth > inlineTextWidth);
+  }, [INLINE_CONTROLS_RESERVE_PX]);
+  /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h). */
   const autoResize = useCallback((el: HTMLTextAreaElement) => {
     el.style.height = "auto";
-    const next = el.scrollHeight;
-    el.style.height = `${next}px`;
-    setMultiline(next > SINGLE_LINE_MAX_PX);
+    el.style.height = `${el.scrollHeight}px`;
   }, []);
-  // Jaga tinggi & status multiline tetap akurat untuk perubahan `text` yang
-  // tidak lewat event `onChange` langsung (autocomplete @file, reset kirim).
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `text` sengaja jadi trigger — nilainya dibaca dari DOM (scrollHeight), bukan dari closure.
-  useEffect(() => {
+  // Sinkronkan pengukur lebar + keputusan stacked + tinggi textarea untuk
+  // perubahan `text` apa pun (ketik, autocomplete @file, reset kirim).
+  useLayoutEffect(() => {
+    const span = measureRef.current;
+    if (span !== null) span.textContent = text;
+    updateMultiline();
     if (textareaRef.current) autoResize(textareaRef.current);
-  }, [text, autoResize]);
+  }, [text, updateMultiline, autoResize]);
+  // Lebar form berubah (resize window / orientasi HP) → keputusan stacked
+  // dihitung ulang terhadap lebar terbaru.
+  useEffect(() => {
+    const form = formRef.current;
+    if (form === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(updateMultiline);
+    observer.observe(form);
+    return () => observer.disconnect();
+  }, [updateMultiline]);
 
   /** Cache path yang pernah disarankan autocomplete (validitas @ref saat kirim). */
   const suggestedCacheRef = useRef<Set<string>>(new Set());
@@ -210,8 +248,21 @@ export function SessionComposer({
     <footer className="shrink-0 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
       {/* Pemilih model kini jadi judul header — composer fokus ke input saja
           supaya area mengetik di HP tidak terpotong baris tambahan. */}
-      {/* Composer sejajar dengan kolom percakapan di layar lebar. */}
-      <form onSubmit={submitText} className="relative mx-auto flex w-full max-w-3xl flex-col">
+      {/* Composer sejajar dengan kolom percakapan, sedikit lebih sempit dari
+          kolom timeline agar terasa fokus (ala Gemini). */}
+      <form
+        ref={formRef}
+        onSubmit={submitText}
+        className="relative mx-auto flex w-full max-w-2xl flex-col"
+      >
+        {/* Pengukur lebar teks satu baris — font identik dengan textarea,
+            tak terlihat & tanpa wrap (whitespace-pre) sehingga scrollWidth =
+            lebar alami teks. Dipakai keputusan stacked yang stabil. */}
+        <span
+          ref={measureRef}
+          aria-hidden
+          className="pointer-events-none absolute top-0 invisible whitespace-pre text-base leading-6"
+        />
         {/* Composer compact: image picker di kiri, input prompt di tengah,
             lalu mode agent di kanan. Model tetap dipilih dari header. */}
         <div
@@ -236,7 +287,10 @@ export function SessionComposer({
           )}
 
           {(() => {
-            const stacked = isMobile && multiline;
+            // Ala Gemini: begitu input tumbuh ke 2 baris (multiline), tombol
+            // aksi & kirim/stop pindah ke baris di BAWAH textarea — berlaku
+            // di desktop maupun mobile. Satu baris: semuanya dalam satu baris.
+            const stacked = multiline;
 
             const textareaEl = (
               <textarea
@@ -359,32 +413,54 @@ export function SessionComposer({
             }
 
             // Desktop: attach image, agent mode, dan kirim/stop tetap tampil
-            // langsung sebagai kontrol terpisah di toolbar composer.
+            // langsung sebagai kontrol terpisah di toolbar composer. Satu
+            // baris: semuanya sejajar; multiline: kontrol turun ke bawah
+            // textarea (ala Gemini).
+            const attachImageEl = (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={!canInput}
+                aria-label="Attach image"
+                title="Attach image (PNG/JPEG/GIF/WebP, max 20 MiB)"
+                className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+              >
+                <ImagePlusIcon data-icon="inline-start" />
+              </Button>
+            );
+
+            const agentPickerEl = (
+              <AgentPicker
+                projectId={session.projectId}
+                sessionId={session.id}
+                agent={agent}
+                onChanged={setAgent}
+                disabled={!canInput}
+              />
+            );
+
+            if (stacked) {
+              return (
+                <div className="flex flex-col gap-1">
+                  {textareaEl}
+                  <div className="flex items-center justify-between gap-1">
+                    {attachImageEl}
+                    <div className="flex items-center gap-1">
+                      {agentPickerEl}
+                      {sendOrStopEl}
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+
             return (
               <div className="flex items-center gap-1">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!canInput}
-                  aria-label="Attach image"
-                  title="Attach image (PNG/JPEG/GIF/WebP, max 20 MiB)"
-                  className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-                >
-                  <ImagePlusIcon data-icon="inline-start" />
-                </Button>
-
+                {attachImageEl}
                 {textareaEl}
-
-                <AgentPicker
-                  projectId={session.projectId}
-                  sessionId={session.id}
-                  agent={agent}
-                  onChanged={setAgent}
-                  disabled={!canInput}
-                />
-
+                {agentPickerEl}
                 {sendOrStopEl}
               </div>
             );
