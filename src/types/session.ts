@@ -37,6 +37,12 @@ export interface Session {
   status: SessionStatus;
   /** Id Session di server headless opencode (`ses_...`); null sebelum dibuat. */
   ocSessionId: string | null;
+  /**
+   * Judul Session — dibuat otomatis oleh opencode setelah prompt pertama
+   * (summarization), diterima via SSE `session.updated`. null = belum ada
+   * (UI menampilkan fallback "New session").
+   */
+  title: string | null;
   /** Model LLM pilihan; null = model default opencode. */
   model: SessionModel | null;
   /** Agent (mode) pilihan; null = agent default opencode (build). */

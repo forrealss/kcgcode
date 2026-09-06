@@ -109,6 +109,12 @@ export interface SessionManagerOptions {
   onPromptResolved?: (sessionId: string, promptId: string) => void;
   /** Hook perubahan status Session — disambungkan ke WebSocket_Gateway. */
   onStatusChange?: (sessionId: string, status: SessionStatus) => void;
+  /**
+   * Hook judul Session baru hasil generate opencode (SSE `session.updated`
+   * setelah prompt pertama) — disambungkan ke WebSocket_Gateway agar daftar
+   * Session di Client ikut terbarui tanpa reload.
+   */
+  onTitleChange?: (sessionId: string, title: string) => void;
   /** Hook Session dihapus permanen — disambungkan ke WebSocket_Gateway. */
   onDeleted?: (sessionId: string) => void;
   /** Hook error asinkron (mis. balasan model gagal) — disambungkan ke gateway. */
@@ -205,6 +211,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const onPrompt = opts.onPrompt;
   const onPromptResolved = opts.onPromptResolved;
   const onStatusChange = opts.onStatusChange;
+  const onTitleChange = opts.onTitleChange;
   const onDeleted = opts.onDeleted;
   const onError = opts.onError;
   const onTurnChange = opts.onTurnChange;
@@ -298,6 +305,26 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   function handleEvent(_projectId: string, ev: OpenCodeEvent): void {
     if (ev.type === "session.created") {
       registerChildSession(ev);
+      return;
+    }
+    if (ev.type === "session.updated") {
+      // Judul Session dibuat otomatis opencode setelah prompt pertama
+      // (summarization). Hanya Session AKAR yang dipetakan yang diproses —
+      // child sub-agent tidak mewakili percakapan user.
+      const info = field(ev, "info");
+      if (typeof info !== "object" || info === null) return;
+      const { id, title } = info as { id?: unknown; title?: unknown };
+      if (typeof id !== "string" || typeof title !== "string") return;
+      if (title.trim() === "") return;
+      const sessionId = ocToSession.get(id);
+      if (sessionId === undefined) return;
+      // Hanya Session akar: judul child sub-agent bukan judul percakapan
+      // user (guard yang sama dengan `session.idle` di bawah).
+      const cur = store.getSession(sessionId);
+      if (!cur.ok || cur.data.ocSessionId !== id) return;
+      if (cur.data.title === title) return;
+      if (!store.updateSessionTitle(sessionId, title).ok) return;
+      onTitleChange?.(sessionId, title);
       return;
     }
     if (ev.type === "session.idle") {
@@ -466,6 +493,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       cwd: project.path,
       status: "running",
       ocSessionId: created.data.id,
+      // Judul asli opencode akan datang via SSE `session.updated` setelah
+      // prompt pertama — awalnya null (UI: "New session").
+      title: typeof created.data.title === "string" ? created.data.title : null,
       model,
       agent: req.agent ?? null,
       createdAt,

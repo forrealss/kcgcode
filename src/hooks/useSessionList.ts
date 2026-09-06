@@ -7,7 +7,8 @@
  * baru hidup di `NewSessionDialog`.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, apiFetch } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
+import { ApiError, apiFetch, getAuthToken } from "@/lib/api";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
 import type { Session } from "@/types";
 
@@ -80,6 +81,28 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  /**
+   * Judul Session dibuat otomatis oleh opencode SETELAH prompt pertama —
+   * daftar yang dimuat saat halaman dibuka belum memuatnya. Satu koneksi WS
+   * mode daftar (`attach("")`, tanpa history) menerima broadcast
+   * `session_title` agar baris terkait terbarui live tanpa refresh manual.
+   */
+  const ws = useWebSocket({
+    token: getAuthToken() ?? undefined,
+    onMessage: (msg) => {
+      if (msg.type === "session_title") {
+        // Update baris terkait saja — state lain (urutan, summary) tidak berubah.
+        setSessions((prev) =>
+          prev.map((s) => (s.id === msg.sessionId ? { ...s, title: msg.title } : s)),
+        );
+      }
+    },
+  });
+  useEffect(() => {
+    ws.attach("");
+    return () => ws.disconnect();
+  }, [ws.attach, ws.disconnect]);
 
   // Running -> crashed -> stopped, terbaru di atas (lib/session-summary.ts).
   const ordered = useMemo(() => sortSessions(sessions), [sessions]);

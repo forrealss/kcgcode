@@ -291,6 +291,8 @@ interface Harness {
   turns: [string, boolean][];
   /** Prompt kembar yang ikut resolved lewat fan-out (onPromptResolved). */
   promptResolved: [string, string][];
+  /** Judul Session baru (onTitleChange): [sessionId, title]. */
+  titles: [string, string][];
   project: Project;
   root: string;
   close(): void;
@@ -301,7 +303,7 @@ function freshHarness(): Harness {
 }
 
 function freshHarnessWithHooks(
-  extraHooks: Pick<Parameters<typeof createSessionManager>[0], "onDeleted">,
+  extraHooks: Pick<Parameters<typeof createSessionManager>[0], "onDeleted" | "onTitleChange">,
   extra: { withAttachments?: boolean } = {},
   managerOverrides: Partial<Parameters<typeof createSessionManager>[0]> = {},
 ): Harness {
@@ -320,6 +322,8 @@ function freshHarnessWithHooks(
   const errors: [string, string][] = [];
   const turns: [string, boolean][] = [];
   const promptResolved: [string, string][] = [];
+  /** Judul Session baru (onTitleChange): [sessionId, title]. */
+  const titles: [string, string][] = [];
 
   const attachments = extra.withAttachments
     ? createAttachmentManager(path.join(root, "uploads"))
@@ -338,6 +342,7 @@ function freshHarnessWithHooks(
     onStatusChange: (id, st) => statuses.push([id, st]),
     onError: (id, m) => errors.push([id, m]),
     onTurnChange: (id, active) => turns.push([id, active]),
+    onTitleChange: (id, t) => titles.push([id, t]),
   });
 
   return {
@@ -352,6 +357,7 @@ function freshHarnessWithHooks(
     errors,
     turns,
     promptResolved,
+    titles,
     project,
     root,
     close() {
@@ -1414,6 +1420,98 @@ test("session.created tanpa parentID dikenal -> tidak dipetakan", async () => {
   }
 });
 
+test("session.updated -> judul akar disimpan + onTitleChange; judul sama diabaikan", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: "Refactor auth module" },
+    });
+    const sess = h.store.getSession(sid);
+    expect(sess.ok).toBe(true);
+    if (sess.ok) expect(sess.data.title).toBe("Refactor auth module");
+    expect(h.titles).toEqual([[sid, "Refactor auth module"]]);
+
+    // Judul identik -> tanpa update DB, tanpa broadcast ulang.
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: "Refactor auth module" },
+    });
+    expect(h.titles).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.updated child sub-agent -> judul Session akar tidak tertimpa", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    client.emit({
+      type: "session.created",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", parentID: "ses_remote1" },
+    });
+
+    // Sub-agent meng-generate judulnya sendiri — bukan judul percakapan user.
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_child1",
+      info: { id: "ses_child1", title: "Judul sub-agent" },
+    });
+    const sess = h.store.getSession(sid);
+    expect(sess.ok).toBe(true);
+    if (sess.ok) expect(sess.data.title).toBeNull();
+    expect(h.titles).toHaveLength(0);
+
+    // Judul akar tetap sampai setelah event child.
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: "Judul asli" },
+    });
+    expect(h.titles).toEqual([[sid, "Judul asli"]]);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.updated session tak dikenal / info rusak -> diabaikan", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    const client = clientOf(h);
+
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_asing",
+      info: { id: "ses_asing", title: "bukan milik KCG Code" },
+    });
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: "   " },
+    });
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: 123 },
+    });
+    client.emit({ type: "session.updated", sessionID: "ses_remote1" });
+
+    expect(h.titles).toHaveLength(0);
+    expect(h.store.listSessions().every((s) => s.title === null)).toBe(true);
+  } finally {
+    h.close();
+  }
+});
+
 test("stopSession melepas pemetaan child sub-agent", async () => {
   const h = freshHarness();
   try {
@@ -1906,6 +2004,7 @@ test("reconcileOnStartup: session running -> crashed", () => {
       ocSessionId: "ses_x",
       model: null,
       agent: null,
+      title: null,
       createdAt: 1,
       updatedAt: 1,
     });
@@ -1918,6 +2017,7 @@ test("reconcileOnStartup: session running -> crashed", () => {
       agent: null,
       ocSessionId: null,
       model: null,
+      title: null,
       createdAt: 1,
       updatedAt: 1,
     });

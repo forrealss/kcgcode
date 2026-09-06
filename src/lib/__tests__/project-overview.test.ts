@@ -26,6 +26,7 @@ function session(id: string, projectId: string, status: SessionStatus, updatedAt
     cwd: "/sandbox",
     status,
     ocSessionId: null,
+    title: null,
     model: null,
     agent: null,
     createdAt: updatedAt,

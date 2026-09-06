@@ -71,9 +71,11 @@ export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult
 
     ws.onopen = () => {
       setStatus("connected");
-      // Re-attach otomatis setelah reconnect (Requirement 4.1).
+      // Re-attach otomatis setelah reconnect (Requirement 4.1). `!== null`
+      // (bukan truthy) agar mode daftar (`attach("")`) ikut dikirim ulang.
       const sid = sessionRef.current;
-      if (sid) ws.send(JSON.stringify({ type: "attach", sessionId: sid } satisfies ClientMessage));
+      if (sid !== null)
+        ws.send(JSON.stringify({ type: "attach", sessionId: sid } satisfies ClientMessage));
     };
     ws.onmessage = (event) => {
       try {

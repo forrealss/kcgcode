@@ -51,6 +51,11 @@ export interface SessionRowProps {
 
 export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }: SessionRowProps) {
   const running = session.status === "running";
+  /**
+   * Judul hasil generate opencode (setelah prompt pertama); "New session"
+   * sebelum ada judul — sama seperti fallback daftar session opencode.
+   */
+  const title = session.title ?? "New session";
 
   return (
     <div className="group flex items-center gap-1 rounded-xl border bg-card pr-1 shadow-sm transition-all focus-within:border-primary/40 hover:border-primary/40 hover:shadow-md">
@@ -59,7 +64,7 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
         onClick={onOpen}
         disabled={busy}
         className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-3 text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60 sm:px-4"
-        aria-label={`Open session ${session.agentType}`}
+        aria-label={`Open session ${title}`}
       >
         <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           {busy ? <Spinner className="size-4" /> : <BotIcon />}
@@ -72,11 +77,12 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-base font-medium">{session.agentType}</span>
+            <span className="truncate text-base font-medium">{title}</span>
             <StatusBadge status={session.status} />
           </span>
           <span className="truncate text-sm text-muted-foreground">
-            {describeSessionModel(session)} · {formatRelativeTime(session.updatedAt)}
+            {session.agentType} · {describeSessionModel(session)} ·{" "}
+            {formatRelativeTime(session.updatedAt)}
           </span>
         </span>
         <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
@@ -89,7 +95,7 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
             variant="ghost"
             size="icon"
             disabled={busy}
-            aria-label={`Session actions ${session.agentType}`}
+            aria-label={`Session actions ${title}`}
             className="shrink-0"
           >
             <MoreVerticalIcon />

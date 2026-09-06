@@ -20,6 +20,7 @@ function session(id: string, status: SessionStatus, updatedAt: number): Session 
     cwd: "/sandbox/p1",
     status,
     ocSessionId: null,
+    title: null,
     model: null,
     agent: null,
     createdAt: updatedAt,

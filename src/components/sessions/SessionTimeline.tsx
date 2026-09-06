@@ -137,13 +137,6 @@ export function SessionTimeline({
                 />
               </MessageScrollerItem>
             )}
-            {status !== "running" && messages.length > 0 && (
-              <MessageScrollerItem messageId="status-note">
-                <p className="text-xs text-muted-foreground">
-                  Session {status}. Input is disabled.
-                </p>
-              </MessageScrollerItem>
-            )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
         <MessageScrollerButton />

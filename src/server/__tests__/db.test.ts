@@ -24,6 +24,7 @@ function makeSession(id = "s1", status: SessionStatus = "running"): Session {
     ocSessionId: id === "s1" ? "ses_1" : null,
     model: id === "s1" ? { providerID: "kcgcode", modelID: "kiro/claude-opus-5" } : null,
     agent: null,
+    title: null,
     createdAt: 1,
     updatedAt: 1,
   };

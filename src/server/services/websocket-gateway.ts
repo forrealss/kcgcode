@@ -31,9 +31,13 @@ export interface Subscriber {
   close(): void;
 }
 
-/** Koneksi yang ter-attach ke sebuah Session. */
+/**
+ * Koneksi yang ter-attach ke sebuah Session.
+ * `sessionId: null` = mode daftar (tanpa Session) — hanya menerima broadcast
+ * global seperti `session_title` (daftar Session di halaman Project).
+ */
 export interface AttachedInfo {
-  sessionId: string;
+  sessionId: string | null;
 }
 
 export interface WebSocketGatewayOptions {
@@ -63,6 +67,8 @@ export interface WebSocketGateway {
   notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
   notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
   notifySessionStatus(sessionId: string, status: SessionStatus): void;
+  /** Broadcast judul Session baru hasil generate opencode. */
+  notifySessionTitle(sessionId: string, title: string): void;
   /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
   notifyTurnActive(sessionId: string, active: boolean): void;
   notifySessionDeleted(sessionId: string): void;
@@ -126,6 +132,12 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
   }
 
   function attach(sub: Subscriber, sessionId: string): void {
+    // Mode daftar (sessionId kosong): tanpa `history`, cukup daftar sebagai
+    // penerima broadcast global (`session_title`).
+    if (sessionId === "") {
+      subs.set(sub, { sessionId: null });
+      return;
+    }
     // (1) validasi Session ada di store (Req 4.3)
     const sess = store.getSession(sessionId);
     if (!sess.ok) {
@@ -225,6 +237,17 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     }
   }
 
+  /**
+   * Broadcast ke seluruh koneksi — dipakai pesan yang relevan lintas Session
+   * (mis. `session_title`: pemilik koneksi mungkin sedang membuka daftar
+   * Session, bukan me-attach satu Session).
+   */
+  function broadcastAll(build: () => ServerMessage): void {
+    for (const sub of subs.keys()) {
+      sendSafe(sub, build());
+    }
+  }
+
   function notifyMessage(sessionId: string, message: SessionMessage): void {
     broadcast(sessionId, () => ({ type: "message", sessionId, message }));
   }
@@ -239,6 +262,13 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
 
   function notifySessionStatus(sessionId: string, status: SessionStatus): void {
     broadcast(sessionId, () => ({ type: "session_status", sessionId, status }));
+  }
+
+  function notifySessionTitle(sessionId: string, title: string): void {
+    // `session_title` relevan bagi koneksi mana pun (daftar Session di
+    // halaman Project), jadi dikirim ke semua koneksi — termasuk yang tidak
+    // sedang attach satu Session.
+    broadcastAll(() => ({ type: "session_title", sessionId, title }));
   }
 
   function notifyTurnActive(sessionId: string, active: boolean): void {
@@ -280,6 +310,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifyMessagePart,
     notifyPrompt,
     notifySessionStatus,
+    notifySessionTitle,
     notifyTurnActive,
     notifySessionDeleted,
     notifyPromptResolved,

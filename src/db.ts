@@ -62,6 +62,8 @@ export interface SessionStore {
   updateSessionModel(sessionId: string, model: SessionModel | null): Result<Session>;
   /** Perbarui agent (mode) pilihan Session; `null` = default opencode. */
   updateSessionAgent(sessionId: string, agent: string | null): Result<Session>;
+  /** Simpan judul Session hasil generate opencode (SSE `session.updated`). */
+  updateSessionTitle(sessionId: string, title: string): Result<Session>;
   getSession(sessionId: string): Result<Session>;
   getSessionByOcId(ocSessionId: string): Result<Session>;
   listSessions(): Session[];

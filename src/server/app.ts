@@ -133,6 +133,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     // `prompt_resolved` agar hilang dari UI tanpa menunggu reattach.
     onPromptResolved: (sessionId, promptId) => gateway.notifyPromptResolved(sessionId, promptId),
     onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
+    // Judul hasil generate opencode -> daftar Session di Client terbarui live.
+    onTitleChange: (sessionId, title) => gateway.notifySessionTitle(sessionId, title),
     onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
     // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).

@@ -34,6 +34,7 @@ export interface SessionRow {
   oc_session_id: string | null;
   model: string | null;
   agent: string | null;
+  title: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -90,6 +91,7 @@ export function mapSession(r: SessionRow): Session {
     ocSessionId: r.oc_session_id,
     model: parseModel(r.model),
     agent: r.agent ?? null,
+    title: r.title ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };

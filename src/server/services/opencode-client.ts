@@ -23,6 +23,8 @@ import { subscribeOpenCodeEvents } from "./opencode-sse";
 export interface OpenCodeSessionInfo {
   id: string;
   directory?: string;
+  /** Judul session; opencode meng-generate ulang setelah prompt pertama. */
+  title?: string;
 }
 
 /** Satu model yang tersedia pada sebuah provider (hasil GET /config/providers). */

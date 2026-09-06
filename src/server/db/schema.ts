@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   oc_session_id TEXT,
   model TEXT,
   agent TEXT,
+  title TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -97,4 +98,6 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, "sessions", "agent", "ALTER TABLE sessions ADD COLUMN agent TEXT");
   // Model pilihan per Session (JSON `{providerID, modelID}`), NULL = default.
   ensureColumn(db, "sessions", "model", "ALTER TABLE sessions ADD COLUMN model TEXT");
+  // Judul Session hasil generate opencode (SSE `session.updated`), NULL = belum ada.
+  ensureColumn(db, "sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT");
 }

@@ -52,6 +52,8 @@ export type ServerMessage =
   | { type: "prompt"; sessionId: string; prompt: InteractivePrompt }
   | { type: "prompt_resolved"; sessionId: string; promptId: string }
   | { type: "session_status"; sessionId: string; status: SessionStatus }
+  /** Judul Session baru hasil generate opencode — daftar Session ikut terbarui. */
+  | { type: "session_title"; sessionId: string; title: string }
   /** Status turn: `active: true` = model sedang merespon; `false` = berhenti. */
   | { type: "turn_active"; sessionId: string; active: boolean }
   /** Session dihapus permanen — subscriber harus meninggalkan halamannya. */

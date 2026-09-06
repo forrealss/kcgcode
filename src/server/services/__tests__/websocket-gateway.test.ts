@@ -187,6 +187,7 @@ function freshHarness(): Harness {
     ocSessionId: "ses_1",
     model: null,
     agent: null,
+    title: null,
     createdAt: 0,
     updatedAt: 0,
   });
@@ -235,7 +236,8 @@ test("attach: history berisi messages terurut + prompts pending (4.1, 4.4)", () 
 
 test("attach session tak dikenal -> error SESSION_NOT_FOUND + close, tanpa history (4.3)", () => {
   fc.assert(
-    fc.property(fc.string({ maxLength: 20 }), (unknownId) => {
+    // minLength 1: `""` adalah mode daftar (tanpa error), bukan id tak dikenal.
+    fc.property(fc.string({ minLength: 1, maxLength: 20 }), (unknownId) => {
       const h = freshHarness();
       try {
         const sub = makeSub("c1");
@@ -377,6 +379,7 @@ test("notify*: broadcast ke seluruh subscriber Session; bukan ke Session lain", 
       ocSessionId: "ses_2",
       model: null,
       agent: null,
+      title: null,
       createdAt: 0,
       updatedAt: 0,
     });
@@ -464,6 +467,50 @@ test("Property 15/16: broadcast konsisten ke banyak client; client gagal diisola
     ),
     { numRuns: 100 },
   );
+});
+
+// ---------------------------------------------------------------------------
+// Mode daftar (attach "") + broadcast global
+// ---------------------------------------------------------------------------
+
+test('attach "" -> tanpa history; session_title di-broadcast ke semua koneksi', () => {
+  const h = freshHarness();
+  try {
+    const listSub = makeSub("list");
+    const listSub2 = makeSub("list2");
+    const chatSub = makeSub("chat");
+    h.gw.attach(listSub, "");
+    h.gw.attach(listSub2, "");
+    h.gw.attach(chatSub, "s1");
+
+    // Mode daftar: terdaftar (terbukti dari broadcast di bawah), tanpa
+    // history dan tanpa error.
+    expect(listSub.closed).toBe(false);
+    expect(listSub.sent).toHaveLength(0);
+
+    h.gw.notifySessionTitle("s1", "Judul baru");
+    expect(listSub.sent).toEqual([{ type: "session_title", sessionId: "s1", title: "Judul baru" }]);
+    expect(listSub2.sent).toEqual([
+      { type: "session_title", sessionId: "s1", title: "Judul baru" },
+    ]);
+    // Koneksi chat (attach satu Session) juga menerima — judul berguna di mana pun.
+    expect(chatSub.sent.filter((m) => m.type === "session_title")).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("broadcast biasa (message) tidak sampai ke koneksi mode daftar", () => {
+  const h = freshHarness();
+  try {
+    const listSub = makeSub("list");
+    h.gw.attach(listSub, "");
+    h.gw.notifyMessage("s1", makeMessage("s1", "m1", "assistant"));
+    h.gw.notifySessionStatus("s1", "stopped");
+    expect(listSub.sent).toHaveLength(0);
+  } finally {
+    h.close();
+  }
 });
 
 // ---------------------------------------------------------------------------
