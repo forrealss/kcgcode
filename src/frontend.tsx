@@ -11,7 +11,7 @@ import { App } from "./App";
 
 const elem = document.getElementById("root");
 if (!elem) {
-  throw new Error("Elemen #root tidak ditemukan di index.html");
+  throw new Error("Root element #root not found in index.html");
 }
 const app = (
   <StrictMode>

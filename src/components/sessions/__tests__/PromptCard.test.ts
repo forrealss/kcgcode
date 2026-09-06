@@ -10,9 +10,8 @@
  *   "Deny" (diteruskan mengikuti mekanisme penyelesaian Requirement 6).
  */
 import { describe, expect, test } from "bun:test";
-
+import { getPromptActions, groupPrompts } from "@/lib/prompts";
 import type { InteractivePrompt, PromptResponse } from "@/types";
-import { getPromptActions, groupPrompts } from "../PromptCard";
 
 function makePrompt(overrides: Partial<InteractivePrompt> = {}): InteractivePrompt {
   return {

@@ -20,8 +20,8 @@
  *
  * Desain: panel floating di ATAS composer (ala dialog izin Claude/opencode)
  * dengan animasi masuk slide-up + fade + zoom kecil (`animate-in` dari
- * tw-animate-css). Logika pemetaan aksi diekstrak ke `getPromptActions`
- * (fungsi murni) agar dapat diuji tanpa DOM (unit test 24.6).
+ * tw-animate-css). Logika pemetaan aksi & pengelompokan prompt dipisah ke
+ * `lib/prompts.ts` (fungsi murni, diuji tanpa DOM — unit test 24.6).
  */
 import {
   CornerDownLeftIcon,
@@ -36,65 +36,15 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { getPromptActions, type PromptAction } from "@/lib/prompts";
 import { cn } from "@/lib/utils";
 import type { InteractivePrompt, PromptResponse } from "@/types";
 
-export type PromptActionVariant = "default" | "destructive" | "outline";
-
-/**
- * Kelompokkan prompt pending yang identik (kind + title sama) menjadi satu
- * kartu. Kunci sama dengan sisi server (`permissionGroupKey`) agar kartu yang
- * dijawab user persis grup yang di-fan-out server. Urutan kemunculan
- * anggota pertama dipertahankan.
- */
-export function groupPrompts(prompts: readonly InteractivePrompt[]): InteractivePrompt[][] {
-  const groups = new Map<string, InteractivePrompt[]>();
-  for (const p of prompts) {
-    const key = `${p.kind}\u0000${p.title ?? ""}`;
-    const g = groups.get(key);
-    if (g) g.push(p);
-    else groups.set(key, [p]);
-  }
-  return [...groups.values()];
-}
-
-export interface PromptAction {
-  key: string;
-  label: string;
-  response: PromptResponse;
-  variant: PromptActionVariant;
-  /** Ikon khusus (mis. Always allow). */
-  icon?: typeof ShieldCheckIcon;
-}
-
-/**
- * Aksi yang dirender untuk sebuah Interactive_Prompt (murni — diuji di 24.6).
- * Untuk `confirmation`: Approve, Always allow, Deny, dan Cancel; Cancel
- * memakai respon yang sama dengan Deny (Requirement 8.5).
- */
-export function getPromptActions(prompt: InteractivePrompt): PromptAction[] {
-  if (prompt.type === "menu") {
-    return (prompt.options ?? []).map((option) => ({
-      key: `option-${option}`,
-      label: option,
-      response: { option },
-      variant: "outline",
-    }));
-  }
-  return [
-    { key: "approve", label: "Approve", response: "approve", variant: "default" },
-    {
-      key: "always",
-      label: "Always allow",
-      response: "always",
-      variant: "outline",
-      icon: ShieldCheckIcon,
-    },
-    { key: "deny", label: "Deny", response: "deny", variant: "destructive" },
-    // Requirement 8.5: Cancel diperlakukan sebagai respon Deny yang sama.
-    { key: "cancel", label: "Cancel", response: "deny", variant: "outline" },
-  ];
-}
+/** Ikon aksi khusus (map nama -> komponen; nama dijaga di `lib/prompts.ts`). */
+const PROMPT_ACTION_ICONS: Partial<Record<PromptAction["icon"] & string, typeof ShieldCheckIcon>> =
+  {
+    "shield-check": ShieldCheckIcon,
+  };
 
 export interface PromptCardProps {
   /**
@@ -228,7 +178,7 @@ export function PromptCard({
         <div className="flex flex-wrap gap-2">
           {actions.map((action) => {
             const busy = submittingKey === action.key;
-            const Icon = action.icon;
+            const Icon = action.icon ? PROMPT_ACTION_ICONS[action.icon] : undefined;
             return (
               <Button
                 key={action.key}

@@ -22,10 +22,10 @@ import { ErrorCodes, type ServerMessage } from "../../../ws-protocol";
 import type { SessionManager } from "../session-manager";
 import {
   createWebSocketGateway,
-  dispatchClientMessage,
   type Subscriber,
   type WebSocketGateway,
 } from "../websocket-gateway";
+import { dispatchClientMessage } from "../ws-transport";
 
 // ---------------------------------------------------------------------------
 // Mock Subscriber (ws.send)

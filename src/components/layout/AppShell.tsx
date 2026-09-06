@@ -84,7 +84,7 @@ export function AppShell() {
                     KCG Code
                   </span>
                   <span className="hidden truncate text-[11px] leading-tight text-muted-foreground sm:block">
-                    Kontrol CLI_Agent dari mana saja
+                    Control CLI_Agent from anywhere
                   </span>
                 </div>
               </a>
@@ -95,8 +95,8 @@ export function AppShell() {
                 variant="ghost"
                 size="icon"
                 onClick={() => setTokenOpen((o) => !o)}
-                aria-label="Pengaturan token otentikasi"
-                title="Token otentikasi"
+                aria-label="Authentication token settings"
+                title="Auth token"
                 data-active={tokenOpen}
               >
                 <KeyRoundIcon data-icon="inline-start" />
@@ -115,15 +115,15 @@ export function AppShell() {
             <Input
               value={token}
               onChange={(e) => setToken(e.target.value)}
-              placeholder="Token otentikasi (kosongkan untuk menghapus)"
-              aria-label="Token otentikasi"
+              placeholder="Auth token (leave empty to remove)"
+              aria-label="Auth token"
               type="password"
               autoComplete="off"
               className="h-9 sm:h-8"
             />
             <Button type="submit" size="sm" className="w-full sm:w-auto">
               <SparklesIcon data-icon="inline-start" />
-              Simpan token
+              Save token
             </Button>
           </form>
         )}
@@ -165,7 +165,7 @@ function NotFoundView() {
   const { navigate } = useRouter();
   return (
     <div className="flex flex-col items-center gap-4 py-10 text-center">
-      <p className="text-sm text-muted-foreground">Halaman tidak ditemukan.</p>
+      <p className="text-sm text-muted-foreground">Page not found.</p>
       <a
         href={projectsPath()}
         onClick={(e) => {
@@ -174,7 +174,7 @@ function NotFoundView() {
         }}
         className="text-sm font-medium underline underline-offset-4"
       >
-        Kembali ke daftar Project
+        Back to projects
       </a>
     </div>
   );

@@ -9,8 +9,9 @@
  */
 import { expect, test } from "bun:test";
 import fc from "fast-check";
-import { flattenAgents, flattenProviders, normalizeEvent, parseSseFrame } from "../opencode-client";
+import { flattenAgents, flattenProviders } from "../opencode-client";
 import { parseListeningPort } from "../opencode-server";
+import { normalizeEvent, parseSseFrame } from "../opencode-sse";
 
 test("parseSseFrame: mengambil baris data; frame tanpa data -> null", () => {
   expect(parseSseFrame('data: {"a":1}\n\n')).toBe('{"a":1}');

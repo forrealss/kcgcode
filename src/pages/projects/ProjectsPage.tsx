@@ -7,21 +7,14 @@
  * disentuh tanpa mampir ke halaman Project. Bila belum ada Project sama
  * sekali, empty state mengarahkan ke pembuatan Project (`NewProjectDialog`).
  *
- * Ringkasan per Project (jumlah Session, Session berjalan, aktivitas
- * terakhir) dihitung `lib/project-overview.ts` dari `GET /api/projects` +
- * `GET /api/sessions` — logika murni dan teruji, komponen ini hanya merender.
+ * State daftar & pencarian dipegang `hooks/useProjects.ts`; ringkasan per
+ * Project dihitung `lib/project-overview.ts` (logika murni dan teruji),
+ * sedangkan satu baris Project dirender `components/projects/ProjectRow.tsx`.
  */
 
-import {
-  ArrowRightIcon,
-  FolderPlusIcon,
-  FoldersIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  SearchXIcon,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { FolderPlusIcon, FoldersIcon, RefreshCwIcon, SearchIcon, SearchXIcon } from "lucide-react";
 import { NewProjectDialog } from "@/components/projects/NewProjectDialog";
+import { ProjectRow } from "@/components/projects/ProjectRow";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,60 +28,27 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useProjects } from "@/hooks/useProjects";
 import { useRouter } from "@/hooks/useRouter";
-import { ApiError, apiFetch } from "@/lib/api";
-import {
-  buildProjectOverviews,
-  filterProjectOverviews,
-  formatRelativeTime,
-  type ProjectOverview,
-  totalRunningSessions,
-} from "@/lib/project-overview";
+import type { ProjectOverview } from "@/lib/project-overview";
 import { projectPath, sessionPath } from "@/lib/routes";
-import type { Project, Session } from "@/types";
 import logo from "../../logo.svg";
-
-/** Ambang jumlah Project sebelum kolom pencarian ditampilkan. */
-const SEARCH_THRESHOLD = 5;
 
 export function ProjectsPage() {
   const { navigate } = useRouter();
-  const [overviews, setOverviews] = useState<ProjectOverview[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [query, setQuery] = useState("");
-
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      // Session dimuat bersamaan supaya tiap baris bisa menampilkan status &
-      // target "Lanjutkan" tanpa request tambahan per Project.
-      const [projectsRes, sessionsRes] = await Promise.all([
-        apiFetch("/api/projects"),
-        apiFetch("/api/sessions"),
-      ]);
-      const [{ projects }, { sessions }] = (await Promise.all([
-        projectsRes.json(),
-        sessionsRes.json(),
-      ])) as [{ projects: Project[] }, { sessions: Session[] }];
-      setOverviews(buildProjectOverviews(projects, sessions));
-    } catch (e) {
-      setOverviews([]);
-      setLoadError(e instanceof ApiError ? e.message : "Failed to load projects");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
-
-  const visible = useMemo(() => filterProjectOverviews(overviews, query), [overviews, query]);
-  const running = totalRunningSessions(overviews);
-  const showSearch = overviews.length >= SEARCH_THRESHOLD;
+  const {
+    overviews,
+    loading,
+    loadError,
+    refresh,
+    visible,
+    running,
+    showSearch,
+    dialogOpen,
+    setDialogOpen,
+    query,
+    setQuery,
+  } = useProjects();
 
   /** Buka Session terakhir bila ada, jika tidak ke halaman Project. */
   const resume = (overview: ProjectOverview) => {
@@ -216,62 +176,6 @@ export function ProjectsPage() {
         )}
       </section>
     </div>
-  );
-}
-
-interface ProjectRowProps {
-  overview: ProjectOverview;
-  onOpen: () => void;
-}
-
-/**
- * Satu baris Project. Seluruh baris adalah tombol tunggal (bukan tombol di
- * dalam tombol) agar target sentuh besar di layar HP dan tetap dapat diakses
- * lewat keyboard.
- */
-function ProjectRow({ overview, onOpen }: ProjectRowProps) {
-  const { project, sessionCount, runningCount, lastSession, lastActivityAt } = overview;
-  const hasSession = lastSession !== null;
-
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="group flex w-full items-center gap-3 rounded-xl border bg-card px-4 py-3 text-left shadow-sm transition-all hover:border-primary/40 hover:bg-accent hover:shadow-md focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-      aria-label={
-        hasSession ? `Resume last session of ${project.name}` : `Open project ${project.name}`
-      }
-    >
-      <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-semibold text-primary uppercase">
-        {project.name.trim().charAt(0) || "?"}
-        {runningCount > 0 && (
-          <span
-            className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card"
-            aria-hidden
-          />
-        )}
-      </span>
-
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <span className="truncate text-sm font-medium group-hover:text-primary">
-          {project.name}
-        </span>
-        <span className="truncate font-mono text-xs text-muted-foreground">{project.path}</span>
-        <span className="truncate text-xs text-muted-foreground">
-          {sessionCount === 0
-            ? "No sessions"
-            : `${sessionCount} session${sessionCount === 1 ? "" : "s"}`}
-          {runningCount > 0 && ` · ${runningCount} running`}
-          {" · "}
-          {formatRelativeTime(lastActivityAt)}
-        </span>
-      </span>
-
-      <span className="flex shrink-0 items-center gap-1 text-xs font-medium text-muted-foreground group-hover:text-primary">
-        <span className="hidden sm:inline">{hasSession ? "Resume" : "Open"}</span>
-        <ArrowRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
-      </span>
-    </button>
   );
 }
 

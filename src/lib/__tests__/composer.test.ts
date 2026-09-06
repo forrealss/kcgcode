@@ -2,7 +2,7 @@
  * Unit test placeholder composer (src/lib/composer.ts).
  */
 import { describe, expect, test } from "bun:test";
-import { composerPlaceholder } from "../composer";
+import { composerPlaceholder, extractMentionedFiles } from "../composer";
 
 describe("composerPlaceholder", () => {
   test("wide screen: full hint when input is ready", () => {
@@ -38,5 +38,32 @@ describe("composerPlaceholder", () => {
     expect(composerPlaceholder({ busy: true, canInput: true, compact: false })).toBe(
       "Model is responding…",
     );
+  });
+});
+
+describe("extractMentionedFiles", () => {
+  test("path yang pernah disarankan autocomplete ikut dikirim", () => {
+    const known = new Set(["src/index.ts"]);
+    expect(extractMentionedFiles("fix @src/index.ts", known)).toEqual(["src/index.ts"]);
+  });
+
+  test("path memuat / ikut dikirim walau tidak pernah disarankan", () => {
+    expect(extractMentionedFiles("lihat @a/b/c.ts dulu", new Set())).toEqual(["a/b/c.ts"]);
+  });
+
+  test("kata biasa dengan @ (mis. @user) TIDAK dikirim tanpa slash & tak dikenal", () => {
+    expect(extractMentionedFiles("halo @user apa kabar", new Set())).toEqual([]);
+    // Kecuali pernah disarankan autocomplete — baru dianggap file sungguhan.
+    expect(extractMentionedFiles("halo @user", new Set(["user"]))).toEqual(["user"]);
+  });
+
+  test("urutan & duplikat kemunculan dipertahankan", () => {
+    const known = new Set(["a.ts"]);
+    expect(extractMentionedFiles("@a.ts lalu @a.ts lagi", known)).toEqual(["a.ts", "a.ts"]);
+  });
+
+  test("tanpa teks atau tanpa @ -> kosong", () => {
+    expect(extractMentionedFiles("", new Set())).toEqual([]);
+    expect(extractMentionedFiles("tidak ada mention", new Set(["x.ts"]))).toEqual([]);
   });
 });

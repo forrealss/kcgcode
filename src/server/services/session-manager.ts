@@ -49,24 +49,15 @@ import type {
   OpenCodeFileRef,
 } from "./opencode-client";
 import type { OpenCodeServerManager } from "./opencode-server";
-
-/** Satu turn balasan yang sedang di-stream (SSE `message.part.updated`). */
-interface StreamingTurn {
-  /**
-   * Id pesan assistant di opencode (`msg_...`) yang sedang dibangun.
-   * Satu turn bisa memuat beberapa pesan assistant (mis. sub-agent/tool
-   * yang memancarkan `msg_...` sendiri), jadi disimpan sebagai Set.
-   */
-  assistantMsgIds: Set<string>;
-  /** Parts terakumulasi per pesan (messageId -> partId -> part). */
-  parts: Map<string, Map<string, MessagePart>>;
-  /** Urutan kemunculan messageId agar penyimpanan mengikuti alur turn. */
-  order: string[];
-  /** Sudah difinalisasi (persist + onMessage) — cegah pemrosesan ganda. */
-  finalized: boolean;
-  /** Timer batas waktu turn; dibersihkan saat finalisasi. */
-  timeout?: unknown;
-}
+import {
+  describeSessionError,
+  eventField as field,
+  friendlySendError,
+  permissionGroupKey,
+  promptFromPermission,
+  promptFromQuestion,
+} from "./session-events";
+import { TurnStream } from "./turn-stream";
 
 export const MAX_FREE_TEXT_LENGTH = 10000;
 export const SEND_TIMEOUT_MS = 180_000;
@@ -195,175 +186,6 @@ export interface SessionManager {
   shutdown(): Promise<void>;
 }
 
-/** Ambil nilai field event dengan toleransi beberapa nama kunci. */
-function field(ev: OpenCodeEvent, ...keys: string[]): unknown {
-  for (const k of keys) {
-    const v = ev[k];
-    if (v !== undefined && v !== null) return v;
-  }
-  return undefined;
-}
-
-/**
- * Deskripsi singkat sebuah permission request untuk judul kartu.
- *
- * Menerima penamaan v1 (`permission` + `patterns`) maupun v2
- * (`action` + `resources`) — lihat `EventPermissionAsked` vs
- * `EventPermissionV2Asked` pada skema opencode.
- */
-function describePermission(ev: OpenCodeEvent): string {
-  const permission = field(ev, "permission", "action", "name");
-  const patterns = field(ev, "patterns", "resources");
-  const parts: string[] = [];
-  if (typeof permission === "string") parts.push(permission);
-  if (Array.isArray(patterns)) {
-    for (const p of patterns.slice(0, 3)) {
-      if (typeof p === "string") parts.push(`\`${p}\``);
-    }
-  }
-  return parts.length > 0 ? parts.join(" — ") : "Izin tool";
-} /**
- * Baris pertama pesan error dari event `session.error` opencode (bentuk SSE
- * ternormalisasi: `error: { name, data: { message } }`). Sisa `data.message`
- * berupa stack trace — tidak berguna untuk UI.
- */
-function sessionErrorMessage(ev: OpenCodeEvent): string {
-  const err = field(ev, "error");
-  if (typeof err !== "object" || err === null) return "";
-  const e = err as { data?: { message?: unknown } };
-  if (typeof e.data !== "object" || e.data === null) return "";
-  const raw = e.data.message;
-  if (typeof raw !== "string" || raw.trim() === "") return "";
-  return raw.split("\n")[0]?.trim() ?? "";
-}
-
-/**
- * Deskripsi ramah event `session.error` opencode. Nama error (`error.name`)
- * dipetakan ke pesan Indonesia; pesan asli (baris pertama) disertakan bila
- * ada karena sering lebih informatif (mis. `TypeError: File URL host …`).
- */
-function describeSessionError(ev: OpenCodeEvent): string {
-  const err = field(ev, "error");
-  const name =
-    typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
-  const line = sessionErrorMessage(ev);
-  // Petunjuk ramah per nama error; null = pesan asli lebih informatif
-  // (mis. `UnknownError` yang membawa TypeError asli).
-  const hint = (() => {
-    switch (name) {
-      case "ProviderAuthError":
-        return "Model provider authentication failed. Check the opencode login (`opencode auth`).";
-      case "APIError":
-        return "The model provider returned an API error. Try again or switch models.";
-      case "ContentFilterError":
-        return "The model response was blocked by a content filter.";
-      case "ContextOverflowError":
-        return "The conversation context exceeded the model limit. Start a new session or compact.";
-      case "MessageOutputLengthError":
-        return "The model output exceeded the message length limit.";
-      case "MessageAbortedError":
-        return "Prompt processing was aborted.";
-      case "StructuredOutputError":
-        return "Failed to parse the model's structured output.";
-      default:
-        return null;
-    }
-  })();
-  if (hint === null) return line || "Something went wrong while processing the prompt.";
-  return line ? `${hint} — ${line}` : hint;
-}
-
-/** Terjemahkan kode error pengiriman prompt ke pesan yang bisa dibaca user. */
-function friendlySendError(raw: string): string {
-  const r = raw.trim();
-  if (r === "TURN_TIMEOUT") {
-    return "The model did not respond within the time limit. Try sending the message again.";
-  }
-  const asyncMatch = r.match(/^OC_PROMPT_ASYNC_FAILED(?:\((\d+)\))?(?::\s*(.*))?$/);
-  if (asyncMatch) {
-    const status = asyncMatch[1];
-    const detail = asyncMatch[2];
-    if (status) return `Failed to send the prompt to opencode (status ${status}). Try again.`;
-    if (detail)
-      return `Failed to send the prompt to opencode: ${detail.split("\n")[0]?.trim() ?? detail}`;
-    return "Failed to send the prompt to opencode. Try again.";
-  }
-  const sendFail = r.match(/^SEND_FAILED:\s*(.*)$/);
-  if (sendFail) {
-    const detail = sendFail[1];
-    return detail
-      ? `Failed to send the prompt: ${detail.split("\n")[0]?.trim() ?? detail}`
-      : "Failed to send the prompt: the opencode connection is having trouble.";
-  }
-  return r.split("\n")[0] ?? r;
-}
-
-/** Bangun Interactive_Prompt dari event `permission.asked` (lihat juga `permissionGroupKey`). */
-function promptFromPermission(
-  ev: OpenCodeEvent,
-  sessionId: string,
-  now: number,
-): InteractivePrompt {
-  const requestId = String(field(ev, "requestID", "id") ?? randomUUID());
-  return {
-    id: requestId,
-    sessionId,
-    kind: "permission",
-    type: "confirmation",
-    title: describePermission(ev),
-    options: null,
-    status: "pending",
-    createdAt: now,
-    resolvedAt: null,
-  };
-}
-
-/** Bangun Interactive_Prompt dari event `question.asked` (pertanyaan pertama). */
-function promptFromQuestion(ev: OpenCodeEvent, sessionId: string, now: number): InteractivePrompt {
-  const requestId = String(field(ev, "requestID", "id") ?? randomUUID());
-  const questions = field(ev, "questions");
-  const first =
-    Array.isArray(questions) && questions.length > 0
-      ? (questions[0] as {
-          question?: unknown;
-          options?: unknown;
-          custom?: unknown;
-        })
-      : null;
-  const options =
-    first && Array.isArray(first.options)
-      ? first.options
-          .map((o) => (typeof o === "object" && o !== null ? (o as { label?: unknown }).label : o))
-          .filter((l): l is string => typeof l === "string")
-      : [];
-  return {
-    id: requestId,
-    sessionId,
-    kind: "question",
-    type: "menu",
-    title: first && typeof first.question === "string" ? first.question : null,
-    options: options.length > 0 ? options : null,
-    custom: first?.custom !== false,
-    status: "pending",
-    createdAt: now,
-    resolvedAt: null,
-  };
-}
-
-/**
- * Kunci pengelompokan prompt permission yang identik.
- *
- * opencode memancarkan SATU request permission per tool call, tanpa
- * deduplikasi — meminta akses yang sama berulang (mis. `bash` pada direktori
- * eksternal yang sama) membanjiri UI dengan kartu identik. Request dengan
- * kind + judul yang sama dianggap satu keputusan yang sama: tampil sebagai
- * SATU kartu, dan jawaban user diteruskan ke SELURUH request anggota grup
- * (fan-out di `resolvePrompt`) agar turn tidak menggantung.
- */
-function permissionGroupKey(p: InteractivePrompt): string {
-  return `${p.kind}\u0000${p.title ?? ""}`;
-}
-
 /**
  * Membuat instance Session_Manager terikat pada `store` dan `servers`.
  * `servers` (OpenCode_Server), `now`, dan timer dapat diinjeksi untuk test.
@@ -404,9 +226,19 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const inflight = new Map<string, Promise<void>>();
   /** Project yang sudah diproses saat server-nya keluar (hindari duplikasi). */
   const exitNotified = new Set<string>();
-  /** Turn balasan yang sedang di-stream (key: id Session lokal). */
-  const streamingTurns = new Map<string, StreamingTurn>();
   const onMessagePart = opts.onMessagePart;
+
+  /** State turn streaming per Session (finish/discard/fail + timer timeout). */
+  const turns = new TurnStream({
+    store,
+    now,
+    onMessage,
+    onMessagePart,
+    onError,
+    onTurnChange,
+    setTimeoutFn,
+    clearTimeoutFn,
+  });
 
   function updateStatus(sessionId: string, status: SessionStatus, changedAt: number): void {
     const res = store.updateSessionStatus(sessionId, status, changedAt);
@@ -415,90 +247,6 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
   function updatePromptResolved(promptId: string): void {
     store.updatePromptStatus(promptId, "resolved", now());
-  }
-
-  /**
-   * Simpan seluruh pesan assistant yang sudah terakumulasi dari parts SSE
-   * (satu pesan per messageId, sesuai urutan kemunculan). Dipakai baik oleh
-   * finalisasi sukses (`session.idle`) maupun gagal — parts yang sudah
-   * ter-stream tidak boleh hilang walau turn berakhir dengan error.
-   */
-  function persistTurnParts(sessionId: string, turn: StreamingTurn): void {
-    const createdAt = now();
-    for (const messageId of turn.order) {
-      const byPart = turn.parts.get(messageId);
-      if (!byPart || byPart.size === 0) continue;
-      const message: SessionMessage = {
-        id: messageId,
-        sessionId,
-        role: "assistant",
-        parts: [...byPart.values()],
-        createdAt,
-      };
-      // Turn ulang atas messageId yang sama (UNIQUE) gagal disimpan — pesan
-      // tetap diteruskan agar Client tidak kehilangan balasan.
-      store.insertMessage(message);
-      onMessage?.(message);
-    }
-  }
-
-  /**
-   * Tutup turn: rakit pesan assistant dari parts hasil SSE, simpan, kirim ke
-   * Client. Dipanggil saat `session.idle` Session akar (atau stop/exit).
-   *
-   * Sumber kebenaran adalah parts SSE, bukan balasan `POST /message` — pada
-   * turn panjang (mis. sub-agent) koneksi POST bisa putus sebelum balasan
-   * datang, sehingga pesan final tidak akan pernah tersimpan.
-   */
-  function finalizeTurn(sessionId: string): void {
-    const turn = streamingTurns.get(sessionId);
-    if (!turn || turn.finalized) return;
-    turn.finalized = true;
-    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
-    streamingTurns.delete(sessionId);
-    onTurnChange?.(sessionId, false);
-    persistTurnParts(sessionId, turn);
-  }
-
-  /**
-   * Tutup turn dalam kondisi gagal (prompt ditolak, `session.error`, atau
-   * timeout): parts yang sudah ter-stream tetap disimpan, lalu pesan error
-   * ber-role assistant (part `type: "error"`) ditulis ke history agar
-   * kegagalan terlihat dan bertahan setelah reattach. `onError` tetap
-   * dipanggil untuk banner instan di Client.
-   */
-  /**
-   * Buang turn yang sedang di-stream TANPA menyimpan parts-nya. Dipakai saat
-   * user meng-interrupt: balasan parsial yang belum selesai dibuang agar
-   * tidak tersimpan & tidak muncul kembali di riwayat/Client. Broadcast turn
-   * tidak aktif tetap dikirim agar tombol stop di UI mati.
-   */
-  function discardTurn(sessionId: string): void {
-    const turn = streamingTurns.get(sessionId);
-    if (!turn || turn.finalized) return;
-    turn.finalized = true;
-    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
-    streamingTurns.delete(sessionId);
-    onTurnChange?.(sessionId, false);
-  }
-
-  function failTurn(sessionId: string, message: string): void {
-    const turn = streamingTurns.get(sessionId);
-    if (!turn || turn.finalized) return;
-    turn.finalized = true;
-    if (turn.timeout !== undefined) clearTimeoutFn(turn.timeout);
-    streamingTurns.delete(sessionId);
-    onTurnChange?.(sessionId, false);
-    persistTurnParts(sessionId, turn);
-    const errMsg: SessionMessage = {
-      id: `err_${randomUUID()}`,
-      sessionId,
-      role: "assistant",
-      parts: [{ type: "error", text: message }],
-      createdAt: now(),
-    };
-    if (store.insertMessage(errMsg).ok) onMessage?.(errMsg);
-    onError?.(sessionId, message);
   }
 
   /** Catat pemetaan ocSessionId -> Session lokal (juga untuk cleanup). */
@@ -561,7 +309,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       // menandai turn selesai, jika tidak turn terpotong di tengah.
       const cur = store.getSession(sessionId);
       if (!cur.ok || cur.data.ocSessionId !== ocId) return;
-      finalizeTurn(sessionId);
+      turns.finish(sessionId);
       return;
     }
     if (ev.type === "session.error") {
@@ -576,9 +324,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       // Bukan kegagalan: parts yang sudah ter-stream disimpan tanpa banner error.
       const aborted = errName === "MessageAbortedError";
       const message = describeSessionError(ev);
-      if (streamingTurns.has(sessionId)) {
-        if (aborted) finalizeTurn(sessionId);
-        else failTurn(sessionId, message);
+      if (turns.has(sessionId)) {
+        if (aborted) turns.finish(sessionId);
+        else turns.fail(sessionId, message);
       } else if (!aborted) {
         // Tanpa turn aktif, abort berarti turn sudah ditutup interrupt/stop -
         // jangan tampilkan banner "Pemrosesan prompt dibatalkan" ke Client.
@@ -591,14 +339,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (typeof ocId !== "string") return;
       const sessionId = ocToSession.get(ocId);
       if (!sessionId) return;
-      const turn = streamingTurns.get(sessionId);
-      if (!turn) return;
       const info = field(ev, "info");
       if (info && typeof info === "object") {
         const role = (info as { role?: unknown }).role;
         const id = (info as { id?: unknown }).id;
         if (role === "assistant" && typeof id === "string") {
-          turn.assistantMsgIds.add(id);
+          turns.noteAssistantMessage(sessionId, id);
         }
       }
       return;
@@ -608,22 +354,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (typeof ocId !== "string") return;
       const sessionId = ocToSession.get(ocId);
       if (!sessionId) return;
-      const turn = streamingTurns.get(sessionId);
-      if (!turn || turn.assistantMsgIds.size === 0) return;
       const part = field(ev, "part");
       if (typeof part !== "object" || part === null) return;
       const p = part as MessagePart & { messageID?: unknown };
       const messageId = p.messageID;
-      if (typeof messageId !== "string" || !turn.assistantMsgIds.has(messageId)) return;
-      if (typeof p.type !== "string" || typeof p.id !== "string") return;
-      let byPart = turn.parts.get(messageId);
-      if (!byPart) {
-        byPart = new Map<string, MessagePart>();
-        turn.parts.set(messageId, byPart);
-        turn.order.push(messageId);
-      }
-      byPart.set(p.id, p);
-      onMessagePart?.(sessionId, messageId, p);
+      if (typeof messageId !== "string") return;
+      turns.acceptPart(sessionId, messageId, p);
       return;
     }
     // v1 & v2 memakai id request yang sama (`per_...`), dan `prompts.id` adalah
@@ -763,7 +499,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       void handle?.client.abortSession(cur.data.ocSessionId);
     }
     // Simpan parts yang sudah terkumpul sebelum Session ditutup.
-    finalizeTurn(sessionId);
+    turns.finish(sessionId);
     // Lepas induk + seluruh child sub-agent milik Session ini.
     unmapOcSessions(sessionId);
     updateStatus(sessionId, "stopped", now());
@@ -788,7 +524,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       void handle?.client.abortSession(cur.data.ocSessionId);
     }
     // Buang turn parsial (tidak disimpan) + broadcast turn tidak aktif.
-    discardTurn(sessionId);
+    turns.discard(sessionId);
     return { ok: true };
   }
 
@@ -948,7 +684,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const cur = store.getSession(sessionId);
     if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
 
-    finalizeTurn(sessionId);
+    turns.finish(sessionId);
     // Bila masih running, abort turn remote agar model berhenti dieksekusi.
     if (cur.data.status === "running" && cur.data.ocSessionId) {
       const runningHandle = servers.getServer(cur.data.projectId);
@@ -1058,24 +794,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
     // Turn sebelumnya yang belum idle ditutup dulu agar parts-nya tidak
     // tercampur ke turn baru dan tidak hilang.
-    finalizeTurn(sessionId);
+    turns.finish(sessionId);
 
     // Mulai turn streaming: parts dari SSE `message.part.updated` di-forward.
-    const turn: StreamingTurn = {
-      assistantMsgIds: new Set(),
-      parts: new Map(),
-      order: [],
-      finalized: false,
-    };
     // Jaring pengaman bila `session.idle` tidak pernah datang (mis. server
     // mati di tengah turn) — parts yang sudah terkumpul tetap disimpan.
-    turn.timeout = setTimeoutFn(() => {
-      if (streamingTurns.get(sessionId) !== turn) return;
-      failTurn(sessionId, friendlySendError("TURN_TIMEOUT"));
-    }, sendTimeoutMs);
-    streamingTurns.set(sessionId, turn);
-    // Beri tahu Client bahwa model mulai merespon (tombol stop/interrupt aktif).
-    onTurnChange?.(sessionId, true);
+    turns.begin(sessionId, sendTimeoutMs, friendlySendError("TURN_TIMEOUT"));
 
     enqueue(sessionId, async () => {
       try {
@@ -1089,10 +813,10 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           cur.data.agent,
         );
         if (!res.ok) {
-          failTurn(sessionId, friendlySendError(res.error ?? "OC_PROMPT_ASYNC_FAILED"));
+          turns.fail(sessionId, friendlySendError(res.error ?? "OC_PROMPT_ASYNC_FAILED"));
         }
       } catch (e) {
-        failTurn(sessionId, friendlySendError(`SEND_FAILED: ${(e as Error).message}`));
+        turns.fail(sessionId, friendlySendError(`SEND_FAILED: ${(e as Error).message}`));
       }
     });
 
@@ -1216,7 +940,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     for (const s of store.listSessions()) {
       if (s.projectId === projectId && s.status === "running") {
         // Server mati di tengah turn: selamatkan parts yang sudah ter-stream.
-        finalizeTurn(s.id);
+        turns.finish(s.id);
         updateStatus(s.id, "crashed", crashedAt);
         unmapOcSessions(s.id);
       }

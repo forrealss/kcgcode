@@ -7,7 +7,6 @@
  * yang pernah terjadi di sesi headless).
  */
 import { expect, test } from "bun:test";
-import type { MessagePart, SessionMessage } from "@/types";
 import {
   groupTurns,
   hasVisibleContent,
@@ -17,7 +16,8 @@ import {
   turnStatus,
   upsertMessage,
   upsertMessagePart,
-} from "../SessionView";
+} from "@/lib/turns";
+import type { MessagePart, SessionMessage } from "@/types";
 
 test("textOf: hanya part text yang masuk jawaban (reasoning tidak ikut)", () => {
   const parts: MessagePart[] = [

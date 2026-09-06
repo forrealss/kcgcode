@@ -583,7 +583,7 @@ test("sendFreeTextInput: prompt_async gagal -> onError + pesan error tersimpan",
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0]?.[0]).toBe(sid);
     // Pesan error ramah (bukan kode mentah) dan ditulis ke history (part error).
-    expect(h.errors[0]?.[1]).toBe("Gagal mengirim prompt ke opencode (status 500). Coba lagi.");
+    expect(h.errors[0]?.[1]).toBe("Failed to send the prompt to opencode (status 500). Try again.");
     const assistants = h.messages.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
     expect(assistants[0]?.parts).toEqual([{ type: "error", text: h.errors[0]?.[1] }]);
@@ -661,7 +661,7 @@ test("session.error tanpa turn aktif -> hanya onError, tidak menulis pesan", asy
       error: { name: "ProviderAuthError", data: { message: "auth required" } },
     });
     expect(h.errors).toHaveLength(1);
-    expect(h.errors[0]?.[1]).toContain("Autentikasi provider model gagal");
+    expect(h.errors[0]?.[1]).toContain("Model provider authentication failed");
     expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
     const stored = h.store.getMessages(sid);
     expect(stored.ok && stored.data).toHaveLength(0);
@@ -696,7 +696,7 @@ test("TURN_TIMEOUT tanpa balasan -> pesan error tersimpan + onError", async () =
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0]?.[0]).toBe(sid);
     expect(h.errors[0]?.[1]).toBe(
-      "Model tidak membalas dalam batas waktu yang ditentukan. Coba kirim ulang pesan.",
+      "The model did not respond within the time limit. Try sending the message again.",
     );
     const assistants = h.messages.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);

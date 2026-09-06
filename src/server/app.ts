@@ -41,12 +41,11 @@ import {
 import { createProjectManager, type ProjectManager } from "./services/project-manager";
 import { createSessionManager, type SessionManager } from "./services/session-manager";
 import {
-  bunWsSubscriber,
   createWebSocketGateway,
-  dispatchClientMessage,
   type Subscriber,
   type WebSocketGateway,
 } from "./services/websocket-gateway";
+import { bunWsSubscriber, dispatchClientMessage } from "./services/ws-transport";
 
 /** Data per-koneksi WebSocket (hasil otentikasi upgrade, Req 9.3). */
 interface WsData {

@@ -30,3 +30,24 @@ export function composerPlaceholder(state: ComposerPlaceholderState): string {
     ? "Type a message…"
     : "Type a message… type @ for file references, or paste an image";
 }
+
+/**
+ * Ekstrak referensi `@path` dari teks untuk dikirim sebagai part `file`
+ * terpisah di prompt. Referensi dianggap file bila path-nya pernah disarankan
+ * autocomplete ATAU memuat `/` (kemungkinan besar path file, bukan kata
+ * biasa seperti `@user`).
+ *
+ * Teks asli tidak diubah — part `file` hanya penanda tambahan agar isi file
+ * benar-benar dibaca opencode; urutan kemunculan & duplikat dipertahankan
+ * (tiap kemunculan menjadi satu part `file`).
+ */
+export function extractMentionedFiles(text: string, knownPaths: ReadonlySet<string>): string[] {
+  const files: string[] = [];
+  for (const match of text.matchAll(/(^|\s)@([^\s]+)/g)) {
+    const path = match[2] ?? "";
+    if (path.length > 0 && (knownPaths.has(path) || path.includes("/"))) {
+      files.push(path);
+    }
+  }
+  return files;
+}

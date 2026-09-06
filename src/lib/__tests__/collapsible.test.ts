@@ -19,7 +19,7 @@ import {
   initialCollapsibleState,
   isCollapsibleExpanded,
   toggleCollapsible,
-} from "../CollapsibleState";
+} from "@/lib/collapsible";
 
 describe("collapsible-state — Property 25", () => {
   // Feature: kcg-code, Property 25: Toggle collapsible thinking independen antar pesan

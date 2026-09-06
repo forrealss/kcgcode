@@ -57,7 +57,7 @@ export function SessionPage({ projectId, sessionId }: SessionPageProps) {
   if (state.phase === "loading") {
     return (
       <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-        Memuat…
+        Loading…
       </div>
     );
   }
@@ -74,7 +74,7 @@ export function SessionPage({ projectId, sessionId }: SessionPageProps) {
           }}
           className="text-sm font-medium underline underline-offset-4"
         >
-          Kembali ke daftar Session
+          Back to sessions
         </a>
       </div>
     );
