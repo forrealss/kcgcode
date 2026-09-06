@@ -600,7 +600,7 @@ test("sendFreeTextInput: prompt_async gagal -> onError + pesan error tersimpan",
   }
 });
 
-test("session.error: turn gagal -> parts tersimpan + pesan error di history + onError", async () => {
+test("session.error terminal (parts tersimpan + pesan error ditulis saat idle)", async () => {
   const h = freshHarness();
   try {
     const sid = await createSession(h);
@@ -633,11 +633,15 @@ test("session.error: turn gagal -> parts tersimpan + pesan error di history + on
       },
     });
 
+    // Banner seketika; turn BELUM ditutup (error bisa saja tidak terminal).
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0]?.[0]).toBe(sid);
     expect(h.errors[0]?.[1]).toBe('TypeError: File URL host must be "localhost" or empty on linux');
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
 
-    // Parts tersimpan + pesan error role assistant ditulis ke history.
+    // Idle menutup turn: parts tersimpan + pesan error ditulis (tidak ada
+    // konten baru setelah error — memang kegagalan terminal).
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
     const assistants = h.messages.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(2);
     expect(assistants[0]?.parts).toEqual([
@@ -648,7 +652,7 @@ test("session.error: turn gagal -> parts tersimpan + pesan error di history + on
     const stored = h.store.getMessages(sid);
     expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(2);
 
-    // Idle setelah error tidak menambah apa-apa — turn sudah ditutup.
+    // Idle kedua tidak menambah apa-apa — turn sudah ditutup.
     client.emit({ type: "session.idle", sessionID: "ses_remote1" });
     expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(2);
   } finally {
@@ -676,18 +680,19 @@ test("session.error tanpa turn aktif -> hanya onError, tidak menulis pesan", asy
   }
 });
 
-test("TURN_TIMEOUT tanpa balasan -> pesan error tersimpan + onError", async () => {
+test("TURN_TIMEOUT (idle tanpa tanda hidup) -> pesan error tersimpan + onError", async () => {
   const timers: (() => void)[] = [];
+  const cleared: unknown[] = [];
   const h = freshHarnessWithHooks(
     {},
     {},
     {
-      sendTimeoutMs: 5000,
+      turnIdleTimeoutMs: 5000,
       setTimeoutFn: (cb) => {
         timers.push(cb);
         return timers.length;
       },
-      clearTimeoutFn: () => {},
+      clearTimeoutFn: (handle) => cleared.push(handle),
     },
   );
   try {
@@ -702,13 +707,128 @@ test("TURN_TIMEOUT tanpa balasan -> pesan error tersimpan + onError", async () =
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0]?.[0]).toBe(sid);
     expect(h.errors[0]?.[1]).toBe(
-      "The model did not respond within the time limit. Try sending the message again.",
+      "The model stopped responding — no activity for 5 minutes. Try sending the message again.",
     );
     const assistants = h.messages.filter((m) => m.role === "assistant");
     expect(assistants).toHaveLength(1);
     expect(assistants[0]?.parts).toEqual([{ type: "error", text: h.errors[0]?.[1] }]);
     const stored = h.store.getMessages(sid);
     expect(stored.ok && stored.data.filter((m) => m.role === "assistant")).toHaveLength(1);
+
+    // Timer lama sudah di-clear saat reset/fire — tidak ada timer yatim.
+    expect(cleared.length).toBeGreaterThanOrEqual(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("turn idle timer di-reset oleh tanda hidup (part streaming, status busy)", async () => {
+  const timers: (() => void)[] = [];
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    {
+      turnIdleTimeoutMs: 5000,
+      setTimeoutFn: (cb) => {
+        timers.push(cb);
+        return timers.length;
+      },
+      clearTimeoutFn: () => {},
+    },
+  );
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+    expect(timers).toHaveLength(1); // timer awal
+
+    const fireFirst = timers[0];
+
+    // Tanda hidup #1: pesan assistant + part streaming — timer di-reset 2x.
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "menulis lama...", messageID: "msg_a1" },
+    });
+    expect(timers).toHaveLength(3); // timer awal + 2 reset
+
+    // Timer LAMA terpicu (race): tidak boleh menggagalkan turn yang hidup.
+    fireFirst?.();
+    expect(h.errors).toHaveLength(0);
+    expect(h.turns).toEqual([[sid, true]]);
+
+    // Tanda hidup #2: status busy/retry juga me-reset timer.
+    client.emit({ type: "session.status", sessionID: "ses_remote1", status: { type: "busy" } });
+    expect(timers).toHaveLength(4);
+
+    // Timer lama (hasil reset) tidak menggagalkan turn — turn tetap hidup.
+    timers[1]?.();
+    timers[2]?.();
+    expect(h.errors).toHaveLength(0);
+
+    // Timer yang terpasang sekarang (terakhir) terpicu -> turn gagal idle.
+    timers[3]?.();
+    expect(h.errors).toHaveLength(1);
+    expect(h.errors[0]?.[1]).toBe(
+      "The model stopped responding — no activity for 5 minutes. Try sending the message again.",
+    );
+    expect(h.turns).toContainEqual([sid, false]);
+  } finally {
+    h.close();
+  }
+});
+
+test("turn idle timer DITUNDA selama kartu permission pending (user sedang memutus)", async () => {
+  const timers: (() => void)[] = [];
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    {
+      turnIdleTimeoutMs: 5000,
+      setTimeoutFn: (cb) => {
+        timers.push(cb);
+        return timers.length;
+      },
+      clearTimeoutFn: () => {},
+    },
+  );
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "perbaiki deps");
+    await flush();
+    expect(timers).toHaveLength(1);
+
+    // Turn meminta izin — opencode hidup MENUNGGU keputusan user.
+    client.emit({
+      type: "permission.asked",
+      requestID: "per_idle1",
+      sessionID: "ses_remote1",
+      permission: "bash",
+      patterns: ["bun install"],
+    });
+    expect(h.prompts).toHaveLength(1);
+
+    // Timer terpicu saat kartu masih pending -> DITUNDA (re-arm, bukan fail).
+    timers[0]?.();
+    expect(h.errors).toHaveLength(0);
+    expect(h.turns).toEqual([[sid, true]]);
+    expect(timers).toHaveLength(2); // timer dipasang ulang
+
+    // User menjawab kartu -> tidak ada pending lagi.
+    const resolved = await h.sm.resolvePrompt(sid, "per_idle1", "approve");
+    expect(resolved.ok).toBe(true);
+
+    // Timer yang dipasang ulang kini boleh memicu fail idle.
+    timers[1]?.();
+    expect(h.errors).toHaveLength(1);
+    expect(h.turns).toContainEqual([sid, false]);
   } finally {
     h.close();
   }
@@ -991,6 +1111,91 @@ test("session.error MessageAbortedError dengan turn aktif -> turn ditutup tanpa 
     expect(assistants[0]?.parts).toEqual([
       { type: "text", id: "prt_t1", text: "sebagian", messageID: "msg_a1" },
     ]);
+    expect(h.turns).toContainEqual([sid, false]);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.status retry -> onError banner ramah, turn tetap hidup sampai idle", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    // Provider error yang bisa di-retry: opencode memancarkan session.status
+    // retry (bukan session.error) — turn BELUM ditutup, tapi Client diberi
+    // tahu kenapa balasan lambat (bukan menunggu diam-diam).
+    client.emit({
+      type: "session.status",
+      sessionID: "ses_remote1",
+      status: {
+        type: "retry",
+        attempt: 1,
+        message: "Command Code API error 400: {\"success\":false}",
+      },
+    });
+    expect(h.errors).toHaveLength(1);
+    expect(h.errors[0]?.[0]).toBe(sid);
+    expect(h.errors[0]?.[1]).toBe(
+      "The model provider is retrying (attempt 1): Command Code API error 400: {\"success\":false}",
+    );
+    // Turn masih aktif — retry adalah backoff, bukan kegagalan final.
+    expect(h.turns).toEqual([[sid, true]]);
+    expect(h.messages.filter((m) => m.role === "assistant")).toHaveLength(0);
+
+    // Retry berikutnya memakai `action.title` (upsell) bila ada.
+    client.emit({
+      type: "session.status",
+      sessionID: "ses_remote1",
+      status: {
+        type: "retry",
+        attempt: 2,
+        message: "raw message panjang",
+        action: { title: "Free limit reached", message: "Subscribe to continue" },
+      },
+    });
+    expect(h.errors[1]?.[1]).toBe("The model provider is retrying (attempt 2): Free limit reached");
+
+    // Retry sukses -> turn ditutup normal oleh session.idle (tanpa pesan error).
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "akhirnya jawaban", messageID: "msg_a1" },
+    });
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+
+    const assistants = h.messages.filter((m) => m.role === "assistant");
+    expect(assistants).toHaveLength(1);
+    expect(assistants[0]?.parts[0]?.text).toBe("akhirnya jawaban");
+    expect(h.turns).toContainEqual([sid, false]);
+  } finally {
+    h.close();
+  }
+});
+
+test("session.status non-retry / busy / idle -> tanpa banner, tanpa efek", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+
+    client.emit({ type: "session.status", sessionID: "ses_remote1", status: { type: "busy" } });
+    client.emit({ type: "session.status", sessionID: "ses_remote1", status: { type: "idle" } });
+    client.emit({ type: "session.status", sessionID: "ses_remote1", status: { type: "retry" } }); // tanpa message
+    expect(h.errors).toHaveLength(0);
+
+    // Turn tetap ditutup oleh session.idle seperti biasa.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
     expect(h.turns).toContainEqual([sid, false]);
   } finally {
     h.close();

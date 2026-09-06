@@ -91,11 +91,50 @@ export function describeSessionError(ev: OpenCodeEvent): string {
   return line ? `${hint} — ${line}` : hint;
 }
 
+/** Panjang aman untuk teks retry/error yang dimasukkan ke banner (hindari JSON blob raksasa). */
+const BANNER_MAX_LENGTH = 240;
+
+/**
+ * Pesan ramah dari event `session.status` opencode bertipe `retry`
+ * (`status: { type: "retry", attempt, message, action }`).
+ *
+ * Saat provider model mengembalikan error yang bisa dicoba ulang (rate limit,
+ * kredit habis, cooldown akun, 5xx), opencode TIDAK langsung gagal — ia retry
+ * dengan backoff (hingga 5 percobaan, menghormati header `retry-after` yang
+ * bisa sangat lama). Selama retry hanya event `session.status` yang dipancarkan
+ * (`busy`/`retry`), tanpa `session.error`/`session.idle` — tanpa banner ini,
+ * Client diam-diam menunggu sampai retry habis atau batas idle turn.
+ *
+ * Mengembalikan `null` untuk status non-retry agar pemanggil cukup memfilter.
+ */
+export function retryStatusMessage(status: unknown): string | null {
+  if (typeof status !== "object" || status === null) return null;
+  const s = status as { type?: unknown; attempt?: unknown; message?: unknown; action?: unknown };
+  if (s.type !== "retry") return null;
+  // Upsell (mis. "Free limit reached") membawa `action.title` yang lebih
+  // ringkas daripada `message` mentah (yang bisa berupa JSON body error).
+  const action =
+    typeof s.action === "object" && s.action !== null
+      ? (s.action as { title?: unknown; message?: unknown })
+      : undefined;
+  const raw =
+    typeof action?.title === "string" && action.title.trim() !== ""
+      ? action.title
+      : typeof s.message === "string" && s.message.trim() !== ""
+        ? s.message
+        : null;
+  if (raw === null) return null;
+  const attempt = typeof s.attempt === "number" ? ` (attempt ${s.attempt})` : "";
+  const text = raw.split("\n")[0]?.trim() ?? raw;
+  const clipped = text.length > BANNER_MAX_LENGTH ? `${text.slice(0, BANNER_MAX_LENGTH)}…` : text;
+  return `The model provider is retrying${attempt}: ${clipped}`;
+}
+
 /** Terjemahkan kode error pengiriman prompt ke pesan yang bisa dibaca user. */
 export function friendlySendError(raw: string): string {
   const r = raw.trim();
   if (r === "TURN_TIMEOUT") {
-    return "The model did not respond within the time limit. Try sending the message again.";
+    return "The model stopped responding — no activity for 5 minutes. Try sending the message again.";
   }
   const asyncMatch = r.match(/^OC_PROMPT_ASYNC_FAILED(?:\((\d+)\))?(?::\s*(.*))?$/);
   if (asyncMatch) {

@@ -56,11 +56,19 @@ import {
   permissionGroupKey,
   promptFromPermission,
   promptFromQuestion,
+  retryStatusMessage,
 } from "./session-events";
 import { TurnStream } from "./turn-stream";
 
 export const MAX_FREE_TEXT_LENGTH = 10000;
-export const SEND_TIMEOUT_MS = 180_000;
+/**
+ * Batas IDLE turn (jaring pengaman bila `session.idle` tak kunjung datang).
+ * Bukan batas total: timer di-reset tiap ada tanda hidup opencode (part
+ * streaming, pesan assistant, status busy/retry) — turn panjang yang sehat
+ * (reasoning panjang, tool lambat, sub-agent, retry provider) tidak dipotong;
+ * hanya keheningan TOTAL selama durasi ini yang memicu fail.
+ */
+export const TURN_IDLE_TIMEOUT_MS = 300_000;
 export const SHUTDOWN_BUDGET_MS = 5000;
 
 /** v1 headless: hanya opencode (claude-code punya mekanisme headless sendiri). */
@@ -89,7 +97,11 @@ export interface SessionManagerOptions {
   attachments?: AttachmentManager;
   now?: () => number;
   shutdownBudgetMs?: number;
-  sendTimeoutMs?: number;
+  /**
+   * Batas idle turn (ms) — jaring pengaman bila `session.idle` tak kunjung
+   * datang. Di-reset tiap ada tanda hidup; bukan batas total turn.
+   */
+  turnIdleTimeoutMs?: number;
   setTimeoutFn?: (cb: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
   /** Hook pesan baru — disambungkan ke WebSocket_Gateway. */
@@ -202,7 +214,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const attachments = opts.attachments;
   const now = opts.now ?? Date.now;
   const shutdownBudgetMs = opts.shutdownBudgetMs ?? SHUTDOWN_BUDGET_MS;
-  const sendTimeoutMs = opts.sendTimeoutMs ?? SEND_TIMEOUT_MS;
+  const turnIdleTimeoutMs = opts.turnIdleTimeoutMs ?? TURN_IDLE_TIMEOUT_MS;
   const setTimeoutFn = opts.setTimeoutFn ?? ((cb: () => void, ms: number) => setTimeout(cb, ms));
   const clearTimeoutFn =
     opts.clearTimeoutFn ??
@@ -235,7 +247,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const exitNotified = new Set<string>();
   const onMessagePart = opts.onMessagePart;
 
-  /** State turn streaming per Session (finish/discard/fail + timer timeout). */
+  /** State turn streaming per Session (finish/discard/fail + timer idle). */
   const turns = new TurnStream({
     store,
     now,
@@ -243,6 +255,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     onMessagePart,
     onError,
     onTurnChange,
+    // Turn menunggu keputusan user (kartu permission/question pending) bukan
+    // keheningan — timer idle ditunda sampai kartu dijawab atau turn ditutup.
+    shouldFireIdle: (sessionId) => store.listPendingPrompts(sessionId).length === 0,
     setTimeoutFn,
     clearTimeoutFn,
   });
@@ -353,12 +368,29 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const message = describeSessionError(ev);
       if (turns.has(sessionId)) {
         if (aborted) turns.finish(sessionId);
-        else turns.fail(sessionId, message);
+        else turns.noteError(sessionId, message);
       } else if (!aborted) {
         // Tanpa turn aktif, abort berarti turn sudah ditutup interrupt/stop -
         // jangan tampilkan banner "Pemrosesan prompt dibatalkan" ke Client.
         onError?.(sessionId, message);
       }
+      return;
+    }
+    if (ev.type === "session.status") {
+      // Saat provider model error yang bisa di-retry (rate limit, kredit habis,
+      // cooldown, 5xx), opencode memancarkan `status: { type: "retry", ... }`
+      // alih-alih langsung gagal — turn TETAP berjalan selama backoff retry.
+      // Tanpa banner ini Client menunggu diam-diam sampai retry habis atau
+      // batas idle turn. Status apa pun (busy/retry) adalah tanda hidup:
+      // reset timer idle agar turn panjang tidak dipotong.
+      const ocId = field(ev, "sessionID", "sessionId");
+      if (typeof ocId !== "string") return;
+      const sessionId = ocToSession.get(ocId);
+      if (!sessionId) return;
+      turns.keepAlive(sessionId);
+      const status = field(ev, "status");
+      const message = retryStatusMessage(status);
+      if (message) onError?.(sessionId, message);
       return;
     }
     if (ev.type === "message.updated") {
@@ -397,6 +429,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (typeof ocId !== "string") return;
       const sessionId = ocToSession.get(ocId);
       if (!sessionId) return;
+      // Turn sedang MENUNGGU keputusan user — bukan sunyi: reset timer idle
+      // agar turn tidak dipotong saat user lambat menjawab kartu izin.
+      turns.keepAlive(sessionId);
       const prompt = promptFromPermission(ev, sessionId, now());
       if (!store.insertPrompt(prompt).ok) return; // duplikat -> abaikan
       onPrompt?.(prompt);
@@ -407,6 +442,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (typeof ocId !== "string") return;
       const sessionId = ocToSession.get(ocId);
       if (!sessionId) return;
+      // Sama seperti permission: menunggu jawaban user = tanda hidup.
+      turns.keepAlive(sessionId);
       const prompt = promptFromQuestion(ev, sessionId, now());
       if (!store.insertPrompt(prompt).ok) return;
       onPrompt?.(prompt);
@@ -828,8 +865,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
     // Mulai turn streaming: parts dari SSE `message.part.updated` di-forward.
     // Jaring pengaman bila `session.idle` tidak pernah datang (mis. server
-    // mati di tengah turn) — parts yang sudah terkumpul tetap disimpan.
-    turns.begin(sessionId, sendTimeoutMs, friendlySendError("TURN_TIMEOUT"));
+    // mati di tengah turn): batas IDLE, di-reset tiap tanda hidup — parts
+    // yang sudah terkumpul tetap disimpan saat dipicu.
+    turns.begin(sessionId, turnIdleTimeoutMs, friendlySendError("TURN_TIMEOUT"));
 
     enqueue(sessionId, async () => {
       try {
