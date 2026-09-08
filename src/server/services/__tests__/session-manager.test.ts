@@ -1134,13 +1134,13 @@ test("session.status retry -> onError banner ramah, turn tetap hidup sampai idle
       status: {
         type: "retry",
         attempt: 1,
-        message: "Command Code API error 400: {\"success\":false}",
+        message: 'Command Code API error 400: {"success":false}',
       },
     });
     expect(h.errors).toHaveLength(1);
     expect(h.errors[0]?.[0]).toBe(sid);
     expect(h.errors[0]?.[1]).toBe(
-      "The model provider is retrying (attempt 1): Command Code API error 400: {\"success\":false}",
+      'The model provider is retrying (attempt 1): Command Code API error 400: {"success":false}',
     );
     // Turn masih aktif — retry adalah backoff, bukan kegagalan final.
     expect(h.turns).toEqual([[sid, true]]);
