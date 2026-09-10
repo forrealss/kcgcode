@@ -23,6 +23,7 @@ import path from "node:path";
 import { type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
 import { type AppConfig, loadConfig } from "../config";
 import { openSessionStore, type SessionStore } from "../db";
+import { PUBLIC_DIR, resolveEffectiveUploadsDir } from "../paths";
 import {
   type AuthConfig,
   createApiGuard,
@@ -58,7 +59,7 @@ export interface KcgServerOptions {
   store?: SessionStore;
   /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
   servers?: OpenCodeServerManager;
-  /** Direktori lampiran gambar upload (default: `data/uploads`). */
+  /** Direktori lampiran gambar upload (default: `~/.kcgcode/data/uploads`). */
   uploadsRoot?: string;
   hostname?: string;
   port?: number;
@@ -111,10 +112,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const store = opts.store ?? openSessionStore();
   const hostname = opts.hostname ?? auth.hostname;
   const port = opts.port ?? resolvePort();
-  // Direktori lampiran gambar. Absolut sejak awal (path.resolve) agar URL
-  // `file:///…` yang dikirim ke opencode valid — URL relatif (host tidak
-  // kosong) ditolak opencode dan prompt gagal diam-diam.
-  const uploadsRoot = opts.uploadsRoot ?? path.resolve("data/uploads");
+  // Direktori lampiran gambar. Absolut sejak awal agar URL `file:///…`
+  // valid. Default sesuai mode runtime (dev: ./data/uploads, cli: ~/.kcgcode/...).
+  const uploadsRoot = opts.uploadsRoot ?? resolveEffectiveUploadsDir();
 
   const projectManager = createProjectManager(config.sandboxRoot, store);
   const servers = opts.servers ?? createOpenCodeServerManager();
@@ -156,10 +156,11 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     hostname,
     port,
     routes: {
-      // ---- Asset statis PWA (Requirement 8.1) ----
-      "/manifest.json": () => staticFile("public/manifest.json", "application/manifest+json"),
-      "/sw.js": () => staticFile("public/sw.js", "text/javascript"),
-      "/logo.svg": () => staticFile("public/logo.svg", "image/svg+xml"),
+      // ---- Asset statis PWA dari root paket (bukan cwd) — aman utk global install ----
+      "/manifest.json": () =>
+        staticFile(path.join(PUBLIC_DIR, "manifest.json"), "application/manifest+json"),
+      "/sw.js": () => staticFile(path.join(PUBLIC_DIR, "sw.js"), "text/javascript"),
+      "/logo.svg": () => staticFile(path.join(PUBLIC_DIR, "logo.svg"), "image/svg+xml"),
 
       // ---- Rute API per fitur (pola kcgcode: tabel rute terpisah) ----
       ...projectsRoutes(routeCtx),

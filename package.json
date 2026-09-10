@@ -1,11 +1,39 @@
 {
-  "name": "bun-react-template",
+  "name": "kcgcode",
   "version": "0.1.0",
-  "private": true,
+  "description": "Control CLI AI agents (OpenCode / Claude Code) from your phone — mobile PWA + local headless bridge.",
+  "license": "MIT",
   "type": "module",
+  "bin": {
+    "kcgcode": "./bin/kcgcode.ts"
+  },
+  "files": [
+    "bin",
+    "src",
+    "public",
+    "styles",
+    "bun-env.d.ts",
+    "tsconfig.json",
+    "README.md",
+    "kcg-code.config.example.json"
+  ],
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "keywords": [
+    "bun",
+    "cli",
+    "tui",
+    "opencode",
+    "claude-code",
+    "ai-agent",
+    "pwa",
+    "mobile"
+  ],
   "scripts": {
     "dev": "bun --hot src/index.ts",
     "start": "NODE_ENV=production bun src/index.ts",
+    "kcgcode": "bun bin/kcgcode.ts",
     "build": "bun run build.ts",
     "test": "bun test",
     "lint": "biome check .",
@@ -23,6 +51,7 @@
     "clsx": "^2.1.1",
     "cn": "^0.2.5",
     "lucide-react": "^1",
+    "picocolors": "^1.1.1",
     "radix-ui": "^1.6.7",
     "react": "^19",
     "react-dom": "^19",

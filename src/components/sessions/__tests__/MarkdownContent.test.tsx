@@ -1,7 +1,7 @@
 /** Smoke: MarkdownContent merender GFM & membungkus tabel dengan scroll. */
 import { expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { MarkdownContent } from "/home/irsyadulibad/Htdocs/personal/agent-bridger/src/components/sessions/MarkdownContent";
+import { MarkdownContent } from "../MarkdownContent";
 
 function html(md: string): string {
   return renderToStaticMarkup(<MarkdownContent>{md}</MarkdownContent>);

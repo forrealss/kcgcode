@@ -1,5 +1,9 @@
 /**
- * KCG Code — entry server utama (task 20).
+ * KCG Code — entry server dev (`bun dev` / `bun start`).
+ *
+ * Mode runtime default `dev`: config prioritaskan `./kcg-code.config.json`,
+ * data di `./data/`, HMR aktif. Binary global `kcgcode` memanggil
+ * `setRunMode("cli")` di `bin/kcgcode.ts` (data di `~/.kcgcode`).
  *
  * Wiring `Bun.serve` diimplementasikan di `src/server/app.ts`
  * (`createKcgServer`) agar dapat diuji secara e2e (task 20.2). File ini:
@@ -12,7 +16,11 @@
  *   Session `running` dalam anggaran 5 detik sebelum berhenti (Req 2.3).
  */
 import index from "./index.html";
+import { setRunMode } from "./runtime";
 import { createKcgServer } from "./server/app";
+
+// Entry ini = development di repo. (CLI global men-set "cli" di bin/.)
+setRunMode("dev");
 
 if (import.meta.main) {
   const app = createKcgServer({

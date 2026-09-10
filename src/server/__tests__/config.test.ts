@@ -32,7 +32,7 @@ test("config: direktori sandboxRoot tidak ditemukan -> error", () => {
   const res = resolveConfig(cfgPath);
   expect(res.ok).toBe(false);
   if (!res.ok) {
-    expect(res.error).toContain("tidak ditemukan");
+    expect(res.error).toContain("not found");
   }
 });
 

@@ -3,13 +3,17 @@
  * Sesuai `design.md` — `config.ts`.
  *
  * Skema minimal: `{ "sandboxRoot": "/abs/path" }`.
+ * Path default mengikuti mode runtime (`src/runtime.ts`):
+ * - **cli** (`kcgcode`): `~/.kcgcode/config.json`
+ * - **dev** (`bun dev`): `./kcg-code.config.json` bila ada, else user config
  * `loadConfig()` keluar dengan kode error bila `sandboxRoot` tidak diatur
  * atau direktori yang ditunjuk tidak ditemukan (Requirement 10.1).
  */
 import { readFileSync, realpathSync } from "node:fs";
+import { DEFAULT_CONFIG_PATH, resolveEffectiveConfigPath } from "./paths";
 import type { Result } from "./server/result";
 
-export const DEFAULT_CONFIG_PATH = "kcg-code.config.json";
+export { DEFAULT_CONFIG_PATH };
 
 export interface AppConfig {
   /** Path absolut hasil `realpath` dari `sandboxRoot`. */
@@ -23,7 +27,7 @@ export interface AppConfig {
  * Dipisah dari `loadConfig()` agar dapat diuji secara unit (task 2.2).
  */
 export function resolveConfig(configPath?: string): Result<AppConfig> {
-  const file = configPath ?? process.env.KCG_CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
+  const file = resolveEffectiveConfigPath(configPath);
 
   let raw: string;
   try {
@@ -31,7 +35,7 @@ export function resolveConfig(configPath?: string): Result<AppConfig> {
   } catch (err) {
     return {
       ok: false,
-      error: `[config] tidak dapat membaca berkas konfigurasi "${file}": ${(err as Error).message}`,
+      error: `[config] cannot read config file "${file}": ${(err as Error).message}`,
     };
   }
 
@@ -41,7 +45,7 @@ export function resolveConfig(configPath?: string): Result<AppConfig> {
   } catch (err) {
     return {
       ok: false,
-      error: `[config] JSON tidak valid di "${file}": ${(err as Error).message}`,
+      error: `[config] invalid JSON in "${file}": ${(err as Error).message}`,
     };
   }
 
@@ -50,7 +54,7 @@ export function resolveConfig(configPath?: string): Result<AppConfig> {
   if (typeof sandboxRoot !== "string" || sandboxRoot.trim() === "") {
     return {
       ok: false,
-      error: `[config] field "sandboxRoot" tidak diatur di "${file}"`,
+      error: `[config] "sandboxRoot" is not set in "${file}"`,
     };
   }
 
@@ -60,7 +64,7 @@ export function resolveConfig(configPath?: string): Result<AppConfig> {
   } catch (err) {
     return {
       ok: false,
-      error: `[config] direktori sandboxRoot tidak ditemukan: ${sandboxRoot} (${(err as Error).message})`,
+      error: `[config] sandboxRoot directory not found: ${sandboxRoot} (${(err as Error).message})`,
     };
   }
 

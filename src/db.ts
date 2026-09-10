@@ -18,6 +18,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { DEFAULT_DB_PATH, resolveEffectiveDbPath } from "./paths";
 import { createMessageRepo, type MessageRepo } from "./server/db/messages";
 import { createProjectRepo, type ProjectRepo } from "./server/db/projects";
 import { createPromptRepo, type PromptRepo } from "./server/db/prompts";
@@ -34,7 +35,7 @@ import type {
   SessionStatus,
 } from "./types";
 
-export const DEFAULT_DB_PATH = "data/kcg-code.sqlite";
+export { DEFAULT_DB_PATH };
 
 export interface SessionStore {
   // ---- Pesan terstruktur (append-only) ----
@@ -105,13 +106,14 @@ export interface SessionStore {
 /**
  * Membuka koneksi ke database, menyalakan WAL, menjalankan migrasi
  * idempoten, lalu menyatukan repository per-domain menjadi satu `SessionStore`.
- * Default `data/kcg-code.sqlite`.
+ * Default sesuai mode: dev `./data/kcg-code.sqlite`, cli `~/.kcgcode/data/...`.
  */
-export function openSessionStore(dbPath: string = DEFAULT_DB_PATH): SessionStore {
-  if (dbPath !== ":memory:") {
-    mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
+export function openSessionStore(dbPath?: string): SessionStore {
+  const resolvedPath = dbPath ?? resolveEffectiveDbPath();
+  if (resolvedPath !== ":memory:") {
+    mkdirSync(path.dirname(path.resolve(resolvedPath)), { recursive: true });
   }
-  const db = new Database(dbPath, { create: true });
+  const db = new Database(resolvedPath, { create: true });
   db.exec("PRAGMA journal_mode = WAL;");
   runMigrations(db);
 
