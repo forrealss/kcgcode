@@ -4,6 +4,10 @@ node_modules
 # kcg-code runtime data (sqlite database)
 data
 
+# kcg-code local config (machine-specific sandboxRoot)
+# salin dari kcg-code.config.example.json lalu isi path lokal
+kcg-code.config.json
+
 # output
 out
 dist
