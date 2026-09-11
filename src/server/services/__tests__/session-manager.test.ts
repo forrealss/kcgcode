@@ -253,6 +253,9 @@ function makeFakeServers(): FakeServers {
         };
         return { ok: true, data: handle };
       },
+      async ensureFreshServer(projectId, projectPath) {
+        return this.ensureServer(projectId, projectPath);
+      },
       getServer(projectId) {
         const client = clients.get(projectId);
         return client ? { projectId, baseUrl: "http://127.0.0.1:0", client } : undefined;

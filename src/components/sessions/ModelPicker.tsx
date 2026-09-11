@@ -7,8 +7,9 @@
  * berkelompok per provider, model aktif ditandai).
  *
  * - Daftar model diambil dari `GET /api/projects/:id/models` — dimuat saat
- *   dialog pertama kali dibuka agar server headless tidak di-spawn bila user
- *   tidak pernah mengubah model.
+ *   dialog dibuka (fetch ulang tiap kali agar config opencode yang baru
+ *   ikut terbaca; server headless tidak di-spawn bila user tak pernah
+ *   membuka picker).
  * - Perubahan dikirim via `PUT /api/sessions/:id` dan berlaku pada prompt
  *   berikutnya tanpa restart Session.
  * - Opsi "Model default" mengirim `model: null` (opencode memakai
@@ -16,7 +17,7 @@
  */
 
 import { ChevronDownIcon, ChevronsUpDownIcon, SparklesIcon } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { ModelSearchList } from "@/components/sessions/ModelSearchList";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -66,27 +67,26 @@ export function ModelPicker({
   /** Judul header: buang prefiks vendor & potong bila panjang. */
   const headingLabel = shortModelName(label);
 
-  const loadModels = useCallback(async () => {
-    if (models !== null || loading) return;
+  // Daftar model selalu di-fetch ulang saat dialog dibuka — list di server
+  // headless bisa berubah bila user mengedit config opencode (`opencode serve`
+  // tidak hot-reload). Lazy: tidak di-spawn saat halaman Session dibuka.
+  useEffect(() => {
+    if (!open) return;
     setLoading(true);
     setError(null);
-    try {
-      const res = await apiFetch(`/api/projects/${projectId}/models`);
-      const body = (await res.json()) as { models: ModelOption[] };
-      setModels(body.models);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to load model list");
-      setModels([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, models, loading]);
-
-  // Daftar dimuat saat dialog dibuka (bukan saat mount) agar server headless
-  // tidak di-spawn hanya karena halaman Session dibuka.
-  useEffect(() => {
-    if (open) void loadModels();
-  }, [open, loadModels]);
+    apiFetch(`/api/projects/${projectId}/models`)
+      .then(async (res) => {
+        const body = (await res.json()) as { models: ModelOption[] };
+        setModels(body.models);
+      })
+      .catch((e: unknown) => {
+        setError(e instanceof ApiError ? e.message : "Failed to load model list");
+        setModels([]);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, [open, projectId]);
 
   const choose = async (next: SessionModel | null) => {
     setSaving(true);

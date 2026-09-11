@@ -61,7 +61,7 @@ export function logoLines(): string[] {
     "██╔═██╗ ██║      ",
     "██║  ██╗╚██████╗ ",
     "╚═╝  ╚═╝ ╚═════╝ ",
-  ].map((line) => c.cyanBright(line));
+  ];
 }
 
 export function stripAnsi(s: string): string {
@@ -97,19 +97,4 @@ export function panel(title: string | null, lines: string[], minWidth = 48): str
 /** Baris label + value. */
 export function row(label: string, value: string, labelWidth = 12): string {
   return `${c.dim(label.padEnd(labelWidth))}${value}`;
-}
-
-export function statusDot(running: boolean): string {
-  return running ? c.greenBright(symbols.bullet) : c.gray(symbols.idle);
-}
-
-export function terminalWidth(fallback = 72): number {
-  return process.stdout.columns || fallback;
-}
-
-/** Hyperlink OSC-8 bila terminal mendukung; fallback ke teks biasa. */
-export function link(url: string, label?: string): string {
-  const text = label ?? url;
-  if (!useColor) return text;
-  return `\x1b]8;;${url}\x1b\\${c.underline(c.cyan(text))}\x1b]8;;\x1b\\`;
 }

@@ -6,11 +6,22 @@
  * - `parseListeningPort`: ekstraksi port dari baris log server.
  * - `flattenProviders`: respons GET /config/providers -> daftar model UI.
  * - `flattenAgents`: respons GET /agent -> daftar mode (primary/all saja).
+ * - `configFingerprint`: deteksi perubahan file config opencode.
+ * - `ensureFreshServer`: restart saat fingerprint config berubah.
  */
 import { expect, test } from "bun:test";
+import { mkdtempSync, utimesSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import fc from "fast-check";
+import type { OpenCodeClient } from "../opencode-client";
 import { flattenAgents, flattenProviders } from "../opencode-client";
-import { parseListeningPort } from "../opencode-server";
+import {
+  configFingerprint,
+  createOpenCodeServerManager,
+  parseListeningPort,
+  type ServerProcessLike,
+} from "../opencode-server";
 import { normalizeEvent, parseSseFrame } from "../opencode-sse";
 
 test("parseSseFrame: mengambil baris data; frame tanpa data -> null", () => {
@@ -142,4 +153,111 @@ test("flattenProviders: provider name kosong fallback ke id", () => {
     providers: [{ id: "opencode", name: "", models: { m1: { id: "m1", name: "M1" } } }],
   });
   expect(out[0]).toMatchObject({ providerID: "opencode", providerName: "opencode" });
+});
+
+// ---------------------------------------------------------------------------
+// configFingerprint / ensureFreshServer (live reread config opencode)
+// ---------------------------------------------------------------------------
+
+function makeFakeProc(port: number): ServerProcessLike & { kills: string[] } {
+  const kills: string[] = [];
+  let resolveExited: (code: number | null) => void = () => {};
+  const exited = new Promise<number | null>((res) => {
+    resolveExited = res;
+  });
+  const stdout = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+  // stderr sengaja tidak di-close: ensureServer menunggu baris "listening".
+  const stderr = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const enc = new TextEncoder();
+      controller.enqueue(enc.encode(`opencode server listening on http://127.0.0.1:${port}\n`));
+    },
+  });
+  return {
+    kills,
+    kill(signal) {
+      kills.push(signal);
+      resolveExited(0);
+    },
+    exited,
+    stderr,
+    stdout,
+    pid: undefined,
+  };
+}
+
+function makeFakeClientFactory() {
+  const clients: OpenCodeClient[] = [];
+  const factory = (): OpenCodeClient => {
+    const client = {
+      health: async () => true,
+      subscribeEvents: () => () => {},
+    } as unknown as OpenCodeClient;
+    clients.push(client);
+    return client;
+  };
+  return { clients, factory };
+}
+
+function makeFastManager() {
+  const procs: ReturnType<typeof makeFakeProc>[] = [];
+  const { clients, factory } = makeFakeClientFactory();
+  let nextPort = 9000;
+  const manager = createOpenCodeServerManager({
+    portTimeoutMs: 2000,
+    readyTimeoutMs: 2000,
+    spawn: () => {
+      const proc = makeFakeProc(nextPort++);
+      procs.push(proc);
+      return proc;
+    },
+    clientFactory: factory,
+  });
+  return { manager, procs, clients };
+}
+
+test("configFingerprint: file project ikut masuk dan berubah saat disentuh", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kcg-fp-"));
+  const base = configFingerprint(dir);
+  const p = join(dir, "opencode.json");
+  writeFileSync(p, "{}");
+  const t = new Date("2026-01-01T00:00:00Z");
+  utimesSync(p, t, t);
+  const fp1 = configFingerprint(dir);
+  expect(fp1).toContain("opencode.json");
+  expect(fp1).not.toBe(base);
+  // Stabil bila file tidak disentuh.
+  expect(configFingerprint(dir)).toBe(fp1);
+  // Sentuh file -> fingerprint berubah.
+  utimesSync(p, new Date("2026-01-02T00:00:00Z"), new Date("2026-01-02T00:00:00Z"));
+  expect(configFingerprint(dir)).not.toBe(fp1);
+});
+
+test("ensureFreshServer: config tak berubah -> instance sama; berubah -> restart", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "kcg-fresh-"));
+  const { manager, procs } = makeFastManager();
+
+  const first = await manager.ensureFreshServer("p1", dir);
+  expect(first.ok).toBe(true);
+  if (!first.ok) return;
+  expect(procs).toHaveLength(1);
+
+  // Config tidak berubah: tidak spawn ulang.
+  const second = await manager.ensureFreshServer("p1", dir);
+  expect(second.ok).toBe(true);
+  expect(procs).toHaveLength(1);
+  if (second.ok) expect(second.data.baseUrl).toBe(first.data.baseUrl);
+
+  // Ubah config project -> fingerprint beda -> stop + spawn baru.
+  writeFileSync(join(dir, "opencode.json"), "{}");
+  const third = await manager.ensureFreshServer("p1", dir);
+  expect(third.ok).toBe(true);
+  if (!third.ok) return;
+  expect(procs).toHaveLength(2);
+  expect(procs[0]?.kills).toContain("SIGTERM");
+  expect(third.data.baseUrl).not.toBe(first.data.baseUrl);
 });

@@ -16,6 +16,9 @@
  *   aktif — instance pengganti tidak terpengaruh.
  */
 
+import { existsSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { Result } from "../result";
 import type { OpenCodeClient, OpenCodeEvent } from "./opencode-client";
 import { createOpenCodeClient } from "./opencode-client";
@@ -54,6 +57,12 @@ export interface OpenCodeServerManagerOptions {
 export interface OpenCodeServerManager {
   ensureServer(projectId: string, projectPath: string): Promise<Result<OpenCodeServerHandle>>;
   getServer(projectId: string): OpenCodeServerHandle | undefined;
+  /**
+   * Pastikan server hidup; bila file config opencode berubah sejak spawn
+   * terakhir, server di-restart agar `/config/providers` (daftar model)
+   * dan `/agent` ikut terbaca ulang — `opencode serve` tidak hot-reload.
+   */
+  ensureFreshServer(projectId: string, projectPath: string): Promise<Result<OpenCodeServerHandle>>;
   stopServer(projectId: string): Promise<void>;
   stopAll(): Promise<void>;
   /** Daftarkan hook saat server keluar tak terduga. */
@@ -64,6 +73,40 @@ interface ServerInstance {
   handle: OpenCodeServerHandle;
   proc: ServerProcessLike;
   exiting: boolean;
+  /** Fingerprint config opencode saat server di-spawn (deteksi perubahan). */
+  configFingerprint: string;
+}
+
+/**
+ * Path file config opencode yang memengaruhi provider/model/agent:
+ * project (`opencode.json`/`opencode.jsonc`) + global user config.
+ */
+export function opencodeConfigPaths(projectPath: string): string[] {
+  const home = homedir();
+  return [
+    join(projectPath, "opencode.json"),
+    join(projectPath, "opencode.jsonc"),
+    join(home, ".config", "opencode", "opencode.json"),
+    join(home, ".config", "opencode", "opencode.jsonc"),
+    join(home, ".opencode", "opencode.json"),
+    join(home, ".opencode", "opencode.jsonc"),
+  ];
+}
+
+/**
+ * Fingerprint config: path:mtimeMs untuk tiap file yang ada. Bila nilainya
+ * berbeda dari saat spawn, config dianggap berubah dan server perlu restart.
+ */
+export function configFingerprint(projectPath: string): string {
+  const parts: string[] = [];
+  for (const p of opencodeConfigPaths(projectPath)) {
+    try {
+      if (existsSync(p)) parts.push(`${p}:${statSync(p).mtimeMs}`);
+    } catch {
+      /* file hilang / tidak readable — lewati */
+    }
+  }
+  return parts.join("|");
 }
 
 const DEFAULT_SPAWN: (cwd: string) => ServerProcessLike = (cwd) => {
@@ -123,6 +166,25 @@ export function createOpenCodeServerManager(
     const p = startServer(projectId, projectPath).finally(() => pending.delete(projectId));
     pending.set(projectId, p);
     return p;
+  }
+
+  /**
+   * Seperti `ensureServer`, tapi restart dulu bila fingerprint config
+   * berubah. Restart adalah stop + ensure (in-flight aman terhadap
+   * dua panggilan paralel lewat map `pending`).
+   */
+  async function ensureFreshServer(
+    projectId: string,
+    projectPath: string,
+  ): Promise<Result<OpenCodeServerHandle>> {
+    const existing = instances.get(projectId);
+    if (existing && !existing.exiting) {
+      if (existing.configFingerprint === configFingerprint(projectPath)) {
+        return { ok: true, data: existing.handle };
+      }
+      await stopServer(projectId);
+    }
+    return ensureServer(projectId, projectPath);
   }
 
   async function startServer(
@@ -199,7 +261,12 @@ export function createOpenCodeServerManager(
     }
 
     const handle: OpenCodeServerHandle = { projectId, baseUrl, client };
-    const instance: ServerInstance = { handle, proc, exiting: false };
+    const instance: ServerInstance = {
+      handle,
+      proc,
+      exiting: false,
+      configFingerprint: configFingerprint(projectPath),
+    };
     instances.set(projectId, instance);
 
     if (onEvent) {
@@ -241,6 +308,7 @@ export function createOpenCodeServerManager(
 
   return {
     ensureServer,
+    ensureFreshServer,
     getServer: (projectId) => instances.get(projectId)?.handle,
     stopServer,
     stopAll,

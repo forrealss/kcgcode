@@ -7,7 +7,7 @@
  * (Requirement 10.9), tipe tidak didukung ditolak (1.3). Di layar HP dialog
  * ini tampil sebagai dialog agar tidak mendorong daftar ke bawah.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -59,35 +59,27 @@ export function NewSessionDialog({
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
-  /**
-   * Muat daftar model dari server headless Project. Dipanggil malas (lazy)
-   * saat dropdown model dibuka agar server tidak di-spawn bila user tidak
-   * memilih model. Setelah termuat, hasil dipakai ulang.
-   */
-  const loadModels = useCallback(async () => {
-    if (models !== null || modelsLoading) return;
+  // Daftar model selalu di-fetch ulang saat dialog dibuka (bukan cache
+  // sekali pakai) agar perubahan config opencode terlihat tanpa reload
+  // halaman. Server headless hanya di-spawn saat endpoint ini dipanggil.
+  useEffect(() => {
+    if (!open) return;
+    setCreateError(null);
     setModelsLoading(true);
     setModelsError(null);
-    try {
-      const res = await apiFetch(`/api/projects/${projectId}/models`);
-      const body = (await res.json()) as { models: ModelOption[] };
-      setModels(body.models);
-    } catch (e) {
-      setModelsError(e instanceof ApiError ? e.message : "Failed to load models");
-      setModels([]);
-    } finally {
-      setModelsLoading(false);
-    }
-  }, [projectId, models, modelsLoading]);
-
-  // Begitu dialog dibuka, reset error + muat daftar model (lazy dalam arti
-  // server headless hanya di-spawn saat user benar-benar membuat Session).
-  useEffect(() => {
-    if (open) {
-      setCreateError(null);
-      void loadModels();
-    }
-  }, [open, loadModels]);
+    apiFetch(`/api/projects/${projectId}/models`)
+      .then(async (res) => {
+        const body = (await res.json()) as { models: ModelOption[] };
+        setModels(body.models);
+      })
+      .catch((e: unknown) => {
+        setModelsError(e instanceof ApiError ? e.message : "Failed to load models");
+        setModels([]);
+      })
+      .finally(() => {
+        setModelsLoading(false);
+      });
+  }, [open, projectId]);
 
   const create = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();

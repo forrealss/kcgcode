@@ -450,16 +450,33 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     }
   }
 
-  /** Pastikan server Project hidup; subscribe event SSE bila belum aktif. */
+  /**
+   * Pastikan server Project hidup; subscribe event SSE bila belum aktif.
+   * `refreshConfig` = true: bila file config opencode berubah, server
+   * di-restart dulu (dipakai listModels/listAgents agar daftar ikut
+   * terbaca ulang — `opencode serve` tidak hot-reload config). Setelah
+   * restart, subscription SSE lama dibuang dan diganti milik server baru.
+   */
   async function ensureServerFor(
     projectId: string,
     projectPath: string,
+    opts: { refreshConfig?: boolean } = {},
   ): Promise<Result<{ client: OpenCodeClient }>> {
-    const res = await servers.ensureServer(projectId, projectPath);
+    const prevClient = servers.getServer(projectId)?.client;
+    const ensure = opts.refreshConfig
+      ? servers.ensureFreshServer(projectId, projectPath)
+      : servers.ensureServer(projectId, projectPath);
+    const res = await ensure;
     if (!res.ok) return { ok: false, error: res.error };
     const handle = res.data;
-    // Server headless dapat diganti (crash lalu ensure ulang, atau resume):
-    // subscribe ulang SSE bila instance aktif belum punya subscription aktif.
+    // Server headless dapat diganti (crash lalu ensure ulang, resume, atau
+    // restart config). Bila client berbeda dari sebelumnya, subscription
+    // lama tidak lagi menempel — buang dan subscribe ulang ke instance baru.
+    const sub = activeSubscriptions.get(projectId);
+    if (prevClient && handle.client !== prevClient) {
+      sub?.unsubscribe();
+      activeSubscriptions.delete(projectId);
+    }
     if (!activeSubscriptions.get(projectId)?.active) {
       const prev = activeSubscriptions.get(projectId);
       prev?.unsubscribe();
@@ -676,12 +693,18 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   /**
    * Daftar model yang tersedia untuk Project — server headless Project
    * di-ensure lebih dulu (spawn bila perlu) karena provider/model dibaca dari
-   * konfigurasi opencode pada direktori Project.
+   * konfigurasi opencode pada direktori Project. Bila file config opencode
+   * berubah sejak server hidup, proses di-restart agar daftar ikut terbaru
+   * (opencode serve tidak hot-reload config). Restart ditahan bila ada
+   * Session `running` agar turn yang sedang berjalan tidak terputus.
    */
   async function listModels(projectId: string): Promise<Result<ModelOption[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
-    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    const hasRunning = store.listProjectSessions(projectId).some((s) => s.status === "running");
+    const serverRes = await ensureServerFor(project.data.id, project.data.path, {
+      refreshConfig: !hasRunning,
+    });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.listModels();
   }
@@ -689,12 +712,17 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   /**
    * Daftar agent (mode) untuk Project — server headless Project di-ensure
    * lebih dulu karena daftar agent dibaca dari konfigurasi opencode di
-   * direktori Project (agent kustom user ikut masuk).
+   * direktori Project (agent kustom user ikut masuk). Config yang berubah
+   * memicu restart server agar daftar ikut terbaru (dengan guard yang sama
+   * seperti `listModels`).
    */
   async function listAgents(projectId: string): Promise<Result<AgentOption[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
-    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    const hasRunning = store.listProjectSessions(projectId).some((s) => s.status === "running");
+    const serverRes = await ensureServerFor(project.data.id, project.data.path, {
+      refreshConfig: !hasRunning,
+    });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.listAgents();
   }

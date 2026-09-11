@@ -31,8 +31,12 @@ export function useAgentPicker(
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Muat daftar agent project. Selalu fetch ulang (no-op bila sedang memuat)
+   * — config opencode bisa berubah dan server headless tidak hot-reload.
+   */
   const load = useCallback(() => {
-    if (agents !== null || loading) return;
+    if (loading) return;
     setLoading(true);
     setError(null);
     void (async () => {
@@ -47,7 +51,7 @@ export function useAgentPicker(
         setLoading(false);
       }
     })();
-  }, [agents, loading, projectId]);
+  }, [loading, projectId]);
 
   const pick = useCallback(
     async (name: string | null) => {

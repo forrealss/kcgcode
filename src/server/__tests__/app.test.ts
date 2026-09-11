@@ -180,13 +180,16 @@ function makeFakeServers(): FakeServers {
     stopped,
     clients,
     manager: {
-      async ensureServer(projectId) {
+      async ensureServer(projectId, _projectPath) {
         let client = clients.get(projectId);
         if (!client) {
           client = makeFakeClient(projectId);
           clients.set(projectId, client);
         }
         return { ok: true, data: { projectId, baseUrl: "http://x", client } };
+      },
+      async ensureFreshServer(projectId, projectPath) {
+        return this.ensureServer(projectId, projectPath);
       },
       getServer(projectId) {
         const client = clients.get(projectId);

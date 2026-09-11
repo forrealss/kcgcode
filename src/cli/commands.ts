@@ -49,7 +49,6 @@ export async function runStart(args: CliArgs): Promise<void> {
   const auth = loadAuthConfig();
   const port = args.port ?? Number(process.env.KCG_PORT ?? 3000);
   const hostname = args.host ?? auth.hostname;
-  const dbPath = resolveEffectiveDbPath();
 
   const app = createKcgServer({
     config: cfg.data,
@@ -62,46 +61,15 @@ export async function runStart(args: CliArgs): Promise<void> {
   });
 
   const resolvedPort = app.server.port ?? port;
-  const configPath = cfg.data.configPath;
-  const dash = await startDashboard({
-    server: app,
-    auth,
-    port: resolvedPort,
-    hostname,
-    sandboxRoot: cfg.data.sandboxRoot,
-    configPath,
-    dbPath: path.resolve(dbPath),
-  });
-
   const primaryUrl = `http://${hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname}:${resolvedPort}`;
 
-  if (args.open) {
-    void openBrowser(primaryUrl);
-  }
-
-  // Keyboard: q = quit (TTY saja)
-  const stdin = process.stdin;
-  const isInteractive = Boolean(stdin.isTTY);
-  const onKey = (chunk: Buffer | string) => {
-    const s = typeof chunk === "string" ? chunk : chunk.toString("utf8");
-    if (s === "q" || s === "Q" || s === "\x03") {
-      void shutdown("quit");
-    }
-    if (s === "o" || s === "O") {
-      void openBrowser(primaryUrl);
-    }
-  };
-
   let shuttingDown = false;
+  let dash: { stop(): void } | null = null;
+
   async function shutdown(reason: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
-    if (isInteractive) {
-      stdin.off("data", onKey);
-      stdin.setRawMode(false);
-      stdin.pause();
-    }
-    dash.stop();
+    dash?.stop();
     console.log(`\n${c.dim(`(${reason})`)} ${c.yellow("Saving session state and stopping…")}`);
     try {
       await app.close();
@@ -112,14 +80,20 @@ export async function runStart(args: CliArgs): Promise<void> {
     process.exit(0);
   }
 
+  dash = await startDashboard({
+    server: app,
+    port: resolvedPort,
+    hostname,
+    onQuit: (reason) => void shutdown(reason),
+    onOpenUrl: () => openBrowser(primaryUrl),
+  });
+
+  if (args.open) {
+    void openBrowser(primaryUrl);
+  }
+
   process.on("SIGINT", () => void shutdown("SIGINT"));
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
-
-  if (isInteractive) {
-    stdin.setRawMode(true);
-    stdin.resume();
-    stdin.on("data", onKey);
-  }
 }
 
 export function runInit(args: CliArgs): void {
