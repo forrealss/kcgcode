@@ -11,15 +11,21 @@
  * - Header memuat tombol token otentikasi (opsional, Req 9.2/9.3): token
  *   disimpan di `localStorage` dan dipakai `apiFetch` + `useWebSocket`.
  * - Halaman Session di-`key` per id agar remount saat pindah Session.
+ * - `AppSidebar` (shadcn `sidebar`) menampilkan seluruh Session digroup per
+ *   Project: panel tetap di desktop, Sheet off-canvas di HP (`SidebarTrigger`
+ *   di header shell & header Session).
  */
 
 import { KeyRoundIcon, SparklesIcon } from "lucide-react";
 import { useState } from "react";
+import { AppSidebar } from "@/components/layout/AppSidebar";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRouter } from "@/hooks/useRouter";
+import { useSidebarData } from "@/hooks/useSidebarData";
 import { getAuthToken, setAuthToken } from "@/lib/api";
 import { parseRoute, projectsPath } from "@/lib/routes";
 import { ProjectDetailPage } from "@/pages/projects/ProjectDetailPage";
@@ -29,10 +35,11 @@ import { SessionPage } from "@/pages/sessions/SessionPage";
 import logo from "../../logo.svg";
 
 export function AppShell() {
-  const { pathname, navigate } = useRouter();
+  const { pathname } = useRouter();
   const route = parseRoute(pathname);
   const [tokenOpen, setTokenOpen] = useState(false);
   const [token, setToken] = useState(getAuthToken() ?? "");
+  const sidebarData = useSidebarData(pathname);
 
   const saveToken = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -50,113 +57,103 @@ export function AppShell() {
 
   return (
     <TooltipProvider>
-      <div
-        className={
-          isHome
-            ? "relative flex h-dvh w-full flex-col overflow-x-hidden bg-background"
-            : "relative mx-auto flex h-dvh w-full max-w-5xl flex-col overflow-x-hidden bg-background shadow-sm sm:border-x"
-        }
-      >
-        {/* Header (kecuali Session view yang membawa header sendiri) */}
-        {!isSession && (
-          <header
+      <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
+        <AppSidebar route={route} data={sidebarData} />
+        <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
+          <div
             className={
               isHome
-                ? "mx-auto flex w-full max-w-xl shrink-0 justify-end px-4 py-3 sm:px-6"
-                : "flex shrink-0 items-center justify-between gap-3 border-b bg-background/95 px-4 py-3 backdrop-blur sm:px-6"
+                ? "relative flex h-full w-full flex-col overflow-x-hidden bg-background"
+                : "relative mx-auto flex h-full w-full max-w-5xl flex-col overflow-x-hidden bg-background shadow-sm sm:border-x"
             }
           >
-            {!isHome && (
-              <a
-                href={projectsPath()}
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate(projectsPath());
-                }}
-                className="flex min-w-0 items-center gap-2"
-                aria-label="Back to projects"
+            {/* Header (kecuali Session view yang membawa header sendiri) */}
+            {!isSession && (
+              <header
+                className={
+                  isHome
+                    ? "flex w-full shrink-0 items-center gap-3 px-3 py-3 sm:px-4"
+                    : "flex shrink-0 items-center gap-3 border-b bg-background/95 px-3 py-3 backdrop-blur sm:px-4"
+                }
               >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary p-1.5 shadow-sm">
-                  <img src={logo} alt="" className="size-full" />
+                <SidebarTrigger className="size-9 shrink-0" />
+                {/* Brand hanya di HP — di desktop sudah ada di header sidebar. */}
+                <span className="flex min-w-0 items-center gap-2 md:hidden">
+                  <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary p-1">
+                    <img src={logo} alt="" className="size-full" />
+                  </span>
+                  <span className="truncate text-sm font-semibold tracking-tight">KCG Code</span>
                 </span>
-                <div className="flex min-w-0 flex-col">
-                  <span className="truncate text-sm font-semibold leading-tight tracking-tight">
-                    KCG Code
-                  </span>
-                  <span className="hidden truncate text-[11px] leading-tight text-muted-foreground sm:block">
-                    Control CLI_Agent from anywhere
-                  </span>
+                <div className="ml-auto flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 p-0.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setTokenOpen((o) => !o)}
+                    aria-label="Authentication token settings"
+                    title="Auth token"
+                    data-active={tokenOpen}
+                  >
+                    <KeyRoundIcon data-icon="inline-start" />
+                  </Button>
+                  <ThemeToggle />
                 </div>
-              </a>
+              </header>
             )}
-            <div className="flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 p-0.5">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                onClick={() => setTokenOpen((o) => !o)}
-                aria-label="Authentication token settings"
-                title="Auth token"
-                data-active={tokenOpen}
+
+            {/* Input token (opsional, Requirement 9.2/9.3) */}
+            {!isSession && tokenOpen && (
+              <form
+                onSubmit={saveToken}
+                className="flex shrink-0 flex-col gap-2 border-b bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:px-6"
               >
-                <KeyRoundIcon data-icon="inline-start" />
-              </Button>
-              <ThemeToggle />
-            </div>
-          </header>
-        )}
+                <Input
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="Auth token (leave empty to remove)"
+                  aria-label="Auth token"
+                  type="password"
+                  autoComplete="off"
+                  className="h-9 sm:h-8"
+                />
+                <Button type="submit" size="sm" className="w-full sm:w-auto">
+                  <SparklesIcon data-icon="inline-start" />
+                  Save token
+                </Button>
+              </form>
+            )}
 
-        {/* Input token (opsional, Requirement 9.2/9.3) */}
-        {!isSession && tokenOpen && (
-          <form
-            onSubmit={saveToken}
-            className="flex shrink-0 flex-col gap-2 border-b bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:px-6"
-          >
-            <Input
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="Auth token (leave empty to remove)"
-              aria-label="Auth token"
-              type="password"
-              autoComplete="off"
-              className="h-9 sm:h-8"
-            />
-            <Button type="submit" size="sm" className="w-full sm:w-auto">
-              <SparklesIcon data-icon="inline-start" />
-              Save token
-            </Button>
-          </form>
-        )}
-
-        {/* Konten per URL */}
-        {route.name === "session" ? (
-          <SessionPage
-            key={`${route.projectId}/${route.sessionId}`}
-            projectId={route.projectId}
-            sessionId={route.sessionId}
-          />
-        ) : (
-          <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-background">
-            <div
-              className={
-                isHome
-                  ? /* Homepage rata atas (bukan center): daftar Project adalah
+            {/* Konten per URL */}
+            {route.name === "session" ? (
+              <SessionPage
+                key={`${route.projectId}/${route.sessionId}`}
+                projectId={route.projectId}
+                sessionId={route.sessionId}
+              />
+            ) : (
+              <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-background">
+                <div
+                  className={
+                    isHome
+                      ? /* Homepage rata atas (bukan center): daftar Project adalah
                        fokus, jadi baris pertama langsung terlihat tanpa gap
                        atas besar — dan daftar yang lebih tinggi dari layar
                        tetap bisa di-scroll seluruhnya. */
-                    "flex min-h-full flex-col px-4 py-6 sm:px-6 sm:py-10"
-                  : "mx-auto w-full p-4 pb-12 sm:p-6 sm:pb-16 lg:p-8"
-              }
-            >
-              {route.name === "projects" && <ProjectsPage />}
-              {route.name === "project" && (
-                <ProjectDetailPage key={route.projectId} projectId={route.projectId} />
-              )}
-              {route.name === "not-found" && <NotFoundView />}
-            </div>
-          </main>
-        )}
-      </div>
+                        "flex min-h-full flex-col px-4 py-6 sm:px-6 sm:py-10"
+                      : "mx-auto w-full p-4 pb-12 sm:p-6 sm:pb-16 lg:p-8"
+                  }
+                >
+                  {route.name === "projects" && <ProjectsPage />}
+                  {route.name === "project" && (
+                    <ProjectDetailPage key={route.projectId} projectId={route.projectId} />
+                  )}
+                  {route.name === "not-found" && <NotFoundView />}
+                </div>
+              </main>
+            )}
+          </div>
+        </SidebarInset>
+      </SidebarProvider>
     </TooltipProvider>
   );
 }

@@ -25,7 +25,8 @@ import { cn } from "@/lib/utils";
 
 export interface AgentPickerProps {
   projectId: string;
-  sessionId: string;
+  /** null = Session belum ada (composer homepage): pilihan tidak di-PUT. */
+  sessionId: string | null;
   /** Agent aktif saat ini; null = default opencode (build). */
   agent: string | null;
   /** Dipanggil setelah server menerima perubahan agent. */

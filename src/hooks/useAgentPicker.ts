@@ -6,7 +6,7 @@
  * `SessionView` untuk daftar mode di Sheet aksi mobile — supaya tap satu mode
  * di Sheet tidak perlu buka popover lagi di dalam popover.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { AgentOption } from "@/server/services/opencode-client";
 
@@ -23,20 +23,34 @@ export interface UseAgentPickerResult {
 
 export function useAgentPicker(
   projectId: string,
-  sessionId: string,
+  /** null = Session belum ada (composer homepage): pilihan tidak di-PUT. */
+  sessionId: string | null,
   onChanged: (agent: string | null) => void,
 ): UseAgentPickerResult {
   const [agents, setAgents] = useState<AgentOption[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Penanda fetch sedang berjalan — ref, BUKAN state `loading`. Bila `load`
+   * bergantung pada `loading`, identitasnya berganti tiap fetch selesai, dan
+   * efek pemanggil (`if (open) load()`) jalan lagi -> fetch tanpa henti
+   * (spinner berkedip terus).
+   */
+  const inFlight = useRef(false);
+  const saveInFlight = useRef(false);
+  /** Callback terbaru via ref — pemanggil sering mengoper arrow function inline. */
+  const onChangedRef = useRef(onChanged);
+  onChangedRef.current = onChanged;
 
   /**
    * Muat daftar agent project. Selalu fetch ulang (no-op bila sedang memuat)
    * — config opencode bisa berubah dan server headless tidak hot-reload.
+   * Identitas stabil per `projectId`.
    */
   const load = useCallback(() => {
-    if (loading) return;
+    if (inFlight.current) return;
+    inFlight.current = true;
     setLoading(true);
     setError(null);
     void (async () => {
@@ -48,30 +62,35 @@ export function useAgentPicker(
         setError(e instanceof ApiError ? e.message : "Failed to load agent list");
         setAgents([]);
       } finally {
+        inFlight.current = false;
         setLoading(false);
       }
     })();
-  }, [loading, projectId]);
+  }, [projectId]);
 
   const pick = useCallback(
     async (name: string | null) => {
-      if (saving) return;
+      if (saveInFlight.current) return;
+      saveInFlight.current = true;
       setSaving(true);
       setError(null);
       try {
-        await apiFetch(`/api/sessions/${sessionId}`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ agent: name }),
-        });
-        onChanged(name);
+        if (sessionId !== null) {
+          await apiFetch(`/api/sessions/${sessionId}`, {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ agent: name }),
+          });
+        }
+        onChangedRef.current(name);
       } catch (e) {
         setError(e instanceof ApiError ? e.message : "Failed to change agent");
       } finally {
+        saveInFlight.current = false;
         setSaving(false);
       }
     },
-    [onChanged, saving, sessionId],
+    [sessionId],
   );
 
   return { agents, loading, saving, error, load, pick };

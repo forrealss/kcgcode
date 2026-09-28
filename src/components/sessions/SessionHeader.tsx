@@ -26,6 +26,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { useTheme } from "@/hooks/useTheme";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
@@ -78,6 +79,9 @@ export function SessionHeader({
         >
           <ChevronLeftIcon data-icon="inline-start" />
         </Button>
+
+        {/* Buka/ciutkan sidebar Session (Sheet di HP). */}
+        <SidebarTrigger className="size-10 shrink-0 sm:size-9" />
 
         {/* Judul = nama model, sekaligus pembuka dialog pemilihan model.
           Ikon chevron memberi tahu bahwa ini dapat diganti. */}

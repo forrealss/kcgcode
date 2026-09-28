@@ -14,6 +14,8 @@
  *   berikutnya tanpa restart Session.
  * - Opsi "Model default" mengirim `model: null` (opencode memakai
  *   konfigurasi default-nya).
+ * - `sessionId: null` (composer homepage, Session belum dibuat): pilihan
+ *   hanya diteruskan ke `onChanged` tanpa PUT — dipakai saat membuat Session.
  */
 
 import { ChevronDownIcon, ChevronsUpDownIcon, SparklesIcon } from "lucide-react";
@@ -36,7 +38,8 @@ import type { SessionModel } from "@/types";
 
 export interface ModelPickerProps {
   projectId: string;
-  sessionId: string;
+  /** null = Session belum ada; pilihan tidak disimpan ke server. */
+  sessionId: string | null;
   /** Model aktif saat ini; null = default opencode. */
   model: SessionModel | null;
   /** Dipanggil setelah server menerima perubahan model. */
@@ -46,8 +49,10 @@ export interface ModelPickerProps {
    * - `heading` (default di header Session): judul besar tanpa border, nama
    *   model dipendekkan (`shortModelName`) — pola aplikasi chat mobile.
    * - `chip`: tombol outline ringkas untuk ditempel di dalam toolbar.
+   * - `inline`: teks polos + chevron tanpa border/latar (baris di bawah
+   *   composer homepage).
    */
-  variant?: "heading" | "chip";
+  variant?: "heading" | "chip" | "inline";
 }
 
 export function ModelPicker({
@@ -92,10 +97,12 @@ export function ModelPicker({
     setSaving(true);
     setError(null);
     try {
-      await apiFetch(`/api/sessions/${sessionId}`, {
-        method: "PUT",
-        body: JSON.stringify({ model: next }),
-      });
+      if (sessionId !== null) {
+        await apiFetch(`/api/sessions/${sessionId}`, {
+          method: "PUT",
+          body: JSON.stringify({ model: next }),
+        });
+      }
       onChanged(next);
       setOpen(false);
     } catch (e) {
@@ -125,6 +132,20 @@ export function ModelPicker({
             <ChevronDownIcon className="size-4 shrink-0 text-muted-foreground" />
           )}
         </Button>
+      ) : variant === "inline" ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => setOpen(true)}
+          disabled={saving}
+          className="h-9 max-w-full min-w-0 gap-1 px-2 font-normal text-muted-foreground hover:text-foreground"
+          aria-label={`Model: ${label}. Tap to change`}
+          title={label}
+        >
+          <span className="min-w-0 truncate">{headingLabel}</span>
+          {saving ? <Spinner data-icon="inline-end" /> : <ChevronDownIcon data-icon="inline-end" />}
+        </Button>
       ) : (
         <Button
           type="button"
@@ -132,16 +153,16 @@ export function ModelPicker({
           size="sm"
           onClick={() => setOpen(true)}
           disabled={saving}
-          className="h-8 max-w-full min-w-0 justify-between gap-1.5 px-2 font-normal"
+          className="h-9 max-w-full min-w-0 justify-between gap-1.5 px-2.5 font-normal"
           aria-label={`Model: ${label}. Tap to change`}
           title={label}
         >
-          <SparklesIcon className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 truncate text-xs">{label}</span>
+          <SparklesIcon className="size-4 shrink-0 text-muted-foreground" />
+          <span className="min-w-0 truncate text-sm">{label}</span>
           {saving ? (
-            <Spinner className="size-3 shrink-0" />
+            <Spinner className="size-4 shrink-0" />
           ) : (
-            <ChevronsUpDownIcon className="size-3 shrink-0 text-muted-foreground" />
+            <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground" />
           )}
         </Button>
       )}
@@ -160,7 +181,9 @@ export function ModelPicker({
           <DialogHeader>
             <DialogTitle>Choose a model</DialogTitle>
             <DialogDescription>
-              Applies to the next messages — no session restart needed.
+              {sessionId === null
+                ? "Used by the new session you start from here."
+                : "Applies to the next messages — no session restart needed."}
             </DialogDescription>
           </DialogHeader>
 

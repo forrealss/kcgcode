@@ -32,8 +32,11 @@ export interface UseWebSocketResult {
   status: WsConnectionStatus;
   /** Buka/reattach ke Session (kirim pesan `attach`). */
   attach(sessionId: string): void;
-  /** Kirim pesan Client -> Server sesuai protokol ws-protocol.ts. */
-  send(msg: ClientMessage): void;
+  /**
+   * Kirim pesan Client -> Server sesuai protokol ws-protocol.ts.
+   * `false` bila socket belum/tidak terbuka (pesan tidak terkirim).
+   */
+  send(msg: ClientMessage): boolean;
   /** Tutup koneksi secara manual (tanpa reconnect otomatis). */
   disconnect(): void;
 }
@@ -69,7 +72,12 @@ export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult
     const ws = new WebSocket(target);
     wsRef.current = ws;
 
+    // Handler socket lama diabaikan: `disconnect()` + `attach()` beruntun
+    // (mis. StrictMode / remount) membuat socket baru sebelum `close` socket
+    // lama tiba. Tanpa guard ini `onclose` lama menimpa `wsRef` socket baru
+    // dengan null sehingga `send()` diam-diam membuang pesan.
     ws.onopen = () => {
+      if (wsRef.current !== ws) return;
       setStatus("connected");
       // Re-attach otomatis setelah reconnect (Requirement 4.1). `!== null`
       // (bukan truthy) agar mode daftar (`attach("")`) ikut dikirim ulang.
@@ -78,6 +86,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult
         ws.send(JSON.stringify({ type: "attach", sessionId: sid } satisfies ClientMessage));
     };
     ws.onmessage = (event) => {
+      if (wsRef.current !== ws) return;
       try {
         const msg = JSON.parse(String(event.data)) as ServerMessage;
         onMessageRef.current?.(msg);
@@ -89,6 +98,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult
       // Penanganan dilakukan di onclose.
     };
     ws.onclose = () => {
+      if (wsRef.current !== ws) return;
       wsRef.current = null;
       if (manualRef.current) {
         setStatus("closed");
@@ -102,9 +112,11 @@ export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult
     };
   }, [buildUrl, reconnectDelayMs]);
 
-  const send = useCallback((msg: ClientMessage) => {
+  const send = useCallback((msg: ClientMessage): boolean => {
     const ws = wsRef.current;
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+    if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+    ws.send(JSON.stringify(msg));
+    return true;
   }, []);
 
   const attach = useCallback(

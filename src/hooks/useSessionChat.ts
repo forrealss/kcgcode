@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch, getAuthToken } from "@/lib/api";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
+import { setPendingPrompt, takePendingPrompt } from "@/lib/pending-prompt";
 import { groupPrompts } from "@/lib/prompts";
 import { wsStatusLabel } from "@/lib/session-status";
 import {
@@ -105,6 +106,8 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
   const [stopping, setStopping] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  /** `history` sudah diterima — attach selesai, aman mengirim input. */
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
   /**
    * `onBack` dibaca lewat ref agar handler WS tidak perlu dibuat ulang
@@ -124,6 +127,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
         // Blok "Thought process" di-reset: state collapsible diisi ulang oleh
         // effect sinkronisasi di bawah (default collapsed per turn).
         setCollapsible({});
+        setHistoryLoaded(true);
         break;
       case "message":
         setError(null);
@@ -200,6 +204,19 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     attach(session.id);
     return () => disconnect();
   }, [attach, disconnect, session.id]);
+
+  /**
+   * Prompt pertama dari chat homepage (`HomeChat`): dikirim sekali setelah
+   * attach selesai (`history` diterima). `takePendingPrompt` menghapusnya
+   * sehingga tidak terkirim ulang saat reconnect / remount.
+   */
+  useEffect(() => {
+    if (!historyLoaded || wsStatus !== "connected") return;
+    const text = takePendingPrompt(session.id);
+    if (text === null) return;
+    // Socket belum siap -> kembalikan agar dicoba lagi saat terhubung ulang.
+    if (!send({ type: "input", sessionId: session.id, text })) setPendingPrompt(session.id, text);
+  }, [historyLoaded, wsStatus, send, session.id]);
 
   /**
    * Sinkronisasi key collapsible "Thought process": satu blok per turn
