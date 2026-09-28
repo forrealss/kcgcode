@@ -176,7 +176,9 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
       return { ok: true, data: null };
     },
     async replyQuestion(requestId, answers) {
-      calls.push(`replyQuestion:${requestId}:${answers.join(",")}`);
+      // Render nested: SATU grup per pertanyaan dipisah "|", label dalam
+      // grup dipisah "," — membedakan jawaban per pertanyaan.
+      calls.push(`replyQuestion:${requestId}:${answers.map((a) => a.join(",")).join("|")}`);
       return { ok: true, data: null };
     },
     async rejectQuestion(requestId) {
@@ -1473,7 +1475,11 @@ test("event question.asked -> prompt kind=question menu + options", async () => 
     expect(p.type).toBe("menu");
     expect(p.sessionId).toBe(sid);
     expect(p.title).toBe("Gunakan mode apa?");
-    expect(p.options).toEqual(["Build", "Plan"]);
+    // Opsi dinormalisasi ke PromptOption — description ikut tersimpan.
+    expect(p.options).toEqual([
+      { label: "Build", description: "menulis kode" },
+      { label: "Plan", description: "hanya rencana" },
+    ]);
     // Flag `custom` default true di skema question opencode.
     expect(p.custom).toBe(true);
   } finally {
@@ -1798,7 +1804,10 @@ test("event question.v2.asked -> prompt menu + options", async () => {
     expect(p.type).toBe("menu");
     expect(p.sessionId).toBe(sid);
     expect(p.title).toBe("Lanjut deploy?");
-    expect(p.options).toEqual(["Ya", "Tidak"]);
+    expect(p.options).toEqual([
+      { label: "Ya", description: null },
+      { label: "Tidak", description: null },
+    ]);
   } finally {
     h.close();
   }
@@ -1962,7 +1971,13 @@ async function seedPrompt(
     kind,
     type: kind === "permission" ? "confirmation" : "menu",
     title: kind === "permission" ? "bash:ls" : "Pilih opsi",
-    options: kind === "permission" ? null : ["A", "B"],
+    options:
+      kind === "permission"
+        ? null
+        : [
+            { label: "A", description: null },
+            { label: "B", description: null },
+          ],
     status: "pending",
     createdAt: 1,
     resolvedAt: null,
@@ -2020,6 +2035,117 @@ test("resolvePrompt question: option -> replyQuestion; cancel -> rejectQuestion"
     expect(r2.ok).toBe(true);
     expect(client.calls).toContain("rejectQuestion:que_2");
     expect(h.messages.filter((m) => m.role === "user")).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt question multi-select -> replyQuestion dengan seluruh label terpilih", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    // Event question dengan multiple=true (skema tool `question` opencode).
+    client.emit({
+      type: "question.asked",
+      requestID: "que_multi",
+      sessionID: "ses_remote1",
+      questions: [
+        {
+          question: "Mau eksplor bagian mana?",
+          multiple: true,
+          options: [
+            { label: "Debug", description: "investigasi bug" },
+            { label: "Config", description: "cek settings" },
+            { label: "Monitor", description: "logs & performa" },
+          ],
+        },
+      ],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0] as InteractivePrompt;
+    expect(p.multiple).toBe(true);
+    // Description per opsi ikut tersimpan, tidak dibuang lagi.
+    expect(p.options).toEqual([
+      { label: "Debug", description: "investigasi bug" },
+      { label: "Config", description: "cek settings" },
+      { label: "Monitor", description: "logs & performa" },
+    ]);
+
+    // Jawaban multi-select: seluruh label dalam SATU panggilan reply.
+    const r = await h.sm.resolvePrompt(sid, "que_multi", { options: ["Debug", "Monitor"] });
+    expect(r.ok).toBe(true);
+    expect(client.calls).toContain("replyQuestion:que_multi:Debug,Monitor");
+  } finally {
+    h.close();
+  }
+});
+
+test("event question multi-question -> prompt.questions lengkap; jawaban per pertanyaan", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    // Satu request berisi DUA pertanyaan (skema tool `question` opencode).
+    client.emit({
+      type: "question.asked",
+      requestID: "que_batch",
+      sessionID: "ses_remote1",
+      questions: [
+        {
+          question: "Mau eksplor bagian mana?",
+          multiple: true,
+          options: [
+            { label: "Debug", description: "investigasi bug" },
+            { label: "Config", description: "cek settings" },
+          ],
+        },
+        {
+          question: "Kapan mulai?",
+          options: [{ label: "Sekarang" }, { label: "Nanti" }],
+        },
+      ],
+    });
+
+    expect(h.prompts).toHaveLength(1);
+    const p = h.prompts[0] as InteractivePrompt;
+    // Seluruh pertanyaan tersimpan; pertanyaan pertama juga di field legacy.
+    expect(p.questions).toHaveLength(2);
+    expect(p.questions?.[0]?.question).toBe("Mau eksplor bagian mana?");
+    expect(p.questions?.[0]?.multiple).toBe(true);
+    expect(p.questions?.[1]?.question).toBe("Kapan mulai?");
+    expect(p.title).toBe("Mau eksplor bagian mana?");
+    expect(p.options?.map((o) => o.label)).toEqual(["Debug", "Config"]);
+
+    // Jawaban batch: SATU array label per pertanyaan, urut sesuai questions.
+    const r = await h.sm.resolvePrompt(sid, "que_batch", {
+      answers: [["Debug", "Config"], ["Nanti"]],
+    });
+    expect(r.ok).toBe(true);
+    // Reply API menerima array-of-array (skema Question.Reply).
+    expect(client.calls).toContain("replyQuestion:que_batch:Debug,Config|Nanti");
+  } finally {
+    h.close();
+  }
+});
+
+// Multi-question hanya disimpan bila ada >1 pertanyaan — request tunggal
+// tidak menambah data duplikat di DB.
+test("event question tunggal -> prompt.questions undefined", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    clientOf(h).emit({
+      type: "question.asked",
+      requestID: "que_satu",
+      sessionID: "ses_remote1",
+      questions: [{ question: "Lanjut?", options: [{ label: "Ya" }] }],
+    });
+    expect(h.prompts).toHaveLength(1);
+    expect((h.prompts[0] as InteractivePrompt).questions).toBeUndefined();
   } finally {
     h.close();
   }

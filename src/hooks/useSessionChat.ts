@@ -67,6 +67,8 @@ export interface SessionChat {
   prompts: InteractivePrompt[];
   /** Prompt pending yang digroup (kind + title identik) jadi satu kartu. */
   promptGroups: InteractivePrompt[][];
+  /** Ada question pending — composer digantikan panel question docked. */
+  hasPendingQuestion: boolean;
   promptError: string | null;
   consumePromptError: () => void;
   /** Prompt yang sedang memainkan animasi keluar sebelum dihapus. */
@@ -317,6 +319,13 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
    * identik (kind+title sama) digroup jadi SATU kartu (bug kartu nyepam).
    */
   const promptGroups = useMemo(() => groupPrompts(prompts), [prompts]);
+  /**
+   * Ada question pending? Composer disembunyikan dan panel question docked
+   * menggantikannya — jawaban pertanyaan adalah input saat ini (ala TUI
+   * opencode yang menutup input teks selama question aktif). Permission
+   * kartu tidak menggantikan composer (tetap floating).
+   */
+  const hasPendingQuestion = useMemo(() => prompts.some((p) => p.kind === "question"), [prompts]);
 
   return {
     wsStatus,
@@ -332,6 +341,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     toggleBlock,
     prompts,
     promptGroups,
+    hasPendingQuestion,
     promptError,
     consumePromptError,
     resolving,

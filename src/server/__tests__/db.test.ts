@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import fc from "fast-check";
 import { openSessionStore } from "../../db";
-import type { Session, SessionMessage, SessionStatus } from "../../types";
+import type { InteractivePrompt, Session, SessionMessage, SessionStatus } from "../../types";
 
 function makeSession(id = "s1", status: SessionStatus = "running"): Session {
   return {
@@ -207,29 +207,87 @@ test("5.1: CRUD prompts — kind/title ikut tersimpan; update status", () => {
     type: "menu" as const,
     custom: true,
     title: "Pilih mode",
-    options: ["Build", "Plan"],
+    // String polos = bentuk lama di DB — sengaja dipertahankan untuk
+    // memverifikasi normalisasi saat dibaca kembali (mapPrompt).
+    options: ["Build", "Plan"] as unknown as InteractivePrompt["options"],
     status: "pending" as const,
     createdAt: 2,
     resolvedAt: null,
   };
   expect(store.insertPrompt(question).ok).toBe(true);
 
+  // Question multi-select (skema tool `question` opencode: multiple: true)
+  // beserta description per opsi — ikut roundtrip lewat kolom prompts.
+  const multiQuestion = {
+    id: "quemulti1",
+    sessionId: "s1",
+    kind: "question" as const,
+    type: "menu" as const,
+    custom: true,
+    multiple: true,
+    title: "Pilih area",
+    options: [
+      { label: "Debug", description: "investigasi bug" },
+      { label: "Config", description: null },
+    ],
+    // Multi-question: dua pertanyaan dalam satu request.
+    questions: [
+      {
+        question: "Pilih area",
+        header: null,
+        options: [
+          { label: "Debug", description: "investigasi bug" },
+          { label: "Config", description: null },
+        ],
+        multiple: true,
+        custom: true,
+      },
+      {
+        question: "Kapan mulai?",
+        header: null,
+        options: [{ label: "Sekarang", description: null }],
+        custom: true,
+      },
+    ],
+    status: "pending" as const,
+    createdAt: 3,
+    resolvedAt: null,
+  };
+  expect(store.insertPrompt(multiQuestion).ok).toBe(true);
+
   const pending = store.listPendingPrompts("s1");
-  expect(pending).toHaveLength(2);
+  expect(pending).toHaveLength(3);
 
   const upd = store.updatePromptStatus("pr1", "resolved", 5);
   expect(upd.ok).toBe(true);
   if (upd.ok) expect(upd.data.status).toBe("resolved");
-  expect(store.listPendingPrompts("s1")).toHaveLength(1);
+  expect(store.listPendingPrompts("s1")).toHaveLength(2);
 
   const got = store.getPrompt("que1");
   expect(got.ok).toBe(true);
   if (got.ok) {
     expect(got.data.kind).toBe("question");
     expect(got.data.title).toBe("Pilih mode");
-    expect(got.data.options).toEqual(["Build", "Plan"]);
+    // String polos dari DB lama dinormalisasi jadi PromptOption.
+    expect(got.data.options).toEqual([
+      { label: "Build", description: null },
+      { label: "Plan", description: null },
+    ]);
     // Flag custom ikut roundtrip lewat kolom `prompts.custom`.
     expect(got.data.custom).toBe(true);
+  }
+  const gotMulti = store.getPrompt("quemulti1");
+  expect(gotMulti.ok).toBe(true);
+  if (gotMulti.ok) {
+    // Opsi berobjek + flag multiple ikut tersimpan & terbaca kembali.
+    expect(gotMulti.data.options).toEqual([
+      { label: "Debug", description: "investigasi bug" },
+      { label: "Config", description: null },
+    ]);
+    expect(gotMulti.data.multiple).toBe(true);
+    // Seluruh pertanyaan ikut roundtrip lewat kolom `questions_json`.
+    expect(gotMulti.data.questions).toHaveLength(2);
+    expect(gotMulti.data.questions?.[1]?.question).toBe("Kapan mulai?");
   }
   expect(store.getPrompt("nope").ok).toBe(false);
   store.close();

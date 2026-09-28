@@ -118,6 +118,10 @@ function makeFakeClient(projectId: string): FakeClient {
               },
             },
           });
+          // Error turn KCG Code bersifat "ditunda" — pesan error baru ditulis
+          // saat turn ditutup tanpa konten baru (TurnStream.finish -> idle).
+          // Tanpa idle, banner terkirim tapi history tetap kosong dan test menunggu 3 detik sia-sia.
+          client.emit({ type: "session.idle", sessionID: sessionId });
         });
         return { ok: true, data: null };
       }

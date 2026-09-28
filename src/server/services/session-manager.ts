@@ -50,9 +50,11 @@ import type {
 } from "./opencode-client";
 import type { OpenCodeServerManager } from "./opencode-server";
 import {
+  deriveSessionTitle,
   describeSessionError,
   eventField as field,
   friendlySendError,
+  isPlaceholderTitle,
   permissionGroupKey,
   promptFromPermission,
   promptFromQuestion,
@@ -331,6 +333,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const { id, title } = info as { id?: unknown; title?: unknown };
       if (typeof id !== "string" || typeof title !== "string") return;
       if (title.trim() === "") return;
+      // Placeholder opencode ("KCG Code Session") bukan judul percakapan —
+      // abaikan agar tidak menimpa judul turunan lokal yang sudah bagus.
+      if (isPlaceholderTitle(title)) return;
       const sessionId = ocToSession.get(id);
       if (sessionId === undefined) return;
       // Hanya Session akar: judul child sub-agent bukan judul percakapan
@@ -540,6 +545,14 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
     const sessionId = randomUUID();
     const createdAt = now();
+    // Judul dari opencode sering kosong / placeholder ("KCG Code Session").
+    // Filter placeholder agar UI tidak menampilkan judul sama untuk semua
+    // Session — judul bagus akan datang dari SSE `session.updated` atau
+    // turunan lokal prompt pertama di `sendFreeTextInput`.
+    const remoteTitle =
+      typeof created.data.title === "string" && !isPlaceholderTitle(created.data.title)
+        ? created.data.title
+        : null;
     const session: Session = {
       id: sessionId,
       projectId: project.id,
@@ -547,9 +560,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       cwd: project.path,
       status: "running",
       ocSessionId: created.data.id,
-      // Judul asli opencode akan datang via SSE `session.updated` setelah
-      // prompt pertama — awalnya null (UI: "New session").
-      title: typeof created.data.title === "string" ? created.data.title : null,
+      title: remoteTitle,
       model,
       agent: req.agent ?? null,
       createdAt,
@@ -887,6 +898,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!store.insertMessage(userMessage).ok) return { ok: false, error: "MESSAGE_WRITE_FAILED" };
     onMessage?.(userMessage);
 
+    // Auto-title seperti opencode TUI: tiap Session harus punya judul beda.
+    // Bila masih placeholder/null (belum ada prompt nyata), turunkan judul
+    // dari teks prompt pertama. Gambar saja (text kosong) -> pakai "Image".
+    if (isPlaceholderTitle(cur.data.title)) {
+      const candidate = deriveSessionTitle(text) ?? (hasImages ? "Image" : null);
+      if (candidate && store.updateSessionTitle(sessionId, candidate).ok) {
+        onTitleChange?.(sessionId, candidate);
+      }
+    }
+
     // Turn sebelumnya yang belum idle ditutup dulu agar parts-nya tidak
     // tercampur ke turn baru dan tidak hilang.
     turns.finish(sessionId);
@@ -967,7 +988,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       // diteruskan apa adanya ke opencode yang tahu daftar sebenarnya —
       // menolak di sini membuat tombol opsi terasa mati tanpa feedback.
       if (typeof response === "object" && response !== null) {
-        res = await handle.client.replyQuestion(promptId, [response.option]);
+        if ("answers" in response) {
+          // Multi-question: SATU array label per pertanyaan — diteruskan
+          // apa adanya ke reply API (skema Question.Reply).
+          res = await handle.client.replyQuestion(promptId, response.answers);
+        } else if ("options" in response) {
+          // Multi-select: kirim seluruh label terpilih (urut tampilan).
+          res = await handle.client.replyQuestion(promptId, [response.options]);
+        } else {
+          res = await handle.client.replyQuestion(promptId, [[response.option]]);
+        }
       } else if (response === "cancel") {
         res = await handle.client.rejectQuestion(promptId);
       } else {
@@ -985,7 +1015,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         p.data.kind === "permission"
           ? await replyPermission(twin.id, response)
           : typeof response === "object" && response !== null
-            ? await handle.client.replyQuestion(twin.id, [response.option])
+            ? "answers" in response
+              ? await handle.client.replyQuestion(twin.id, response.answers)
+              : "options" in response
+                ? await handle.client.replyQuestion(twin.id, [response.options])
+                : await handle.client.replyQuestion(twin.id, [[response.option]])
             : await handle.client.rejectQuestion(twin.id);
       if (twinRes.ok) {
         updatePromptResolved(twin.id);

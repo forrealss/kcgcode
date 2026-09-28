@@ -10,7 +10,7 @@ import { sessionExists } from "./sessions";
 export function createPromptRepo(db: Database) {
   const q = {
     insertPrompt: db.query(
-      "INSERT INTO prompts (id, session_id, kind, type, custom, title, options_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO prompts (id, session_id, kind, type, custom, multiple, title, options_json, questions_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getPrompt: db.query("SELECT * FROM prompts WHERE id = ?"),
     pendingPrompts: db.query(
@@ -29,8 +29,14 @@ export function createPromptRepo(db: Database) {
           prompt.kind,
           prompt.type,
           prompt.custom === true ? 1 : 0,
+          // Flag multi-select question (default false) — ikut tersimpan agar
+          // kartu yang dirender ulang dari history tetap multi-select.
+          prompt.multiple === true ? 1 : 0,
           prompt.title,
           prompt.options ? JSON.stringify(prompt.options) : null,
+          // Multi-question: seluruh pertanyaan request (null = pertanyaan
+          // tunggal — field legacy sudah cukup).
+          prompt.questions && prompt.questions.length > 0 ? JSON.stringify(prompt.questions) : null,
           prompt.status,
           prompt.createdAt,
           prompt.resolvedAt,

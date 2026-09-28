@@ -90,25 +90,32 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             generating={chat.generating}
           />
 
-          {/* Interactive_Prompt mengambang DI ATAS composer */}
+          {/* Question pending: panel DOCKED menggantikan composer — jawaban
+              pertanyaan adalah satu-satunya input saat ini (ala TUI opencode).
+              Hanya area jawaban kartu yang scroll; footer aksi tetap terlihat.
+              Permission (bukan question): panel tetap mengambang DI ATAS
+              composer seperti biasa. */}
           <PromptPanel
             groups={chat.promptGroups}
             resolving={chat.resolving}
             errorSignal={chat.promptError}
             onResolve={chat.resolvePrompt}
             onConsumeError={chat.consumePromptError}
+            docked={chat.hasPendingQuestion}
           />
 
-          <SessionComposer
-            session={session}
-            inputAllowed={chat.canInput}
-            busy={chat.busy}
-            generating={chat.generating}
-            wsStatus={chat.wsStatus}
-            send={chat.send}
-            reportError={chat.reportError}
-            onInterrupt={chat.interrupt}
-          />
+          {!chat.hasPendingQuestion && (
+            <SessionComposer
+              session={session}
+              inputAllowed={chat.canInput}
+              busy={chat.busy}
+              generating={chat.generating}
+              wsStatus={chat.wsStatus}
+              send={chat.send}
+              reportError={chat.reportError}
+              onInterrupt={chat.interrupt}
+            />
+          )}
         </>
       )}
 

@@ -10,7 +10,7 @@
  *   "Deny" (diteruskan mengikuti mekanisme penyelesaian Requirement 6).
  */
 import { describe, expect, test } from "bun:test";
-import { getPromptActions, groupPrompts } from "@/lib/prompts";
+import { getPromptActions, getPromptQuestions, groupPrompts } from "@/lib/prompts";
 import type { InteractivePrompt, PromptResponse } from "@/types";
 
 function makePrompt(overrides: Partial<InteractivePrompt> = {}): InteractivePrompt {
@@ -49,13 +49,33 @@ describe("prompt-card — aksi Interactive_Prompt", () => {
   });
 
   test("tipe menu menghasilkan satu aksi per opsi dengan respon { option } (Req 6.3)", () => {
-    const prompt = makePrompt({ type: "menu", options: ["Lanjutkan", "Batal"] });
+    const prompt = makePrompt({
+      type: "menu",
+      options: [
+        { label: "Lanjutkan", description: null },
+        { label: "Batal", description: "hentikan turn" },
+      ],
+    });
     const actions = getPromptActions(prompt);
     expect(actions).toHaveLength(2);
     expect(actions[0]?.label).toBe("Lanjutkan");
     expect(actions[0]?.response).toEqual({ option: "Lanjutkan" });
     expect(actions[1]?.label).toBe("Batal");
     expect(actions[1]?.response).toEqual({ option: "Batal" });
+  });
+
+  test("menu multi-select tetap menghasilkan aksi per opsi (UI yang mengumpulkan jawaban)", () => {
+    const prompt = makePrompt({
+      kind: "question",
+      type: "menu",
+      multiple: true,
+      options: [
+        { label: "A", description: null },
+        { label: "B", description: null },
+      ],
+    });
+    const actions = getPromptActions(prompt);
+    expect(actions.map((a) => a.response)).toEqual([{ option: "A" }, { option: "B" }]);
   });
 
   test("menu tanpa opsi menghasilkan daftar aksi kosong", () => {
@@ -67,13 +87,48 @@ describe("prompt-card — aksi Interactive_Prompt", () => {
       kind: "question",
       type: "menu",
       custom: true,
-      options: ["Fix bug"],
+      options: [{ label: "Fix bug", description: null }],
     });
     const actions = getPromptActions(prompt);
     expect(actions.map((a) => a.response)).toEqual([{ option: "Fix bug" }]);
     // Bentuk respon jawaban kustom identik dengan opsi terdaftar.
     const custom: PromptResponse = { option: "jawaban sendiri" };
     expect(custom).toEqual({ option: "jawaban sendiri" });
+  });
+});
+
+describe("getPromptQuestions — normalisasi daftar pertanyaan kartu", () => {
+  test("pertanyaan tunggal diwrap dari field legacy", () => {
+    const questions = getPromptQuestions(
+      makePrompt({
+        kind: "question",
+        type: "menu",
+        title: "Lanjut?",
+        options: [{ label: "Ya", description: null }],
+      }),
+    );
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.question).toBe("Lanjut?");
+    expect(questions[0]?.options?.map((o) => o.label)).toEqual(["Ya"]);
+  });
+
+  test("multi-question memakai field questions apa adanya", () => {
+    const questions = getPromptQuestions(
+      makePrompt({
+        kind: "question",
+        type: "menu",
+        questions: [
+          { question: "A?", options: [{ label: "a1", description: null }] },
+          { question: "B?", options: [{ label: "b1", description: null }], multiple: true },
+        ],
+      }),
+    );
+    expect(questions).toHaveLength(2);
+    expect(questions[1]?.multiple).toBe(true);
+  });
+
+  test("permission tidak menghasilkan pertanyaan", () => {
+    expect(getPromptQuestions(makePrompt())).toEqual([]);
   });
 });
 

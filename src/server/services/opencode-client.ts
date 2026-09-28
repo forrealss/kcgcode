@@ -170,7 +170,11 @@ export interface OpenCodeClient {
   /** Cari file project untuk autocomplete `@file` (path relatif). */
   findFiles(query: string): Promise<Result<string[]>>;
   replyPermission(requestId: string, reply: OpenCodePermissionReply): Promise<Result<unknown>>;
-  replyQuestion(requestId: string, answers: string[]): Promise<Result<unknown>>;
+  /**
+   * `answers` = SATU array label per pertanyaan (urut sesuai `questions`);
+   * request pertanyaan tunggal berarti array berisi satu elemen.
+   */
+  replyQuestion(requestId: string, answers: string[][]): Promise<Result<unknown>>;
   rejectQuestion(requestId: string): Promise<Result<unknown>>;
   abortSession(sessionId: string): Promise<Result<unknown>>;
   /** Subscribe event SSE; mengembalikan fungsi untuk berhenti subscribe. */
@@ -392,15 +396,14 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     }
   }
 
-  async function replyQuestion(requestId: string, answers: string[]): Promise<Result<unknown>> {
+  async function replyQuestion(requestId: string, answers: string[][]): Promise<Result<unknown>> {
     try {
       // Skema Question.Reply: `{ answers: Answer[] }` — SATU entri per
-      // pertanyaan, masing-masing berupa array label terpilih. Kita hanya
-      // mendukung satu pertanyaan pertama, jadi body `{ answers: [answers] }`.
-      // (Sebelumnya body dikirim sebagai array mentah -> ditolak 400 oleh
-      // server dan jawaban tidak pernah sampai ke agent.)
+      // pertanyaan, masing-masing berupa array label terpilih. Pemanggil
+      // sudah mengirim satu array per pertanyaan, jadi body diteruskan
+      // apa adanya.
       const { status } = await requestJson(baseUrl, "POST", `/question/${requestId}/reply`, {
-        answers: [answers],
+        answers,
       });
       return status === 200
         ? { ok: true, data: null }

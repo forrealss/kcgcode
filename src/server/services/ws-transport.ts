@@ -24,13 +24,22 @@ export function bunWsSubscriber<T>(ws: ServerWebSocket<T>): Subscriber {
 }
 
 function isPromptResponse(r: unknown): r is PromptResponse {
-  return (
-    r === "approve" ||
-    r === "always" ||
-    r === "deny" ||
-    r === "cancel" ||
-    (typeof r === "object" && r !== null && typeof (r as { option?: unknown }).option === "string")
-  );
+  if (r === "approve" || r === "always" || r === "deny" || r === "cancel") return true;
+  if (typeof r !== "object" || r === null) return false;
+  // Single choice `{ option }`.
+  if (typeof (r as { option?: unknown }).option === "string") return true;
+  // Multi-select `{ options: string[] }`.
+  const options = (r as { options?: unknown }).options;
+  if (Array.isArray(options) && options.every((s) => typeof s === "string")) return true;
+  // Multi-question `{ answers: string[][] }` — satu array label per pertanyaan.
+  const answers = (r as { answers?: unknown }).answers;
+  if (
+    Array.isArray(answers) &&
+    answers.every((a) => Array.isArray(a) && (a as unknown[]).every((s) => typeof s === "string"))
+  ) {
+    return true;
+  }
+  return false;
 }
 
 function invalidMessage(sub: Subscriber, detail: string): void {

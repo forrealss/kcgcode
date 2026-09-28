@@ -12,6 +12,7 @@ import type {
   SessionModel,
   SessionStatus,
 } from "../../types";
+import { normalizePromptOptions } from "../../types";
 
 /** Hasil gagal seragam `{ ok: false; error }`. */
 export function errResult(msg: string): { ok: false; error: string } {
@@ -45,8 +46,10 @@ export interface PromptRow {
   kind: string;
   type: string;
   custom: number;
+  multiple: number;
   title: string | null;
   options_json: string | null;
+  questions_json: string | null;
   status: string;
   created_at: number;
   resolved_at: number | null;
@@ -98,14 +101,31 @@ export function mapSession(r: SessionRow): Session {
 }
 
 export function mapPrompt(r: PromptRow): InteractivePrompt {
+  // `questions_json` korup / bukan array -> dianggap tanpa multi-question
+  // (field legacy tetap dipakai) — sama seperti toleransi options_json.
+  let questions: InteractivePrompt["questions"];
+  if (r.questions_json) {
+    try {
+      const parsed: unknown = JSON.parse(r.questions_json);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        questions = parsed as InteractivePrompt["questions"];
+      }
+    } catch {
+      /* data korup -> tanpa multi-question */
+    }
+  }
   return {
     id: r.id,
     sessionId: r.session_id,
     kind: (r.kind as InteractivePrompt["kind"]) ?? "permission",
     type: r.type as InteractivePrompt["type"],
     custom: r.custom === 1,
+    multiple: r.multiple === 1,
     title: r.title,
-    options: r.options_json ? (JSON.parse(r.options_json) as string[]) : null,
+    // `options_json` bisa berisi string polos (DB lama) atau objek opsi
+    // ({label, description}) — normalisasi toleran terhadap keduanya.
+    options: r.options_json ? normalizePromptOptions(JSON.parse(r.options_json)) : null,
+    questions,
     status: r.status as PromptStatus,
     createdAt: r.created_at,
     resolvedAt: r.resolved_at,

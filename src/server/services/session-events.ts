@@ -7,7 +7,7 @@
  * - Deskripsi ramah error `session.error` dan kegagalan kirim prompt.
  */
 import { randomUUID } from "node:crypto";
-import type { InteractivePrompt } from "../../types";
+import { type InteractivePrompt, normalizePromptOptions, type PromptQuestion } from "../../types";
 import type { OpenCodeEvent } from "./opencode-client";
 
 /** Ambil nilai field event dengan toleransi beberapa nama kunci. */
@@ -155,6 +155,15 @@ export function friendlySendError(raw: string): string {
   return r.split("\n")[0] ?? r;
 }
 
+// Placeholder & deriveSessionTitle hidup di lib/session-title.ts (dipakai Client & Server).
+// Re-export di sini agar import lama (`session-events`) tetap berfungsi.
+export {
+  deriveSessionTitle,
+  displaySessionTitle,
+  isPlaceholderTitle,
+  SESSION_TITLE_PLACEHOLDERS,
+} from "@/lib/session-title";
+
 /** Bangun Interactive_Prompt dari event `permission.asked` (lihat juga `permissionGroupKey`). */
 export function promptFromPermission(
   ev: OpenCodeEvent,
@@ -175,7 +184,16 @@ export function promptFromPermission(
   };
 }
 
-/** Bangun Interactive_Prompt dari event `question.asked` (pertanyaan pertama). */
+/**
+ * Bangun Interactive_Prompt dari event `question.asked`.
+ *
+ * Skema tool `question` opencode: `questions[] = { header?, question,
+ * options: [{label, description?}], multiple?, custom? }`. SELURUH
+ * pertanyaan disimpan (`questions`) untuk kartu multi-question; pertanyaan
+ * pertama juga disalin ke field legacy (title/options/multiple/custom) agar
+ * kode lama & data DB lama tetap bekerja. Opsi dinormalisasi ke `PromptOption`
+ * agar keterangan ikut tampil di kartu.
+ */
 export function promptFromQuestion(
   ev: OpenCodeEvent,
   sessionId: string,
@@ -183,28 +201,40 @@ export function promptFromQuestion(
 ): InteractivePrompt {
   const requestId = String(eventField(ev, "requestID", "id") ?? randomUUID());
   const questions = eventField(ev, "questions");
-  const first =
-    Array.isArray(questions) && questions.length > 0
-      ? (questions[0] as {
-          question?: unknown;
-          options?: unknown;
-          custom?: unknown;
-        })
-      : null;
-  const options =
-    first && Array.isArray(first.options)
-      ? first.options
-          .map((o) => (typeof o === "object" && o !== null ? (o as { label?: unknown }).label : o))
-          .filter((l): l is string => typeof l === "string")
-      : [];
+  const list = Array.isArray(questions)
+    ? (questions as {
+        question?: unknown;
+        header?: unknown;
+        options?: unknown;
+        multiple?: unknown;
+        custom?: unknown;
+      }[])
+    : [];
+  const first = list[0] ?? null;
+  const firstOptions = normalizePromptOptions(first?.options);
+  const legacyOptions = firstOptions.length > 0 ? firstOptions : null;
+  // Multi-question hanya disimpan bila benar-benar ada >1 pertanyaan —
+  // request tunggal cukup memakai field legacy (hemat kolom DB).
+  const multi: PromptQuestion[] | undefined =
+    list.length > 1
+      ? list.map((q) => ({
+          question: typeof q.question === "string" ? q.question : null,
+          header: typeof q.header === "string" ? q.header : null,
+          options: normalizePromptOptions(q.options),
+          multiple: q.multiple === true ? true : undefined,
+          custom: q.custom !== false,
+        }))
+      : undefined;
   return {
     id: requestId,
     sessionId,
     kind: "question",
     type: "menu",
     title: first && typeof first.question === "string" ? first.question : null,
-    options: options.length > 0 ? options : null,
+    options: legacyOptions,
+    multiple: first?.multiple === true ? true : undefined,
     custom: first?.custom !== false,
+    questions: multi,
     status: "pending",
     createdAt: now,
     resolvedAt: null,

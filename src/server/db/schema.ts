@@ -94,6 +94,22 @@ export function runMigrations(db: Database): void {
     "custom",
     "ALTER TABLE prompts ADD COLUMN custom INTEGER NOT NULL DEFAULT 0",
   );
+  // Question saja: boleh pilih lebih dari satu opsi (flag `multiple` skema
+  // question opencode) — kartu history tetap tampil sebagai multi-select.
+  ensureColumn(
+    db,
+    "prompts",
+    "multiple",
+    "ALTER TABLE prompts ADD COLUMN multiple INTEGER NOT NULL DEFAULT 0",
+  );
+  // Multi-question: JSON seluruh pertanyaan request (null = pertanyaan
+  // tunggal, field legacy title/options cukup).
+  ensureColumn(
+    db,
+    "prompts",
+    "questions_json",
+    "ALTER TABLE prompts ADD COLUMN questions_json TEXT",
+  );
   // Agent (mode) opencode pilihan Session — null = default opencode (build).
   ensureColumn(db, "sessions", "agent", "ALTER TABLE sessions ADD COLUMN agent TEXT");
   // Model pilihan per Session (JSON `{providerID, modelID}`), NULL = default.

@@ -27,6 +27,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { formatRelativeTime } from "@/lib/project-overview";
 import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL } from "@/lib/session-status";
 import { describeSessionModel } from "@/lib/session-summary";
+import { displaySessionTitle } from "@/lib/session-title";
 import { cn } from "@/lib/utils";
 import type { Session, SessionStatus } from "@/types";
 
@@ -51,11 +52,7 @@ export interface SessionRowProps {
 
 export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }: SessionRowProps) {
   const running = session.status === "running";
-  /**
-   * Judul hasil generate opencode (setelah prompt pertama); "New session"
-   * sebelum ada judul — sama seperti fallback daftar session opencode.
-   */
-  const title = session.title ?? "New session";
+  const title = displaySessionTitle(session.title);
 
   return (
     <div className="group flex items-center gap-1 rounded-xl border bg-card pr-1 shadow-sm transition-all focus-within:border-primary/40 hover:border-primary/40 hover:shadow-md">

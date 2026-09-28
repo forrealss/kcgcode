@@ -79,7 +79,13 @@ function makePrompt(
     kind,
     type: kind === "permission" ? "confirmation" : "menu",
     title: kind === "permission" ? "bash:ls" : "Pilih",
-    options: kind === "permission" ? null : ["A", "B"],
+    options:
+      kind === "permission"
+        ? null
+        : [
+            { label: "A", description: null },
+            { label: "B", description: null },
+          ],
     status: "pending",
     createdAt: 0,
     resolvedAt: null,
@@ -315,6 +321,21 @@ test("prompt_response sukses -> notify prompt_resolved; gagal -> error", async (
       expect(err.message).toContain("no longer waiting");
     }
     expect(sub.sent.filter((m) => m.type === "prompt_resolved")).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("prompt_response multi-select { options } -> diteruskan utuh ke manager", async () => {
+  const h = freshHarness();
+  try {
+    h.store.insertPrompt(makePrompt("s1", "que_m", "question"));
+    const sub = makeSub("c1");
+    h.gw.attach(sub, "s1");
+
+    h.gw.promptResponse(sub, "s1", "que_m", { options: ["A", "B"] });
+    await Bun.sleep(0);
+    expect(h.sm.promptReplies).toEqual([["s1", "que_m", { options: ["A", "B"] }]]);
   } finally {
     h.close();
   }
