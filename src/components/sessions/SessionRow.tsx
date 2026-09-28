@@ -55,29 +55,29 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
   const title = displaySessionTitle(session.title);
 
   return (
-    <div className="group flex items-center gap-1 rounded-xl border bg-card pr-1 shadow-sm transition-all focus-within:border-primary/40 hover:border-primary/40 hover:shadow-md">
+    <div className="group flex items-center gap-1 rounded-xl pr-1 transition-colors focus-within:bg-muted/60 hover:bg-muted/60">
       <button
         type="button"
         onClick={onOpen}
         disabled={busy}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-3 text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60 sm:px-4"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-2.5 text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60 sm:px-3"
         aria-label={`Open session ${title}`}
       >
-        <span className="relative flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          {busy ? <Spinner className="size-4" /> : <BotIcon />}
+        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:bg-background">
+          {busy ? <Spinner className="size-4" /> : <BotIcon className="size-4" />}
           {running && !busy && (
             <span
-              className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-card"
+              className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-background"
               aria-hidden
             />
           )}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-base font-medium">{title}</span>
+            <span className="truncate text-sm font-medium sm:text-base">{title}</span>
             <StatusBadge status={session.status} />
           </span>
-          <span className="truncate text-sm text-muted-foreground">
+          <span className="truncate text-xs text-muted-foreground sm:text-sm">
             {session.agentType} · {describeSessionModel(session)} ·{" "}
             {formatRelativeTime(session.updatedAt)}
           </span>
@@ -126,8 +126,8 @@ export function SessionListSkeleton() {
   return (
     <div className="flex flex-col gap-2" aria-hidden>
       {[0, 1].map((i) => (
-        <div key={i} className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3">
-          <Skeleton className="size-10 shrink-0 rounded-lg" />
+        <div key={i} className="flex items-center gap-3 px-2 py-2.5 sm:px-3">
+          <Skeleton className="size-9 shrink-0 rounded-lg" />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <Skeleton className="h-5 w-28" />
             <Skeleton className="h-4 w-40" />

@@ -60,22 +60,13 @@ export function AppShell() {
       <SidebarProvider className="h-dvh min-h-0 overflow-hidden">
         <AppSidebar route={route} data={sidebarData} />
         <SidebarInset className="min-h-0 min-w-0 overflow-hidden">
-          <div
-            className={
-              isHome
-                ? "relative flex h-full w-full flex-col overflow-x-hidden bg-background"
-                : "relative mx-auto flex h-full w-full max-w-5xl flex-col overflow-x-hidden bg-background shadow-sm sm:border-x"
-            }
-          >
+          {/* Area konten memenuhi SidebarInset — sidebar sudah jadi pembatas
+              kiri, jadi tak perlu lagi kolom ber-border di tengah layar. Lebar
+              baca dibatasi per halaman (lihat `<main>` di bawah). */}
+          <div className="relative flex h-full w-full flex-col overflow-x-hidden bg-background">
             {/* Header (kecuali Session view yang membawa header sendiri) */}
             {!isSession && (
-              <header
-                className={
-                  isHome
-                    ? "flex w-full shrink-0 items-center gap-3 px-3 py-3 sm:px-4"
-                    : "flex shrink-0 items-center gap-3 border-b bg-background/95 px-3 py-3 backdrop-blur sm:px-4"
-                }
-              >
+              <header className="flex w-full shrink-0 items-center gap-3 px-3 py-3 sm:px-4">
                 <SidebarTrigger className="size-9 shrink-0" />
                 {/* Brand hanya di HP — di desktop sudah ada di header sidebar. */}
                 <span className="flex min-w-0 items-center gap-2 md:hidden">
@@ -140,7 +131,7 @@ export function AppShell() {
                        atas besar — dan daftar yang lebih tinggi dari layar
                        tetap bisa di-scroll seluruhnya. */
                         "flex min-h-full flex-col px-4 py-6 sm:px-6 sm:py-10"
-                      : "mx-auto w-full p-4 pb-12 sm:p-6 sm:pb-16 lg:p-8"
+                      : "mx-auto w-full max-w-3xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
                   }
                 >
                   {route.name === "projects" && <ProjectsPage />}

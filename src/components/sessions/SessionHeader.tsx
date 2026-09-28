@@ -1,13 +1,12 @@
 /**
- * Header chat ala aplikasi chat mobile: back — nama model (pembuka picker) —
- * aksi. Nama model jadi judul karena itulah informasi yang paling sering
- * dilihat & diganti; identitas Session (agentType + id) turun ke baris kedua
- * yang hanya tampil di layar lebar.
+ * Header chat ala aplikasi chat mobile: toggle sidebar — nama model (pembuka
+ * picker) — aksi. Nama model jadi judul karena itulah informasi yang paling
+ * sering dilihat & diganti; identitas Session (agentType + id) turun ke baris
+ * kedua yang hanya tampil di layar lebar.
  *
- * Tiga tombol saja di HP supaya lega: back, play/stop, dan menu aksi.
+ * Tanpa tombol back: navigasi antar Session/Project lewat sidebar.
  */
 import {
-  ChevronLeftIcon,
   MoonIcon,
   MoreVerticalIcon,
   PlayIcon,
@@ -44,7 +43,6 @@ export interface SessionHeaderProps {
   onStart: () => void;
   /** Buka dialog konfirmasi hapus Session (dirender di SessionView). */
   onRequestDelete: () => void;
-  onBack: () => void;
   stopping: boolean;
   starting: boolean;
 }
@@ -56,7 +54,6 @@ export function SessionHeader({
   onStop,
   onStart,
   onRequestDelete,
-  onBack,
   stopping,
   starting,
 }: SessionHeaderProps) {
@@ -66,22 +63,13 @@ export function SessionHeader({
   const [model, setModel] = useState<SessionModel | null>(session.model);
 
   return (
-    <header className="shrink-0 border-b">
-      {/* Garis border membentang penuh, isinya sejajar kolom percakapan. */}
-      <div className="mx-auto flex w-full max-w-3xl items-center gap-1 px-1.5 py-1.5 sm:gap-2 sm:px-3 sm:py-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          onClick={onBack}
-          aria-label="Back"
-          className="size-10 shrink-0 sm:size-9"
-        >
-          <ChevronLeftIcon data-icon="inline-start" />
-        </Button>
-
+    <header className="shrink-0">
+      {/* Tanpa border — sidebar sudah jadi pembatas. Lebar penuh (bukan kolom
+          percakapan) agar toggle sidebar menempel di tepi kiri, sama seperti
+          header shell di halaman lain. Navigasi kembali lewat sidebar. */}
+      <div className="flex w-full items-center gap-1 px-3 py-3 sm:gap-2 sm:px-4">
         {/* Buka/ciutkan sidebar Session (Sheet di HP). */}
-        <SidebarTrigger className="size-10 shrink-0 sm:size-9" />
+        <SidebarTrigger className="size-9 shrink-0" />
 
         {/* Judul = nama model, sekaligus pembuka dialog pemilihan model.
           Ikon chevron memberi tahu bahwa ini dapat diganti. */}

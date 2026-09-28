@@ -46,7 +46,6 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         session={session}
         status={chat.status}
         wsStatus={chat.wsStatus}
-        onBack={onBack}
         onStop={() => void chat.stop()}
         onStart={() => void chat.start()}
         onRequestDelete={chat.beginDelete}

@@ -55,15 +55,20 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
 
   if (state.phase === "loading") {
     return (
-      <div className="flex flex-col gap-6">
-        <Skeleton className="h-[68px] w-full rounded-xl" />
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <Skeleton className="h-5 w-20" />
-            <Skeleton className="h-8 w-28 rounded-md" />
+      <div className="flex flex-col gap-6" aria-hidden>
+        {/* Bentuk sama dengan header SessionList: ikon + nama/path + aksi. */}
+        <div className="flex items-start gap-3">
+          <Skeleton className="size-11 shrink-0 rounded-xl" />
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-4 w-56" />
           </div>
-          <Skeleton className="h-[68px] w-full rounded-xl" />
-          <Skeleton className="h-[68px] w-full rounded-xl" />
+          <Skeleton className="h-8 w-28 rounded-md" />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-4 w-16" />
+          <Skeleton className="h-14 w-full rounded-xl" />
+          <Skeleton className="h-14 w-full rounded-xl" />
         </div>
       </div>
     );
@@ -92,7 +97,6 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
       key={state.project.id}
       project={state.project}
       onOpenSession={(session) => navigate(sessionPath(projectId, session.id))}
-      onBack={() => navigate(projectsPath())}
       // Project sudah tidak ada — halaman ini tak punya data lagi untuk
       // ditampilkan, jadi langsung kembali ke daftar Project.
       onDeleted={() => navigate(projectsPath())}
