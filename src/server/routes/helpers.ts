@@ -33,7 +33,28 @@ export function errorStatus(code: string): number {
     case "INSTRUCTIONS_TOO_LONG":
     case "INVALID_SKILL_QUERY":
     case "INVALID_SKILL_ID":
+    case "PIN_DIGITS_ONLY":
+    case "PIN_LENGTH":
+    case "PIN_TOO_SIMPLE":
+    case "PASSWORD_TOO_SHORT":
+    case "PASSWORD_TOO_LONG":
+    case "LOCK_KIND_INVALID":
+    case "NICKNAME_TOO_LONG":
+    case "NICKNAME_INVALID":
+    case "AUTO_LOCK_INVALID":
+    case "AVATAR_PRESET_INVALID":
+    case "AUTH_NOT_CONFIGURED":
       return 400;
+    case "AUTH_INVALID":
+    case "CURRENT_SECRET_INVALID":
+    case "AUTH_REQUIRED":
+      return 401;
+    case "ORIGIN_FORBIDDEN":
+      return 403;
+    case "AVATAR_NOT_FOUND":
+      return 404;
+    case "AVATAR_TOO_LARGE":
+      return 413;
     case "PROJECT_NOT_FOUND":
     case "PROJECT_DIR_NOT_FOUND":
     case "SESSION_NOT_FOUND":

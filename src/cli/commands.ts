@@ -4,6 +4,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { resolveConfig } from "../config";
+import { openSessionStore } from "../db";
 import spa from "../index.html";
 import {
   defaultSandboxDir,
@@ -16,11 +17,12 @@ import {
 import { isCliMode } from "../runtime";
 import { createKcgServer } from "../server/app";
 import { resolveHostname } from "../server/host";
+import { createAuthService } from "../server/services/auth";
 import type { CliArgs } from "./args";
 import { openBrowser, startDashboard } from "./dashboard";
 import { c, panel, row, symbols } from "./theme";
 
-const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills"];
+const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings"];
 
 function applyEnvOverrides(args: CliArgs): void {
   if (args.port !== undefined) process.env.KCG_PORT = String(args.port);
@@ -138,4 +140,35 @@ export function runInit(args: CliArgs): void {
       ),
     ]),
   );
+}
+
+/**
+ * Lupa PIN/password: hapus kunci aplikasi & cabut semua sesi langsung di
+ * database lokal. Hanya bisa dijalankan dari mesin ini (akses shell), jadi
+ * aman sebagai jalur pemulihan. Nickname & foto profil tidak diubah.
+ */
+export function runResetLock(): void {
+  const dbPath = resolveEffectiveDbPath();
+  if (!existsSync(dbPath)) {
+    console.log(`${c.dim("No database at")} ${c.cyan(dbPath)} ${c.dim("— nothing to reset.")}`);
+    return;
+  }
+  const store = openSessionStore(dbPath);
+  try {
+    const wasLocked = store.getAuthSettings(Date.now()).lockKind !== null;
+    createAuthService({ store }).resetLock();
+    console.log(
+      wasLocked
+        ? `${c.greenBright(symbols.check)} App lock removed and all devices signed out.`
+        : `${c.greenBright(symbols.check)} App was not locked. All device sessions cleared.`,
+    );
+    console.log(
+      `${c.dim("Set a new PIN or password in")} ${c.cyan("Settings → Security")}${c.dim(".")}`,
+    );
+    console.log(
+      `${c.yellow("!")} ${c.dim("If KCG Code is running, anyone who can reach it can use it until you set a new lock.")}`,
+    );
+  } finally {
+    store.close();
+  }
 }

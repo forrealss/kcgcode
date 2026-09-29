@@ -9,9 +9,11 @@
 import { expect, test } from "bun:test";
 import {
   applyTheme,
+  getStoredPreference,
   getStoredTheme,
   nextTheme,
   resolveInitialTheme,
+  resolveTheme,
   THEME_STORAGE_KEY,
   type ThemeRootLike,
   type ThemeStorageLike,
@@ -98,4 +100,19 @@ test("22.2: getStoredTheme hanya mengenali nilai valid", () => {
   expect(getStoredTheme(makeStorage({ [THEME_STORAGE_KEY]: "light" }))).toBe("light");
   expect(getStoredTheme(makeStorage({ [THEME_STORAGE_KEY]: "bogus" }))).toBeNull();
   expect(getStoredTheme(makeStorage())).toBeNull();
+});
+
+test("preferensi 'system' mengikuti sistem; 'light'/'dark' tetap", () => {
+  expect(resolveTheme("system", () => true)).toBe("dark");
+  expect(resolveTheme("system", () => false)).toBe("light");
+  expect(resolveTheme("light", () => true)).toBe("light");
+  expect(resolveTheme("dark", () => false)).toBe("dark");
+});
+
+test("getStoredPreference: nilai valid; kosong/tak dikenal -> system", () => {
+  expect(getStoredPreference(makeStorage({ [THEME_STORAGE_KEY]: "dark" }))).toBe("dark");
+  expect(getStoredPreference(makeStorage({ [THEME_STORAGE_KEY]: "light" }))).toBe("light");
+  expect(getStoredPreference(makeStorage({ [THEME_STORAGE_KEY]: "system" }))).toBe("system");
+  expect(getStoredPreference(makeStorage({ [THEME_STORAGE_KEY]: "bogus" }))).toBe("system");
+  expect(getStoredPreference(makeStorage())).toBe("system");
 });

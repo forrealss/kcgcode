@@ -115,7 +115,26 @@ describe("createSkillInstallJobs", () => {
     await h.jobs.settled(started.data.id);
     const log = h.jobs.get(started.data.id);
     expect(log?.job.refreshed).toBe(false);
-    expect(log?.lines.at(-1)).toContain("after the running chat finishes");
+    expect(log?.lines.at(-1)).toContain("reloads skills automatically when it finishes");
+  });
+
+  test("markRefreshed: job sukses tertunda di Project itu jadi aktif + dicatat", async () => {
+    const h = harness(false);
+    const started = h.jobs.start(input);
+    if (!started.ok) throw new Error("start gagal");
+    h.release({ ok: true, data: { name: "c", path: null } });
+    await h.jobs.settled(started.data.id);
+
+    h.jobs.markRefreshed("p-lain");
+    expect(h.jobs.get(started.data.id)?.job.refreshed).toBe(false);
+
+    h.jobs.markRefreshed("p1");
+    const log = h.jobs.get(started.data.id);
+    expect(log?.job.refreshed).toBe(true);
+    expect(log?.lines.at(-1)).toBe("✓ Chat finished — c is now active.");
+    // Idempoten: tidak menambah baris lagi.
+    h.jobs.markRefreshed("p1");
+    expect(h.jobs.get(started.data.id)?.job.lineCount).toBe(log?.job.lineCount);
   });
 
   test("validasi & satu job berjalan per Project", async () => {

@@ -12,6 +12,8 @@
  *   di localStorage sehingga kembali persis seperti sebelum refresh.
  * - Selesai sukses -> `onInstallFinished` (mis. halaman Skills memuat ulang
  *   daftar terpasang).
+ * - Sukses tapi belum aktif (`refreshed: false`, ada chat berjalan) -> polling
+ *   pelan berlanjut sampai server mengaktifkannya otomatis setelah chat selesai.
  *
  * `useSyncExternalStore` membaca snapshot; setiap perubahan membuat objek
  * baru (immutable) agar React me-render ulang.
@@ -22,6 +24,13 @@ import type { InstallJob, InstallJobLog } from "@/server/services/skill-install-
 
 /** Interval polling saat job berjalan. */
 const POLL_MS = 700;
+/**
+ * Interval polling job sukses yang skill-nya belum aktif (menunggu chat di
+ * Project selesai lalu agent memuat ulang skill otomatis).
+ */
+const PENDING_ACTIVATION_POLL_MS = 3000;
+/** Berhenti menunggu aktivasi setelah selama ini (chat sangat panjang). */
+const PENDING_ACTIVATION_MAX_MS = 30 * 60_000;
 /** Batas baris log yang disimpan di client (server juga membatasi). */
 const MAX_CLIENT_LINES = 500;
 
@@ -174,14 +183,30 @@ async function poll(jobId: string): Promise<void> {
       try {
         const res = await apiFetch(`/api/skills/installs/${jobId}?from=${cur.next}`);
         const log = (await res.json()) as InstallJobLog;
+        const wasRunning = cur.job.status === "running";
         update(jobId, (e) => mergeLog(e, log));
         if (log.job.status !== "running") {
-          for (const l of finishListeners) l(log.job);
-          return;
+          if (wasRunning) for (const l of finishListeners) l(log.job);
+          // Terpasang tapi belum aktif (ada chat berjalan) -> terus pantau
+          // pelan sampai server menandai aktif, agar notifikasi ikut berubah.
+          const waiting =
+            log.job.status === "succeeded" &&
+            log.job.refreshed === false &&
+            Date.now() - (log.job.finishedAt ?? Date.now()) < PENDING_ACTIVATION_MAX_MS;
+          if (!waiting) return;
+          await new Promise((r) => setTimeout(r, PENDING_ACTIVATION_POLL_MS));
+          continue;
         }
       } catch (e) {
         if (e instanceof ApiError && e.status === 404) {
-          // Server restart: job hilang bersama prosesnya.
+          // Job sudah sukses (sedang menunggu aktivasi) lalu kedaluwarsa /
+          // server restart: skill tetap terpasang — jangan ubah jadi gagal.
+          // Restart server juga memuat ulang skill, jadi anggap aktif.
+          if (cur.job.status === "succeeded") {
+            update(jobId, (en) => ({ ...en, job: { ...en.job, refreshed: true } }));
+            return;
+          }
+          // Server restart saat instalasi berjalan: job hilang bersama prosesnya.
           update(jobId, (en) => ({
             ...en,
             job: { ...en.job, status: "failed", error: "INSTALL_JOB_LOST", finishedAt: Date.now() },

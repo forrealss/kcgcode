@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { ProjectDetailPage } from "@/pages/projects/ProjectDetailPage";
 import { ProjectsPage } from "@/pages/projects/ProjectsPage";
 import { SessionPage } from "@/pages/sessions/SessionPage";
+import { SettingsPage } from "@/pages/settings/SettingsPage";
 import { SkillsPage } from "@/pages/skills/SkillsPage";
 
 import logo from "../../logo.svg";
@@ -105,6 +106,7 @@ export function AppShell() {
                     <ProjectDetailPage key={route.projectId} projectId={route.projectId} />
                   )}
                   {route.name === "skills" && <SkillsPage />}
+                  {route.name === "settings" && <SettingsPage />}
                   {route.name === "not-found" && <NotFoundView />}
                 </div>
               </main>

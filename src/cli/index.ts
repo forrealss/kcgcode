@@ -2,7 +2,7 @@
  * Router CLI kcgcode — dipanggil dari `bin/kcgcode.ts`.
  */
 import { type CliArgs, helpText, parseArgs } from "./args";
-import { runInit, runStart } from "./commands";
+import { runInit, runResetLock, runStart } from "./commands";
 import { c, readPackageVersion, symbols } from "./theme";
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -24,6 +24,9 @@ export async function runCli(argv: string[]): Promise<void> {
       return;
     case "init":
       runInit(args);
+      return;
+    case "reset-lock":
+      runResetLock();
       return;
     case "start":
       await runStart(args);

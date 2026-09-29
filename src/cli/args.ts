@@ -3,7 +3,7 @@
  */
 
 export interface CliArgs {
-  command: "start" | "init" | "help" | "version" | "invalid";
+  command: "start" | "init" | "reset-lock" | "help" | "version" | "invalid";
   port?: number;
   host?: string;
   /** Path berkas konfigurasi (override KCG_CONFIG_PATH). */
@@ -24,6 +24,7 @@ USAGE
 COMMANDS
   start (default)   Run server + terminal dashboard
   init              Create kcg-code.config.json & local sandbox folder
+  reset-lock        Remove the app lock (forgot PIN/password) & sign out all devices
 
 OPTIONS
   -p, --port <n>    HTTP port (default 3000 / env KCG_PORT)
@@ -58,6 +59,9 @@ export function parseArgs(argv: string[]): CliArgs {
   const first = rest[0];
   if (first === "init") {
     args.command = "init";
+    rest.shift();
+  } else if (first === "reset-lock") {
+    args.command = "reset-lock";
     rest.shift();
   } else if (first === "start") {
     args.command = "start";

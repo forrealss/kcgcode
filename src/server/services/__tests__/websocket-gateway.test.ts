@@ -156,6 +156,9 @@ function makeFakeSessionManager(): FakeSessionManager {
     async refreshSkills() {
       return { ok: false, error: "not-used" };
     },
+    hasPendingSkillRefresh() {
+      return false;
+    },
     setSessionModel() {
       return { ok: false, error: "not-used" };
     },

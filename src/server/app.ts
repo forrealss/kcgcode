@@ -7,8 +7,9 @@
  * (di-assemble di sini) dan domain logic di `services/`.
  * - Routes HTTP `/api/projects`, `/api/fs`, `/api/sessions`, upload lampiran,
  *   `/api/skills` (tabel rute terpisah) + upgrade WebSocket di `/ws`.
- * - Tanpa otentikasi: server bind ke `127.0.0.1` secara default (lihat
- *   `host.ts`), jadi hanya dapat diakses dari mesin ini.
+ * - Kunci aplikasi opsional (lock screen, `services/auth.ts`): bila diatur,
+ *   seluruh `/api/*` & `/ws` mewajibkan cookie sesi. Tanpa kunci, server
+ *   hanya aman karena bind ke `127.0.0.1` secara default (lihat `host.ts`).
  * - `reconcileOnStartup()` dipanggil sebelum `Bun.serve` menerima koneksi
  *   (Requirement 2.4).
  *
@@ -22,12 +23,15 @@ import { type AppConfig, loadConfig } from "../config";
 import { openSessionStore, type SessionStore } from "../db";
 import { PUBLIC_DIR, resolveEffectiveUploadsDir } from "../paths";
 import { resolveHostname } from "./host";
+import { authRoutes } from "./routes/auth.routes";
+import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
 import { projectsRoutes } from "./routes/projects.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
 import { skillsRoutes } from "./routes/skills.routes";
 import type { ApiRouteContext } from "./routes/types";
 import { uploadsRoutes } from "./routes/uploads.routes";
 import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
+import { type AuthService, createAuthService } from "./services/auth";
 import {
   createOpenCodeServerManager,
   type OpenCodeServerManager,
@@ -48,8 +52,12 @@ import {
 } from "./services/websocket-gateway";
 import { bunWsSubscriber, dispatchClientMessage } from "./services/ws-transport";
 
-/** Data per-koneksi WebSocket (belum ada state per koneksi). */
-type WsData = Record<string, never>;
+/**
+ * Data per-koneksi WebSocket: id sesi login pemiliknya (null = kunci belum
+ * diatur saat koneksi dibuka). Dipakai untuk menutup socket saat sesi itu
+ * dicabut / terkunci.
+ */
+type WsData = { authSessionId: string | null };
 
 export interface KcgServerOptions {
   config?: AppConfig;
@@ -58,6 +66,8 @@ export interface KcgServerOptions {
   servers?: OpenCodeServerManager;
   /** Injeksi Skills_Registry (skills.sh + CLI `skills`) untuk pengujian. */
   skillsRegistry?: SkillsRegistry;
+  /** Injeksi Auth_Service (mis. hash cepat untuk test). */
+  auth?: AuthService;
   /** Direktori lampiran gambar upload (default: `~/.kcgcode/data/uploads`). */
   uploadsRoot?: string;
   hostname?: string;
@@ -79,6 +89,10 @@ export interface KcgServer {
   gateway: WebSocketGateway;
   /** Job instalasi skill (diekspos untuk pengujian). */
   skillInstalls: ApiRouteContext["skillInstalls"];
+  /** Kunci aplikasi (diekspos untuk pengujian & CLI). */
+  auth: AuthService;
+  /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
+  apiRoutePatterns: string[];
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
   close(): Promise<void>;
 }
@@ -120,6 +134,16 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const servers = opts.servers ?? createOpenCodeServerManager();
   const attachments: AttachmentManager = createAttachmentManager(uploadsRoot);
 
+  // Skills_Registry & job instalasi dibuat lebih dulu: session manager
+  // memberi tahu job instalasi saat refresh skill tertunda selesai. Callback
+  // `refreshSkills` baru dipanggil saat instalasi berjalan (setelah init).
+  const skillsRegistry = opts.skillsRegistry ?? createSkillsRegistry();
+  const skillInstalls = createSkillInstallJobs({
+    registry: skillsRegistry,
+    refreshSkills: (projectId) => sessionManager.refreshSkills(projectId),
+    validate: (source, skill) => isValidSource(source) && isValidSkillId(skill),
+  });
+
   let gateway: WebSocketGateway;
   const sessionManager = createSessionManager({
     store,
@@ -139,6 +163,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
     // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).
     onTurnChange: (sessionId, active) => gateway.notifyTurnActive(sessionId, active),
+    // Refresh skill tertunda berjalan otomatis setelah chat selesai -> perbarui
+    // notifikasi instalasi terkait ("aktif sekarang").
+    onSkillsRefreshed: (projectId) => skillInstalls.markRefreshed(projectId),
   });
   gateway = createWebSocketGateway({ store, sessionManager });
 
@@ -146,12 +173,6 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   sessionManager.reconcileOnStartup();
 
   // Konteks bersama untuk tabel rute API.
-  const skillsRegistry = opts.skillsRegistry ?? createSkillsRegistry();
-  const skillInstalls = createSkillInstallJobs({
-    registry: skillsRegistry,
-    refreshSkills: (projectId) => sessionManager.refreshSkills(projectId),
-    validate: (source, skill) => isValidSource(source) && isValidSkillId(skill),
-  });
   const routeCtx: ApiRouteContext = {
     projectManager,
     sessionManager,
@@ -162,6 +183,41 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
 
   // Subscriber per koneksi (identitas stabil untuk Map gateway).
   const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
+
+  // ---- Kunci aplikasi (lock screen) ----
+  const auth = opts.auth ?? createAuthService({ store });
+  // Sesi dicabut / terkunci / kedaluwarsa -> tutup WebSocket miliknya agar
+  // perangkat itu tidak terus menerima data percakapan.
+  auth.onSessionEnded((sessionId) => {
+    for (const ws of wsSubs.keys()) {
+      if (ws.data.authSessionId === sessionId) ws.close(4401, "locked");
+    }
+  });
+  /** Kunci baru diatur -> tutup socket yang dibuka tanpa sesi (sebelum dikunci). */
+  function closeUnauthenticatedSockets(): void {
+    if (!auth.isProtected()) return;
+    for (const ws of wsSubs.keys()) {
+      if (ws.data.authSessionId === null) ws.close(4401, "locked");
+    }
+  }
+  // Kunci otomatis ditegakkan server: sapu sesi idle/kedaluwarsa berkala.
+  const sweepTimer = setInterval(() => {
+    try {
+      auth.sweep();
+      closeUnauthenticatedSockets();
+    } catch (e) {
+      console.error("[kcg-code] auth sweep gagal:", e);
+    }
+  }, 30_000);
+  sweepTimer.unref?.();
+
+  const apiRoutes = guardRoutes(auth, {
+    ...authRoutes(auth),
+    ...projectsRoutes(routeCtx),
+    ...sessionsRoutes(routeCtx),
+    ...uploadsRoutes(routeCtx),
+    ...skillsRoutes(routeCtx),
+  });
 
   const server = serve<WsData>({
     hostname,
@@ -174,14 +230,21 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       "/logo.svg": () => staticFile(path.join(PUBLIC_DIR, "logo.svg"), "image/svg+xml"),
 
       // ---- Rute API per fitur (pola kcgcode: tabel rute terpisah) ----
-      ...projectsRoutes(routeCtx),
-      ...sessionsRoutes(routeCtx),
-      ...uploadsRoutes(routeCtx),
-      ...skillsRoutes(routeCtx),
+      // Seluruh `/api/*` dijaga kunci aplikasi (kecuali status/login/avatar).
+      ...apiRoutes,
 
       // ---- WebSocket_Gateway upgrade (Requirement 4) ----
+      // WebSocket tidak dibatasi CORS, jadi Origin wajib same-origin dan
+      // sesi login wajib valid sebelum upgrade.
       "/ws": (req: Request, server: Server<WsData>) => {
-        const upgraded = server.upgrade(req, { data: {} });
+        if (!originAllowed(req)) return new Response("Forbidden", { status: 403 });
+        let authSessionId: string | null = null;
+        if (auth.isProtected()) {
+          const session = auth.authenticate(readSessionToken(req));
+          if (!session) return new Response("Unauthorized", { status: 401 });
+          authSessionId = session.id;
+        }
+        const upgraded = server.upgrade(req, { data: { authSessionId } });
         if (!upgraded) return new Response("Upgrade WebSocket gagal", { status: 400 });
         return undefined;
       },
@@ -196,7 +259,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       ),
     },
     websocket: {
-      data: {} as WsData,
+      data: { authSessionId: null } as WsData,
       open(ws) {
         wsSubs.set(ws, bunWsSubscriber(ws));
       },
@@ -204,6 +267,16 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
         // Socket yang tak terdaftar (sudah ditutup) diabaikan.
         const sub = wsSubs.get(ws);
         if (!sub) return;
+        // Setiap pesan dianggap aktivitas: sesi tetap hidup selama dipakai,
+        // dan socket milik sesi yang sudah terkunci ditutup.
+        if (auth.isProtected()) {
+          const alive =
+            ws.data.authSessionId !== null && auth.isSessionAlive(ws.data.authSessionId);
+          if (!alive) {
+            ws.close(4401, "locked");
+            return;
+          }
+        }
         dispatchClientMessage(gateway, sub, String(message));
       },
       close(ws) {
@@ -221,6 +294,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   });
 
   async function close(): Promise<void> {
+    clearInterval(sweepTimer);
     // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
     await skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
@@ -229,5 +303,15 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     store.close();
   }
 
-  return { server, store, projectManager, sessionManager, gateway, skillInstalls, close };
+  return {
+    server,
+    store,
+    projectManager,
+    sessionManager,
+    gateway,
+    skillInstalls,
+    auth,
+    apiRoutePatterns: Object.keys(apiRoutes),
+    close,
+  };
 }

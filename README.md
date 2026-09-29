@@ -1,8 +1,40 @@
 # kcgcode
 
-Control CLI AI agents (OpenCode / Claude Code) from your phone — local headless bridge + mobile PWA.
+Control your [OpenCode](https://opencode.ai) agents from your phone. kcgcode runs a local bridge
+on your machine and serves a mobile-friendly web app (PWA) where you chat with agents, answer
+their permission prompts, manage projects and skills, and keep it all behind a lock screen when
+you reach it through a tunnel.
 
-## Install (global)
+> Only OpenCode is supported as an agent right now. Claude Code support is planned.
+
+## Features
+
+- **Chat with agents from anywhere.** Start sessions per project, stream replies live, stop a
+  running turn, and pick the model and agent mode (build, plan, or your own agents).
+- **Answer prompts on the go.** Permission requests and multi-question prompts from the agent
+  show up as cards you can approve, deny, or answer from your phone.
+- **Projects & sessions.** Organise work by folder inside a sandbox. The sidebar groups every
+  session by project, with live status and a quick search (`Ctrl/⌘ + K`).
+- **Rich input.** Mention files with `@`, attach images, and set per-project custom
+  instructions.
+- **Skills from [skills.sh](https://skills.sh).** Search the directory, see security audit
+  results before you install, and add skills to a project in one click. Installs run in the
+  background with live output, survive page refreshes, and can be cancelled. The agent picks up
+  new skills automatically, waiting for any running chat to finish first.
+- **App lock.** Protect the app with a PIN or password before exposing it. It comes with a lock
+  screen showing your profile photo or avatar, auto-lock after inactivity, signed-in device
+  management, and brute-force protection.
+- **Installable PWA** with light, dark, or system theme.
+- **Terminal dashboard.** `kcgcode` shows the server status right in your terminal.
+
+## Requirements
+
+- [Bun](https://bun.com) 1.1 or newer
+- [OpenCode](https://opencode.ai) installed and on your `PATH` (kcgcode starts `opencode serve`
+  for each project)
+- Internet access for skills.sh search and skill installs (installs use `bunx skills`)
+
+## Install
 
 ```bash
 bun i -g kcgcode
@@ -18,24 +50,73 @@ bun i -g ./kcgcode-0.1.0.tgz
 ## Quick start
 
 ```bash
-# scaffold ~/.kcgcode (config + sandbox + data)
+# create ~/.kcgcode (config, sandbox, data)
 kcgcode init
 
-# start server + modern terminal dashboard (works from any directory)
+# start the server + terminal dashboard (works from any directory)
 kcgcode
 
-# custom port, open browser
+# custom port, open the browser
 kcgcode start --port 4000 --open
 ```
 
-Open the printed URL on your phone (same LAN) or desktop.
+Open the printed URL in your browser. Projects are folders inside the sandbox root from your
+config.
+
+## Using it from your phone
+
+By default the server only listens on `127.0.0.1`, so it's reachable from this machine only.
+To use it from your phone:
+
+1. **Set a lock first.** Open **Settings → Security** and turn on the app lock (PIN or
+   password). Until a lock is set, anyone who can reach the address can control your agents and
+   run commands on your machine. The sidebar shows a "Not protected" warning while there's no
+   lock.
+2. **Expose it.** Either:
+   - Use an HTTPS tunnel such as Cloudflare Tunnel or ngrok, pointed at the kcgcode port
+     (recommended), or
+   - Bind to your LAN with `kcgcode --host 0.0.0.0` and open `http://<your-ip>:3000` on the
+     same network. Traffic isn't encrypted on plain HTTP, so prefer a tunnel.
+3. Open the URL on your phone, unlock, and optionally add it to your home screen.
+
+Only tunnel the kcgcode port. The per-project `opencode serve` processes have no password of
+their own and should stay local.
+
+## Security
+
+When a lock is set:
+
+- Every API route and the WebSocket require a signed-in session. The only exceptions are the
+  lock screen's status, login, and profile photo.
+- The PIN or password is stored as an argon2id hash. Sessions use an `HttpOnly`,
+  `SameSite=Strict` cookie, marked `Secure` over HTTPS. The database only stores a hash of the
+  session token.
+- Requests from other sites are rejected (Origin check, including the WebSocket).
+- Auto-lock (5 min to 1 hour, or never) is enforced by the server, not just the UI. Locking,
+  changing the lock, or signing out a device also closes that device's live connection.
+- Failed attempts are rate limited per IP and globally, since tunnels can hide the real IP.
+  Repeated failures pause all logins for up to 15 minutes.
+- PINs must be 6–12 digits, and trivial patterns like `111111` or `123456` are rejected.
+  Passwords need at least 8 characters.
+
+**Forgot your PIN or password?** Run this on the host machine:
+
+```bash
+kcgcode reset-lock
+```
+
+It removes the lock and signs out every device, but keeps your profile. Set a new lock right
+away if the app is exposed.
+
+Skills run with your agent's full permissions. Review a skill and its audit before installing.
 
 ## CLI
 
 | Command | Description |
 | --- | --- |
-| `kcgcode` / `kcgcode start` | Run server + live dashboard |
+| `kcgcode` / `kcgcode start` | Run the server + live dashboard |
 | `kcgcode init` | Create `~/.kcgcode` (config, sandbox, data) |
+| `kcgcode reset-lock` | Remove the app lock and sign out all devices |
 | `kcgcode --help` | Show help |
 | `kcgcode --version` | Show version |
 
@@ -44,17 +125,23 @@ Open the printed URL on your phone (same LAN) or desktop.
 | `-p, --port <n>` | HTTP port (default `3000`, env `KCG_PORT`) |
 | `-H, --host <h>` | Bind host (default `127.0.0.1`, env `KCG_HOST`) |
 | `-c, --config <f>` | Config path (default `~/.kcgcode/config.json`) |
-| `--open` | Open the web dashboard in your browser |
+| `--open` | Open the web app in your browser |
 
 Dashboard keys: `q` quit · `o` open browser · `Ctrl+C` stop.
 
+| Environment variable | Description |
+| --- | --- |
+| `KCG_PORT` | HTTP port |
+| `KCG_HOST` | Bind host |
+| `KCG_CONFIG_PATH` | Config file path |
+| `KCG_DB_PATH` | SQLite path (default `~/.kcgcode/data/kcg-code.sqlite`) |
+
 ## Config & data location
 
-Runtime mode is detected from the entrypoint:
+The runtime mode is detected from the entrypoint:
 
 | | **dev** (`bun dev` / `src/index.ts`) | **cli** (`kcgcode` global binary) |
 | --- | --- | --- |
-| Mode flag | `setRunMode("dev")` | `setRunMode("cli")` in `bin/kcgcode.ts` |
 | Config | `./kcg-code.config.json` if present, else `~/.kcgcode/config.json` | `~/.kcgcode/config.json` |
 | SQLite | `./data/kcg-code.sqlite` | `~/.kcgcode/data/kcg-code.sqlite` |
 | Uploads | `./data/uploads` | `~/.kcgcode/data/uploads` |
@@ -68,11 +155,11 @@ Global CLI layout:
   config.json              # sandboxRoot
   sandbox/                 # default agent workspace
   data/
-    kcg-code.sqlite
-    uploads/
+    kcg-code.sqlite        # projects, sessions, messages, app lock
+    uploads/               # image attachments
 ```
 
-Resolution order for the config file:
+Config file resolution order:
 
 1. `--config <path>` / `KCG_CONFIG_PATH` (always wins)
 2. **cli**: `~/.kcgcode/config.json` (cwd is ignored)
@@ -84,16 +171,17 @@ Resolution order for the config file:
 }
 ```
 
-Override the database with `KCG_DB_PATH` if needed.
+Skills installed from the Skills page go into the project folder under `.agents/skills/`.
 
 ## Develop
 
 ```bash
 bun install
-bun dev          # dev server with HMR (uses ./kcg-code.config.json if present)
+bun dev             # dev server with HMR (uses ./kcg-code.config.json if present)
 bun test
 bun run lint
 bun run typecheck
+bun run build
 ```
 
 Built with [Bun](https://bun.com).

@@ -9,6 +9,7 @@
  * - `sessions.ts`      — repository Sessions + riwayat status (append-only)
  * - `messages.ts`      — repository pesan terstruktur (append-only)
  * - `prompts.ts`       — repository prompt interaktif
+ * - `auth.ts`          — kunci aplikasi (lock screen) & sesi login
  *
  * Konvensi: `session_status_history` dan `messages` bersifat **append-only**
  * (insert-only) sehingga Requirement 3.1/3.3 terpenuhi secara struktural.
@@ -19,6 +20,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DEFAULT_DB_PATH, resolveEffectiveDbPath } from "./paths";
+import { type AuthRepo, createAuthRepo } from "./server/db/auth";
 import { createMessageRepo, type MessageRepo } from "./server/db/messages";
 import { createProjectRepo, type ProjectRepo } from "./server/db/projects";
 import { createPromptRepo, type PromptRepo } from "./server/db/prompts";
@@ -37,7 +39,7 @@ import type {
 
 export { DEFAULT_DB_PATH };
 
-export interface SessionStore {
+export interface SessionStore extends AuthRepo {
   // ---- Pesan terstruktur (append-only) ----
   insertMessage(message: SessionMessage): Result<SessionMessage>;
   getMessages(sessionId: string): Result<SessionMessage[]>;
@@ -123,12 +125,14 @@ export function openSessionStore(dbPath?: string): SessionStore {
   const sessions: SessionRepo = createSessionRepo(db);
   const messages: MessageRepo = createMessageRepo(db);
   const prompts: PromptRepo = createPromptRepo(db);
+  const auth: AuthRepo = createAuthRepo(db);
 
   const store: SessionStore = {
     ...projects,
     ...sessions,
     ...messages,
     ...prompts,
+    ...auth,
     close() {
       db.close();
     },

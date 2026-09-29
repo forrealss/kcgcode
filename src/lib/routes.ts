@@ -14,6 +14,7 @@ export type AppRoute =
   | { name: "project"; projectId: string }
   | { name: "session"; projectId: string; sessionId: string }
   | { name: "skills" }
+  | { name: "settings" }
   | { name: "not-found" };
 
 /** URL daftar Project. */
@@ -39,6 +40,11 @@ export function skillsPath(projectId?: string | null): string {
   return projectId ? `/skills?project=${encodeURIComponent(projectId)}` : "/skills";
 }
 
+/** URL halaman Settings. */
+export function settingsPath(): string {
+  return "/settings";
+}
+
 /** Ambil id Project dari query string halaman Skills (`?project=`). */
 export function parseSkillsProject(search: string): string | null {
   const id = new URLSearchParams(search).get("project");
@@ -58,6 +64,7 @@ export function parseRoute(pathname: string): AppRoute {
 
   if (segments.length === 0) return { name: "projects" };
   if (segments[0] === "skills" && segments.length === 1) return { name: "skills" };
+  if (segments[0] === "settings" && segments.length === 1) return { name: "settings" };
   if (segments[0] !== "projects") return { name: "not-found" };
 
   const projectId = segments[1];

@@ -15,6 +15,7 @@ import {
   BanIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
+  ClockIcon,
   CopyIcon,
   SquareIcon,
   TerminalIcon,
@@ -113,13 +114,18 @@ function InstallCard({ entry }: { entry: InstallEntry }) {
         ? `Couldn't install ${job.skillId}`
         : `Installed ${job.skillId}`;
 
+  /** Terpasang di disk, tapi agent belum memuat ulang skill (chat berjalan). */
+  const awaitingActivation = job.status === "succeeded" && job.refreshed === false;
+
   const subtitle = cancelled
     ? `Nothing was added to ${job.projectName}.`
     : failed
       ? apiErrorMessage(job.error ?? "SKILL_INSTALL_FAILED")
-      : !running && job.refreshed === false
-        ? `Added to ${job.projectName}. Active after the running chat finishes.`
-        : `${running ? "into" : "Added to"} ${job.projectName}`;
+      : awaitingActivation
+        ? `Added to ${job.projectName}. Activates automatically when the running chat finishes.`
+        : `${running ? "into" : "Added to"} ${job.projectName}${
+            job.status === "succeeded" ? " · active" : ""
+          }`;
 
   return (
     <article
@@ -138,6 +144,8 @@ function InstallCard({ entry }: { entry: InstallEntry }) {
             <BanIcon className="size-5 text-muted-foreground" />
           ) : failed ? (
             <XCircleIcon className="size-5 text-destructive" />
+          ) : awaitingActivation ? (
+            <ClockIcon className="size-5 text-amber-600 dark:text-amber-400" />
           ) : (
             <CheckCircle2Icon className="size-5 text-emerald-600 dark:text-emerald-400" />
           )}
@@ -155,6 +163,12 @@ function InstallCard({ entry }: { entry: InstallEntry }) {
           >
             {subtitle}
           </p>
+          {awaitingActivation && (
+            <span className="mt-0.5 flex w-fit items-center gap-1.5 rounded-full bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-700 dark:text-amber-400">
+              <span className="size-1.5 animate-pulse rounded-full bg-current" aria-hidden />
+              Waiting for chat to finish
+            </span>
+          )}
           {pollError && <p className="text-xs text-amber-600 dark:text-amber-400">{pollError}</p>}
           {running && !cancelling && quietMs >= QUIET_HINT_MS && (
             <p className="text-xs text-amber-600 dark:text-amber-400">

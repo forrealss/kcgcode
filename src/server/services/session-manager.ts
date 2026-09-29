@@ -91,6 +91,9 @@ export type CreateSessionResult = { ok: true; session: Session } | { ok: false; 
 
 export type { SimpleResult };
 
+/** Default jeda refresh skill tertunda setelah turn terakhir selesai. */
+const SKILL_REFRESH_DELAY_MS = 1500;
+
 export interface SessionManagerOptions {
   store: SessionStore;
   servers: OpenCodeServerManager;
@@ -141,6 +144,13 @@ export interface SessionManagerOptions {
    * gateway agar Client tahu kapan tombol stop (interrupt) perlu tampil.
    */
   onTurnChange?: (sessionId: string, active: boolean) => void;
+  /**
+   * Refresh skill yang sempat tertunda (turn aktif saat skill dipasang) baru
+   * saja dijalankan otomatis untuk Project ini.
+   */
+  onSkillsRefreshed?: (projectId: string) => void;
+  /** Jeda refresh skill tertunda setelah turn terakhir selesai (ms). */
+  skillRefreshDelayMs?: number;
 }
 
 export interface SessionManager {
@@ -186,11 +196,14 @@ export interface SessionManager {
   listSkills(projectId: string): Promise<Result<SkillInfo[]>>;
   /**
    * Muat ulang daftar skill server headless Project setelah skill dipasang.
-   * Dilewati (`refreshed: false`) bila ada turn aktif di Project agar chat
-   * yang sedang berjalan tidak terganggu; skill tetap terbaca saat server
-   * dimuat ulang berikutnya. Server yang belum hidup tidak perlu di-refresh.
+   * Bila ada turn aktif di Project, refresh ditunda (`refreshed: false`) agar
+   * chat yang berjalan tidak terganggu — lalu dijalankan OTOMATIS begitu
+   * seluruh turn di Project selesai (`onSkillsRefreshed`). Server yang belum
+   * hidup tidak perlu di-refresh.
    */
   refreshSkills(projectId: string): Promise<Result<{ refreshed: boolean }>>;
+  /** Project dengan refresh skill tertunda (menunggu turn selesai). */
+  hasPendingSkillRefresh(projectId: string): boolean;
   /** Cari file project untuk autocomplete `@file` di composer. */
   findFiles(projectId: string, query: string): Promise<Result<string[]>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
@@ -241,7 +254,29 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const onTitleChange = opts.onTitleChange;
   const onDeleted = opts.onDeleted;
   const onError = opts.onError;
-  const onTurnChange = opts.onTurnChange;
+
+  /**
+   * Project yang refresh skill-nya tertunda karena ada turn aktif saat skill
+   * dipasang. Dijalankan otomatis begitu seluruh turn di Project selesai.
+   */
+  const pendingSkillRefresh = new Set<string>();
+  /** Timer refresh tertunda per Project (dibatalkan bila turn baru dimulai). */
+  const skillRefreshTimers = new Map<string, unknown>();
+  /** Jeda setelah turn terakhir selesai sebelum dispose (biarkan event penutup tuntas). */
+  const skillRefreshDelayMs = opts.skillRefreshDelayMs ?? SKILL_REFRESH_DELAY_MS;
+  const onSkillsRefreshed = opts.onSkillsRefreshed;
+
+  const onTurnChange = (sessionId: string, active: boolean): void => {
+    opts.onTurnChange?.(sessionId, active);
+    const projectId = store.getSession(sessionId);
+    if (!projectId.ok || !pendingSkillRefresh.has(projectId.data.projectId)) return;
+    if (active) {
+      // Turn baru dimulai sebelum timer jalan -> tunda lagi.
+      cancelScheduledSkillRefresh(projectId.data.projectId);
+    } else {
+      scheduleSkillRefresh(projectId.data.projectId);
+    }
+  };
 
   /**
    * Pemetaan ocSessionId (opencode) -> id Session lokal.
@@ -779,20 +814,77 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     return serverRes.data.client.listSkills(project.data.path);
   }
 
+  function projectBusy(projectId: string): boolean {
+    return store.listSessions().some((s) => s.projectId === projectId && turns.has(s.id));
+  }
+
+  function cancelScheduledSkillRefresh(projectId: string): void {
+    const t = skillRefreshTimers.get(projectId);
+    if (t !== undefined) {
+      clearTimeoutFn(t);
+      skillRefreshTimers.delete(projectId);
+    }
+  }
+
+  /** Jadwalkan refresh tertunda bila Project sudah tidak punya turn aktif. */
+  function scheduleSkillRefresh(projectId: string): void {
+    if (projectBusy(projectId)) return;
+    cancelScheduledSkillRefresh(projectId);
+    const handle = setTimeoutFn(() => {
+      skillRefreshTimers.delete(projectId);
+      void runPendingSkillRefresh(projectId);
+    }, skillRefreshDelayMs);
+    skillRefreshTimers.set(projectId, handle);
+  }
+
+  async function runPendingSkillRefresh(projectId: string): Promise<void> {
+    if (!pendingSkillRefresh.has(projectId)) return;
+    // Turn baru sempat dimulai -> tunggu turn berikutnya selesai.
+    if (projectBusy(projectId)) return;
+    const handle = servers.getServer(projectId);
+    if (!handle) {
+      // Server sudah berhenti -> skill terbaca saat server di-spawn lagi.
+      pendingSkillRefresh.delete(projectId);
+      onSkillsRefreshed?.(projectId);
+      return;
+    }
+    const res = await handle.client.disposeInstance();
+    if (!res.ok) {
+      // Tetap tertunda; dicoba lagi setelah turn berikutnya selesai.
+      console.warn(`[kcg-code] refresh skill tertunda Project ${projectId} gagal:`, res.error);
+      return;
+    }
+    pendingSkillRefresh.delete(projectId);
+    onSkillsRefreshed?.(projectId);
+  }
+
   async function refreshSkills(projectId: string): Promise<Result<{ refreshed: boolean }>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
     const handle = servers.getServer(projectId);
     // Server belum hidup -> skill terbaca saat server di-spawn nanti.
-    if (!handle) return { ok: true, data: { refreshed: true } };
-    const busy = store.listSessions().some((s) => s.projectId === projectId && turns.has(s.id));
-    if (busy) return { ok: true, data: { refreshed: false } };
+    if (!handle) {
+      pendingSkillRefresh.delete(projectId);
+      return { ok: true, data: { refreshed: true } };
+    }
+    if (projectBusy(projectId)) {
+      pendingSkillRefresh.add(projectId);
+      return { ok: true, data: { refreshed: false } };
+    }
+    cancelScheduledSkillRefresh(projectId);
     const res = await handle.client.disposeInstance();
     if (!res.ok) {
       console.warn(`[kcg-code] refresh skill Project ${projectId} gagal:`, res.error);
+      // Coba lagi otomatis setelah turn berikutnya selesai.
+      pendingSkillRefresh.add(projectId);
       return { ok: true, data: { refreshed: false } };
     }
+    pendingSkillRefresh.delete(projectId);
     return { ok: true, data: { refreshed: true } };
+  }
+
+  function hasPendingSkillRefresh(projectId: string): boolean {
+    return pendingSkillRefresh.has(projectId);
   }
 
   /**
@@ -1106,6 +1198,10 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * waktu, lalu hentikan seluruh server headless.
    */
   async function shutdown(): Promise<void> {
+    // Refresh skill tertunda tidak relevan lagi: server dihentikan, skill
+    // terbaca saat server di-spawn berikutnya.
+    for (const projectId of [...skillRefreshTimers.keys()]) cancelScheduledSkillRefresh(projectId);
+    pendingSkillRefresh.clear();
     const running = store.listSessions().filter((s) => s.status === "running");
     const results = running.map((s) => store.insertStatusHistory(s.id, "running", now()));
     await raceWithTimeout(Promise.resolve(results), shutdownBudgetMs);
@@ -1154,6 +1250,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     listMcp,
     listSkills,
     refreshSkills,
+    hasPendingSkillRefresh,
     setSessionModel,
     setSessionAgent,
     findFiles,

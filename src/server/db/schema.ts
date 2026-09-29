@@ -61,6 +61,32 @@ CREATE TABLE IF NOT EXISTS prompts (
   resolved_at INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_prompts_session_status ON prompts(session_id, status);
+
+-- Kunci aplikasi (lock screen). Satu baris (id = 1). Hash argon2id — sandi
+-- asli tidak pernah disimpan. lock_kind NULL = kunci belum diatur.
+CREATE TABLE IF NOT EXISTS auth_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  lock_kind TEXT CHECK (lock_kind IN ('pin','password')),
+  lock_hash TEXT,
+  nickname TEXT,
+  avatar_mime TEXT,
+  avatar BLOB,
+  avatar_preset TEXT,
+  avatar_version INTEGER NOT NULL DEFAULT 0,
+  auto_lock_minutes INTEGER NOT NULL DEFAULT 15,
+  updated_at INTEGER NOT NULL
+);
+
+-- Sesi login per perangkat. Yang disimpan hanya SHA-256 dari token cookie,
+-- sehingga bocornya DB tidak memberi sesi yang bisa dipakai.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  user_agent TEXT,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
 `;
 
 /** Menambah kolom bila belum ada (migrasi DB lama yang idempoten). */
@@ -119,4 +145,11 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, "sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT");
   // Custom instruction per Project (dikirim sebagai `system`), NULL = tidak ada.
   ensureColumn(db, "projects", "instructions", "ALTER TABLE projects ADD COLUMN instructions TEXT");
+  // Avatar bawaan (id preset ikon). Eksklusif dengan foto upload `avatar`.
+  ensureColumn(
+    db,
+    "auth_settings",
+    "avatar_preset",
+    "ALTER TABLE auth_settings ADD COLUMN avatar_preset TEXT",
+  );
 }

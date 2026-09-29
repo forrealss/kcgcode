@@ -12,7 +12,8 @@
  * - Navigasi utama di atas daftar: "New session" (homepage/composer chat),
  *   "Search" (command palette `SearchDialog`, juga Ctrl/⌘+K), dan "Skills"
  *   (`/skills`).
- * - Footer: toggle tema terang/gelap.
+ * - Footer: pemilih tema (Light / Dark / System), lalu profil pemilik +
+ *   tombol Settings & Lock (`SidebarAccount`).
  */
 import {
   ChevronRightIcon,
@@ -26,6 +27,7 @@ import {
 import type * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { SearchDialog } from "@/components/layout/SearchDialog";
+import { SidebarAccount } from "@/components/layout/SidebarAccount";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -183,12 +185,17 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarFooter className="border-t">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <ThemeToggle />
-          </SidebarMenuItem>
-        </SidebarMenu>
+      <SidebarFooter className="gap-3 border-t">
+        {/* Tema: Light / Dark / System */}
+        <ThemeToggle />
+        {/* Profil + Settings + Lock */}
+        <SidebarAccount
+          active={route.name === "settings"}
+          onNavigate={(path) => {
+            navigate(path);
+            if (isMobile) setOpenMobile(false);
+          }}
+        />
       </SidebarFooter>
 
       <SidebarRail />

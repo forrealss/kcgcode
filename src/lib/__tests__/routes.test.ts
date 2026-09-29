@@ -13,6 +13,7 @@ import {
   projectPath,
   projectsPath,
   sessionPath,
+  settingsPath,
   skillsPath,
 } from "../routes";
 
@@ -68,7 +69,7 @@ describe("parseRoute", () => {
   });
 
   test("path tak dikenal -> not-found", () => {
-    expect(parseRoute("/settings")).toEqual({ name: "not-found" });
+    expect(parseRoute("/preferences")).toEqual({ name: "not-found" });
     expect(parseRoute("/projects")).toEqual({ name: "not-found" });
     expect(parseRoute("/projects/p1/extra")).toEqual({ name: "not-found" });
     expect(parseRoute("/projects/p1/other/s2")).toEqual({ name: "not-found" });
@@ -100,5 +101,14 @@ describe("rute skills", () => {
 
   test("sub-path skills tidak dikenal -> not-found", () => {
     expect(parseRoute("/skills/x")).toEqual({ name: "not-found" });
+  });
+});
+
+describe("rute settings", () => {
+  test("settingsPath & parseRoute", () => {
+    expect(settingsPath()).toBe("/settings");
+    expect(parseRoute("/settings")).toEqual({ name: "settings" });
+    expect(parseRoute("/settings/")).toEqual({ name: "settings" });
+    expect(parseRoute("/settings/x")).toEqual({ name: "not-found" });
   });
 });

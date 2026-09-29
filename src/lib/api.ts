@@ -18,6 +18,15 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Dipanggil saat server membalas 401 `AUTH_REQUIRED` (sesi habis / terkunci
+ * otomatis / dicabut) — lock screen dipasang oleh `lib/auth.ts`.
+ */
+let onAuthRequired: (() => void) | null = null;
+export function setAuthRequiredHandler(fn: (() => void) | null): void {
+  onAuthRequired = fn;
+}
+
 /** Pemetaan kode error domain -> pesan ramah pengguna (design.md — Error Handling). */
 export function apiErrorMessage(code: string): string {
   // Kode dari server headless opencode membawa detail status, mis.
@@ -89,6 +98,36 @@ export function apiErrorMessage(code: string): string {
       return "The server restarted before the installation finished.";
     case "INSTALL_JOB_NOT_FOUND":
       return "That installation is no longer available.";
+    case "AUTH_REQUIRED":
+      return "Your session is locked. Unlock to continue.";
+    case "AUTH_INVALID":
+      return "Incorrect PIN or password.";
+    case "CURRENT_SECRET_INVALID":
+      return "Your current PIN or password is incorrect.";
+    case "AUTH_RATE_LIMITED":
+      return "Too many attempts. Wait a moment and try again.";
+    case "AUTH_NOT_CONFIGURED":
+      return "No lock has been set up yet.";
+    case "PIN_DIGITS_ONLY":
+      return "PIN can only contain numbers.";
+    case "PIN_LENGTH":
+      return "PIN must be 6–12 digits.";
+    case "PIN_TOO_SIMPLE":
+      return "That PIN is too easy to guess. Avoid repeated or sequential digits.";
+    case "PASSWORD_TOO_SHORT":
+      return "Password must be at least 8 characters.";
+    case "PASSWORD_TOO_LONG":
+      return "Password must be at most 128 characters.";
+    case "NICKNAME_TOO_LONG":
+      return "Nickname must be at most 40 characters.";
+    case "NICKNAME_INVALID":
+      return "Nickname contains invalid characters.";
+    case "AVATAR_PRESET_INVALID":
+      return "That avatar isn't available.";
+    case "AVATAR_TOO_LARGE":
+      return "The photo exceeds the 2 MB limit.";
+    case "ORIGIN_FORBIDDEN":
+      return "Request blocked: it didn't come from this app.";
     case "INVALID_JSON":
       return "The request JSON format is invalid.";
     case "UNSUPPORTED_IMAGE_MIME":
@@ -108,7 +147,12 @@ export function apiErrorMessage(code: string): string {
  */
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
-  if (init.body != null && !headers.has("content-type")) {
+  // FormData/Blob: browser yang menetapkan content-type (+ boundary multipart).
+  const browserTyped =
+    init.body instanceof FormData ||
+    init.body instanceof Blob ||
+    init.body instanceof URLSearchParams;
+  if (init.body != null && !browserTyped && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
   const res = await fetch(path, { ...init, headers });
@@ -120,6 +164,7 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
     } catch {
       // body bukan JSON — pakai kode HTTP default.
     }
+    if (res.status === 401 && code === "AUTH_REQUIRED") onAuthRequired?.();
     throw new ApiError(res.status, code, apiErrorMessage(code));
   }
   return res;
@@ -145,6 +190,7 @@ export async function apiUploadImage(
     } catch {
       // body bukan JSON — pakai kode HTTP default.
     }
+    if (res.status === 401 && code === "AUTH_REQUIRED") onAuthRequired?.();
     throw new ApiError(res.status, code, apiErrorMessage(code));
   }
   const parsed = (await res.json()) as {

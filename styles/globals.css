@@ -165,3 +165,25 @@
     opacity: 0.4;
   }
 }
+
+/* Getaran lock screen saat PIN/password salah. */
+@keyframes lock-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  20%,
+  60% {
+    transform: translateX(-8px);
+  }
+  40%,
+  80% {
+    transform: translateX(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[lock-shake_0\.45s\] {
+    animation: none;
+  }
+}

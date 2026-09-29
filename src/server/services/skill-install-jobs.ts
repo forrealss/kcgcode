@@ -71,6 +71,11 @@ export interface SkillInstallJobs {
   list(): InstallJob[];
   /** Batalkan job berjalan (membunuh proses CLI). `false` bila tidak berjalan. */
   cancel(jobId: string): boolean;
+  /**
+   * Refresh skill yang tertunda untuk Project baru saja berjalan otomatis:
+   * job sukses dengan `refreshed: false` ditandai aktif + dicatat di log.
+   */
+  markRefreshed(projectId: string): void;
   /** Batalkan semua job berjalan lalu tunggu selesai (shutdown server). */
   cancelAll(): Promise<void>;
   /** Menunggu job selesai (untuk test & shutdown). */
@@ -160,7 +165,7 @@ export function createSkillInstallJobs(opts: SkillInstallJobsOptions): SkillInst
       st,
       refreshed
         ? `✓ Installed ${res.data.name}.`
-        : `✓ Installed ${res.data.name}. It becomes active after the running chat finishes.`,
+        : `✓ Installed ${res.data.name}. A chat is running in this project — the agent reloads skills automatically when it finishes.`,
     );
     finish(st, "succeeded", { refreshed, installedPath: res.data.path });
   }
@@ -230,6 +235,19 @@ export function createSkillInstallJobs(opts: SkillInstallJobsOptions): SkillInst
     return true;
   }
 
+  function markRefreshed(projectId: string): void {
+    for (const st of jobs.values()) {
+      if (
+        st.job.projectId === projectId &&
+        st.job.status === "succeeded" &&
+        st.job.refreshed === false
+      ) {
+        st.job.refreshed = true;
+        push(st, `✓ Chat finished — ${st.job.skillId} is now active.`);
+      }
+    }
+  }
+
   async function cancelAll(): Promise<void> {
     const running = [...jobs.values()].filter((st) => st.job.status === "running");
     for (const st of running) st.abort.abort();
@@ -240,5 +258,5 @@ export function createSkillInstallJobs(opts: SkillInstallJobsOptions): SkillInst
     await jobs.get(jobId)?.done;
   }
 
-  return { start, get, list, cancel, cancelAll, settled };
+  return { start, get, list, cancel, markRefreshed, cancelAll, settled };
 }
