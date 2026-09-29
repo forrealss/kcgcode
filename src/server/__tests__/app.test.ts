@@ -86,6 +86,22 @@ function makeFakeClient(projectId: string): FakeClient {
         ],
       };
     },
+    async listMcp() {
+      return { ok: true, data: [{ name: "context7", status: "connected" as const, error: null }] };
+    },
+    async listSkills() {
+      return {
+        ok: true,
+        data: [
+          {
+            name: "shadcn",
+            description: "UI kit",
+            location: "/x/SKILL.md",
+            source: "project" as const,
+          },
+        ],
+      };
+    },
     async sendMessage(_sessionId, text) {
       client.sendMessageCalls.push(text);
       return {
@@ -233,7 +249,6 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     servers = makeFakeServers();
     app = createKcgServer({
       config: { sandboxRoot: root, configPath: "test" },
-      auth: { hostname: "127.0.0.1", authEnabled: false, authToken: "" },
       store,
       servers: servers.manager,
       uploadsRoot: path.join(root, "uploads"),
@@ -631,6 +646,30 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(((await sessRes.json()) as { error: string }).error).toBe("INVALID_JSON");
   });
 
+  test("GET /api/projects/:id/mcp & /skills -> daftar dari server Project; id tak dikenal -> 404", async () => {
+    mkdirSync(path.join(root, "proj-ext"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "ext-proj", path: "proj-ext" }),
+      })
+    ).json()) as { project: Project };
+
+    const mcpRes = await fetch(`${baseUrl()}/api/projects/${proj.project.id}/mcp`);
+    expect(mcpRes.status).toBe(200);
+    expect(((await mcpRes.json()) as { mcp: { name: string }[] }).mcp[0]?.name).toBe("context7");
+
+    const skillsRes = await fetch(`${baseUrl()}/api/projects/${proj.project.id}/skills`);
+    expect(skillsRes.status).toBe(200);
+    expect(((await skillsRes.json()) as { skills: { source: string }[] }).skills[0]?.source).toBe(
+      "project",
+    );
+
+    expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/mcp`)).status).toBe(404);
+    expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/skills`)).status).toBe(404);
+  });
+
   test("model: GET /api/projects/:id/models + create dengan model + PUT ganti model", async () => {
     mkdirSync(path.join(root, "proj-model"), { recursive: true });
     const proj = (await (
@@ -781,48 +820,44 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(missing.status).toBe(404);
     expect(((await missing.json()) as { error: string }).error).toBe("PROJECT_NOT_FOUND");
   });
-});
 
-describe("createKcgServer — wiring otentikasi (Req 9.2, 9.3)", () => {
-  let app: KcgServer;
-  let root: string;
+  test("PATCH instructions Project: simpan, kosongkan, validasi, 404", async () => {
+    mkdirSync(path.join(root, "proj-instr"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "instr-proj", path: "proj-instr" }),
+      })
+    ).json()) as { project: Project };
+    expect(proj.project.instructions).toBeNull();
 
-  beforeAll(() => {
-    root = mkdtempSync(path.join(tmpdir(), "kcg-auth2-"));
-    app = createKcgServer({
-      config: { sandboxRoot: root, configPath: "test" },
-      auth: { hostname: "127.0.0.1", authEnabled: true, authToken: "secret" },
-      store: openSessionStore(":memory:"),
-      servers: makeFakeServers().manager,
-      port: 0,
-    });
-  });
+    const patch = (id: string, body: unknown) =>
+      fetch(`${baseUrl()}/api/projects/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
 
-  afterAll(async () => {
-    await app.close();
-    rmSync(root, { recursive: true, force: true });
-  });
+    const saved = await patch(proj.project.id, { instructions: "  Reply in English.  " });
+    expect(saved.status).toBe(200);
+    expect(((await saved.json()) as { project: Project }).project.instructions).toBe(
+      "Reply in English.",
+    );
 
-  test("HTTP tanpa token -> 401; dengan token benar -> 200", async () => {
-    const url = `http://127.0.0.1:${app.server.port}/api/projects`;
+    // Tersimpan & ikut di GET daftar.
+    const list = (await (await fetch(`${baseUrl()}/api/projects`)).json()) as {
+      projects: Project[];
+    };
+    expect(list.projects.find((p) => p.id === proj.project.id)?.instructions).toBe(
+      "Reply in English.",
+    );
 
-    const unauth = await fetch(url);
-    expect(unauth.status).toBe(401);
+    const cleared = await patch(proj.project.id, { instructions: "   " });
+    expect(((await cleared.json()) as { project: Project }).project.instructions).toBeNull();
 
-    const ok = await fetch(url, { headers: { authorization: "Bearer secret" } });
-    expect(ok.status).toBe(200);
-
-    const wrong = await fetch(url, { headers: { authorization: "Bearer salah" } });
-    expect(wrong.status).toBe(401);
-  });
-
-  test("upgrade WS tanpa token -> close code 4401", async () => {
-    const code = await new Promise<number>((resolve, reject) => {
-      const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`);
-      ws.onclose = (event) => resolve(event.code);
-      ws.onerror = () => reject(new Error("ws error sebelum close"));
-      setTimeout(() => reject(new Error("timeout menunggu close WS")), 3000);
-    });
-    expect(code).toBe(4401);
+    expect((await patch(proj.project.id, { instructions: 42 })).status).toBe(400);
+    expect((await patch(proj.project.id, { instructions: "x".repeat(20_001) })).status).toBe(400);
+    expect((await patch("tidak-ada", { instructions: "x" })).status).toBe(404);
   });
 });

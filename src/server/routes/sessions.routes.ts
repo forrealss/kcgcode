@@ -9,18 +9,18 @@ import { errorStatus, json, parseModelBody, readJson, serverError } from "./help
 import type { ApiRouteContext } from "./types";
 
 export function sessionsRoutes(ctx: ApiRouteContext) {
-  const { sessionManager, attachments, guard } = ctx;
+  const { sessionManager, attachments } = ctx;
   return {
     // ---- Session (Requirement 1, 4) ----
     "/api/sessions": {
-      GET: guard(() => {
+      GET: () => {
         try {
           return json({ sessions: sessionManager.listSessions() });
         } catch (e) {
           return serverError(e);
         }
-      }),
-      POST: guard(async (req) => {
+      },
+      POST: async (req: Request) => {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
@@ -41,7 +41,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     "/api/sessions/:id": {
@@ -51,7 +51,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
        * mati agar data remote tidak tertinggal. Server tak bisa hidup /
        * menolak hapus -> 5xx, data lokal utuh.
        */
-      DELETE: guard(async (req: BunRequest<"/api/sessions/:id">) => {
+      DELETE: async (req: BunRequest<"/api/sessions/:id">) => {
         try {
           const res = await sessionManager.deleteSession(req.params.id);
           if (!res.ok) {
@@ -61,13 +61,13 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
       /**
        * Resume Session yang stopped/crashed (tombol "Start" di UI).
        * Memakai ocSessionId lama bila masih dikenal server headless;
        * bila tidak, sesi remote baru dibuat & disimpan ke Session.
        */
-      POST: guard(async (req: BunRequest<"/api/sessions/:id">) => {
+      POST: async (req: BunRequest<"/api/sessions/:id">) => {
         try {
           const res = await sessionManager.resumeSession(req.params.id);
           if (!res.ok) {
@@ -78,14 +78,14 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
       /**
        * Ganti model dan/atau agent (mode) pilihan Session — body
        * `{ model: {providerID, modelID} | null, agent: string | null }`.
        * `null` mengembalikan ke default opencode. Berlaku pada prompt
        * berikutnya tanpa perlu restart Session.
        */
-      PUT: guard(async (req: BunRequest<"/api/sessions/:id">) => {
+      PUT: async (req: BunRequest<"/api/sessions/:id">) => {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
@@ -113,12 +113,12 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     // ---- Cari file Project (autocomplete referensi @file di composer) ----
     "/api/sessions/:id/files": {
-      GET: guard(async (req: BunRequest<"/api/sessions/:id/files">) => {
+      GET: async (req: BunRequest<"/api/sessions/:id/files">) => {
         try {
           const url = new URL(req.url);
           const query = (url.searchParams.get("q") ?? "").slice(0, 200);
@@ -131,7 +131,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     // ---- Lampiran gambar upload dari perangkat ----
@@ -140,7 +140,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
        * Simpan gambar upload ke Attachment_Store Session. Body multipart
        * `file` (nama+mime+bytes). Ukuran & format divalidasi server.
        */
-      POST: guard(async (req: BunRequest<"/api/sessions/:id/uploads">) => {
+      POST: async (req: BunRequest<"/api/sessions/:id/uploads">) => {
         try {
           const cur = sessionManager.getSession(req.params.id);
           if (!cur.ok) return json({ error: "SESSION_NOT_FOUND" }, 404);
@@ -161,12 +161,12 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     // ---- Stop Session (abort turn + status stopped, data tetap ada) ----
     "/api/sessions/:id/stop": {
-      POST: guard((req: BunRequest<"/api/sessions/:id/stop">) => {
+      POST: (req: BunRequest<"/api/sessions/:id/stop">) => {
         try {
           const res = sessionManager.stopSession(req.params.id);
           if (!res.ok) {
@@ -176,7 +176,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
   };
 }

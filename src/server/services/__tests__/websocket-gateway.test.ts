@@ -147,6 +147,12 @@ function makeFakeSessionManager(): FakeSessionManager {
     async listAgents() {
       return { ok: false, error: "not-used" };
     },
+    async listMcp() {
+      return { ok: false, error: "not-used" };
+    },
+    async listSkills() {
+      return { ok: false, error: "not-used" };
+    },
     setSessionModel() {
       return { ok: false, error: "not-used" };
     },

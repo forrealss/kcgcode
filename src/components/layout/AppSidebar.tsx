@@ -5,9 +5,12 @@
  *   Ctrl+B). Mobile: Sheet off-canvas yang otomatis tertutup setelah memilih
  *   Session agar layar penuh kembali untuk chat.
  * - Tiap Project = Collapsible berisi daftar Session (running di atas).
- *   Hanya `MAX_VISIBLE_SESSIONS` pertama yang tampil; sisanya lewat tautan
- *   "Show all" ke halaman Project.
+ *   Klik sekali = expand/collapse; dobel klik (mouse) = buka halaman Project.
+ *   Layar sentuh & keyboard tidak punya dobel klik, jadi baris terakhir tiap
+ *   Project selalu berupa tautan ke halaman Project ("Show all (n)" bila ada
+ *   Session tersembunyi, selain itu "Project details").
  * - Tombol "New Session" di atas daftar membuka homepage (composer chat).
+ * - Footer: toggle tema terang/gelap.
  */
 import {
   ChevronRightIcon,
@@ -17,11 +20,14 @@ import {
   SquarePenIcon,
 } from "lucide-react";
 import type * as React from "react";
+import { useRef, useState } from "react";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
@@ -128,10 +134,22 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
               activeProjectId={activeProjectId}
               activeSessionId={activeSessionId}
               go={go}
+              navigate={(path) => {
+                navigate(path);
+                if (isMobile) setOpenMobile(false);
+              }}
             />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      <SidebarFooter className="border-t">
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <ThemeToggle />
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
 
       <SidebarRail />
     </Sidebar>
@@ -139,16 +157,19 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
 }
 
 type GoHandler = (path: string) => (e: React.MouseEvent<HTMLAnchorElement>) => void;
+/** Navigasi langsung (tanpa event anchor) — dipakai dobel klik Project. */
+type NavigateFn = (path: string) => void;
 
 interface SidebarBodyProps {
   data: UseSidebarDataResult;
   activeProjectId: string | null;
   activeSessionId: string | null;
   go: GoHandler;
+  navigate: NavigateFn;
 }
 
 /** Isi grup: skeleton, error, kosong, atau daftar Project. */
-function SidebarBody({ data, activeProjectId, activeSessionId, go }: SidebarBodyProps) {
+function SidebarBody({ data, activeProjectId, activeSessionId, go, navigate }: SidebarBodyProps) {
   if (data.initialLoading) {
     return (
       <SidebarMenu aria-busy="true" aria-label="Loading sessions">
@@ -196,6 +217,7 @@ function SidebarBody({ data, activeProjectId, activeSessionId, go }: SidebarBody
           activeSessionId={activeSessionId}
           forceOpen={data.query.trim() !== ""}
           go={go}
+          navigate={navigate}
         />
       ))}
     </SidebarMenu>
@@ -209,9 +231,25 @@ interface ProjectGroupProps {
   activeSessionId: string | null;
   forceOpen: boolean;
   go: GoHandler;
+  navigate: NavigateFn;
 }
 
-function ProjectGroup({ group, active, activeSessionId, forceOpen, go }: ProjectGroupProps) {
+function ProjectGroup({
+  group,
+  active,
+  activeSessionId,
+  forceOpen,
+  go,
+  navigate,
+}: ProjectGroupProps) {
+  const { isMobile } = useSidebar();
+  const [open, setOpen] = useState(forceOpen || active || group.sessions.length > 0);
+  /**
+   * Jenis pointer klik terakhir. Dobel klik hanya berlaku untuk mouse —
+   * double-tap di layar sentuh bisa ikut menghasilkan `detail === 2` dan
+   * tidak boleh tiba-tiba berpindah halaman.
+   */
+  const pointerType = useRef<string>("mouse");
   const { project, sessions, runningCount } = group;
   const visible = sessions.slice(0, MAX_VISIBLE_SESSIONS);
   // Session aktif di luar potongan tetap ditampilkan agar posisi terlihat.
@@ -221,19 +259,38 @@ function ProjectGroup({ group, active, activeSessionId, forceOpen, go }: Project
     sessions.find((s) => s.id === activeSessionId);
   const shown = activeHidden ? [...visible, activeHidden] : visible;
   const hiddenCount = sessions.length - shown.length;
+  const detailPath = projectPath(project.id);
+
+  /**
+   * Klik pertama (detail 1) dibiarkan ke Collapsible = toggle. Klik kedua
+   * dari dobel klik mouse (detail 2) membatalkan toggle-nya
+   * (`preventDefault` dihormati Radix) lalu membuka halaman Project; grup
+   * dipastikan terbuka agar Session-nya tetap terlihat.
+   */
+  const onProjectClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (e.detail >= 2 && pointerType.current === "mouse") {
+      e.preventDefault();
+      setOpen(true);
+      navigate(detailPath);
+    }
+  };
 
   return (
-    <Collapsible
-      asChild
-      defaultOpen={forceOpen || active || sessions.length > 0}
-      className="group/collapsible"
-    >
+    <Collapsible asChild open={open} onOpenChange={setOpen} className="group/collapsible">
       <SidebarMenuItem>
         <CollapsibleTrigger asChild>
           <SidebarMenuButton
             isActive={active && activeSessionId === null}
             tooltip={project.name}
             aria-label={`${project.name}, ${sessions.length} sessions`}
+            onPointerDown={(e) => {
+              pointerType.current = e.pointerType;
+            }}
+            onClick={onProjectClick}
+            // Petunjuk dobel klik hanya untuk pointer mouse (bukan HP).
+            title={isMobile ? undefined : "Click to expand · Double-click to open project"}
+            // Dobel klik tidak boleh ikut memblok (select) nama Project.
+            className="select-none"
           >
             <ChevronRightIcon className="transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
             {active ? <FolderOpenIcon /> : <FolderIcon />}
@@ -281,18 +338,27 @@ function ProjectGroup({ group, active, activeSessionId, forceOpen, go }: Project
                 </SidebarMenuSubItem>
               );
             })}
-            {hiddenCount > 0 && (
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton
-                  href={projectPath(project.id)}
-                  onClick={go(projectPath(project.id))}
-                  size="sm"
-                  className="h-8 text-muted-foreground md:h-7"
-                >
-                  <span>Show all ({sessions.length})</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
+            {/* Selalu ada: jalan ke halaman Project untuk layar sentuh &
+                keyboard (dobel klik hanya pintasan mouse). */}
+            {/* Sengaja lebih ringan dari baris Session: teks 11px, tipis,
+                redup, tanpa titik status — terbaca sebagai tautan sekunder.
+                Tinggi sentuh tetap 32px di HP. */}
+            <SidebarMenuSubItem>
+              <SidebarMenuSubButton
+                href={detailPath}
+                onClick={go(detailPath)}
+                size="sm"
+                isActive={active && activeSessionId === null}
+                aria-current={active && activeSessionId === null ? "page" : undefined}
+                className="group/detail h-8 w-fit gap-0.5 pr-1.5 text-[11px] font-normal text-muted-foreground/80 hover:text-foreground data-[active=true]:font-medium data-[active=true]:text-foreground md:h-6 [&>svg]:size-3 [&>svg]:text-current"
+              >
+                <span>{hiddenCount > 0 ? `Show all ${sessions.length}` : "Project details"}</span>
+                <ChevronRightIcon
+                  className="transition-transform group-hover/detail:translate-x-0.5"
+                  aria-hidden
+                />
+              </SidebarMenuSubButton>
+            </SidebarMenuSubItem>
           </SidebarMenuSub>
         </CollapsibleContent>
       </SidebarMenuItem>

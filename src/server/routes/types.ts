@@ -9,14 +9,8 @@ import type { AttachmentManager } from "../services/attachments";
 import type { ProjectManager } from "../services/project-manager";
 import type { SessionManager } from "../services/session-manager";
 
-/** Pembungkus handler yang menolak request tidak terotentikasi (Req 9.2/9.3). */
-export type ApiGuard = <Req extends Request, Res extends Response>(
-  handler: (req: Req) => Res | Promise<Res>,
-) => (req: Req) => Response | Promise<Response>;
-
 export interface ApiRouteContext {
   projectManager: ProjectManager;
   sessionManager: SessionManager;
   attachments: AttachmentManager;
-  guard: ApiGuard;
 }

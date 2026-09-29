@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE,
   path TEXT NOT NULL UNIQUE,
+  instructions TEXT,
   created_at INTEGER NOT NULL
 );
 
@@ -116,4 +117,6 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, "sessions", "model", "ALTER TABLE sessions ADD COLUMN model TEXT");
   // Judul Session hasil generate opencode (SSE `session.updated`), NULL = belum ada.
   ensureColumn(db, "sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT");
+  // Custom instruction per Project (dikirim sebagai `system`), NULL = tidak ada.
+  ensureColumn(db, "projects", "instructions", "ALTER TABLE projects ADD COLUMN instructions TEXT");
 }

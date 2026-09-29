@@ -43,10 +43,12 @@ import type { Result, SimpleResult } from "../result";
 import type { AttachmentManager } from "./attachments";
 import type {
   AgentOption,
+  McpServerInfo,
   ModelOption,
   OpenCodeClient,
   OpenCodeEvent,
   OpenCodeFileRef,
+  SkillInfo,
 } from "./opencode-client";
 import type { OpenCodeServerManager } from "./opencode-server";
 import {
@@ -178,6 +180,10 @@ export interface SessionManager {
    * ditampilkan di pemilih mode composer.
    */
   listAgents(projectId: string): Promise<Result<AgentOption[]>>;
+  /** Status MCP server yang terkonfigurasi untuk Project. */
+  listMcp(projectId: string): Promise<Result<McpServerInfo[]>>;
+  /** Skill yang terdaftar untuk Project (global, folder Project, bawaan). */
+  listSkills(projectId: string): Promise<Result<SkillInfo[]>>;
   /** Cari file project untuk autocomplete `@file` di composer. */
   findFiles(projectId: string, query: string): Promise<Result<string[]>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
@@ -739,6 +745,34 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
+   * Status MCP server Project — server headless di-ensure lebih dulu karena
+   * daftar MCP dibaca dari config opencode di direktori Project. Config yang
+   * berubah memicu restart (guard sama dengan `listModels`).
+   */
+  async function listMcp(projectId: string): Promise<Result<McpServerInfo[]>> {
+    const project = store.getProjectById(projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    const hasRunning = store.listProjectSessions(projectId).some((s) => s.status === "running");
+    const serverRes = await ensureServerFor(project.data.id, project.data.path, {
+      refreshConfig: !hasRunning,
+    });
+    if (!serverRes.ok) return { ok: false, error: serverRes.error };
+    return serverRes.data.client.listMcp();
+  }
+
+  /**
+   * Skill yang terdaftar untuk Project. Skill di dalam folder Project
+   * ditandai `project` sehingga UI dapat membedakannya dari skill global.
+   */
+  async function listSkills(projectId: string): Promise<Result<SkillInfo[]>> {
+    const project = store.getProjectById(projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    if (!serverRes.ok) return { ok: false, error: serverRes.error };
+    return serverRes.data.client.listSkills(project.data.path);
+  }
+
+  /**
    * Cari file di Project untuk autocomplete `@file` — index pencarian
    * milik server headless opencode (sesuai perilaku `@` di opencode TUI).
    * `query` kosong juga valid (mengembalikan daftar awal).
@@ -918,6 +952,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     // yang sudah terkumpul tetap disimpan saat dipicu.
     turns.begin(sessionId, turnIdleTimeoutMs, friendlySendError("TURN_TIMEOUT"));
 
+    // Custom instruction Project dibaca saat kirim (bukan saat Session dibuat)
+    // agar perubahan instruksi langsung berlaku di prompt berikutnya.
+    const projectRes = store.getProjectById(cur.data.projectId);
+    const system = projectRes.ok ? (projectRes.data.instructions ?? null) : null;
+
     enqueue(sessionId, async () => {
       try {
         // `prompt_async` balas 204 begitu prompt diterima; hasil turn tiba
@@ -928,6 +967,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           cur.data.model,
           promptFiles,
           cur.data.agent,
+          system,
         );
         if (!res.ok) {
           turns.fail(sessionId, friendlySendError(res.error ?? "OC_PROMPT_ASYNC_FAILED"));
@@ -1088,6 +1128,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     releaseProject,
     listModels,
     listAgents,
+    listMcp,
+    listSkills,
     setSessionModel,
     setSessionAgent,
     findFiles,

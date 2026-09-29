@@ -10,11 +10,11 @@ import { errorStatus, json, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 export function uploadsRoutes(ctx: ApiRouteContext) {
-  const { attachments, guard } = ctx;
+  const { attachments } = ctx;
   return {
     // ---- Muat gambar upload (render bubble & reattach) ----
     "/api/uploads/:sessionId/:id": {
-      GET: guard((req: BunRequest<"/api/uploads/:sessionId/:id">) => {
+      GET: (req: BunRequest<"/api/uploads/:sessionId/:id">) => {
         try {
           const res = attachments.read(req.params.sessionId, req.params.id);
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
@@ -26,16 +26,16 @@ export function uploadsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
       /** Hapus lampiran yang belum terkirim (pengguna membatalkan). */
-      DELETE: guard((req: BunRequest<"/api/uploads/:sessionId/:id">) => {
+      DELETE: (req: BunRequest<"/api/uploads/:sessionId/:id">) => {
         try {
           attachments.remove(req.params.sessionId, req.params.id);
           return json({ ok: true });
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
   };
 }

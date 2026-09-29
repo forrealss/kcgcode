@@ -4,19 +4,16 @@
  * `createKcgServer()` merakit seluruh komponen dan menjalankan
  * `Bun.serve({ hostname, port, routes, websocket })`. Mengikuti struktur
  * kcgcode: handler HTTP dikelompokkan per fitur di `routes/*.routes.ts`
- * (di-assemble di sini), otentikasi di `middleware/auth.middleware.ts`,
- * dan domain logic di `services/`.
+ * (di-assemble di sini) dan domain logic di `services/`.
  * - Routes HTTP `/api/projects`, `/api/fs`, `/api/sessions`, upload lampiran
  *   (tabel rute terpisah) + upgrade WebSocket di `/ws`.
- * - `auth.middleware.ts` dipasang di setiap route API dan upgrade WS
- *   (Req 9.2, 9.3); asset statis PWA (manifest/sw/logo) dan shell HTML
- *   dibiarkan publik agar aplikasi dapat dimuat — kontrol CLI_Agent hanya
- *   lewat `/api/*` dan `/ws`.
+ * - Tanpa otentikasi: server bind ke `127.0.0.1` secara default (lihat
+ *   `host.ts`), jadi hanya dapat diakses dari mesin ini.
  * - `reconcileOnStartup()` dipanggil sebelum `Bun.serve` menerima koneksi
  *   (Requirement 2.4).
  *
  * Dipisah dari `src/index.ts` (entry) agar dapat diuji (task 20.2) dengan
- * injeksi `config`, `auth`, `store`, dan `spawn` mock — tanpa mengimpor HTML.
+ * injeksi `config`, `store`, dan `spawn` mock — tanpa mengimpor HTML.
  */
 
 import path from "node:path";
@@ -24,12 +21,7 @@ import { type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
 import { type AppConfig, loadConfig } from "../config";
 import { openSessionStore, type SessionStore } from "../db";
 import { PUBLIC_DIR, resolveEffectiveUploadsDir } from "../paths";
-import {
-  type AuthConfig,
-  createApiGuard,
-  loadAuthConfig,
-  WS_AUTH_CLOSE_CODE,
-} from "./middleware/auth.middleware";
+import { resolveHostname } from "./host";
 import { projectsRoutes } from "./routes/projects.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
 import type { ApiRouteContext } from "./routes/types";
@@ -48,14 +40,11 @@ import {
 } from "./services/websocket-gateway";
 import { bunWsSubscriber, dispatchClientMessage } from "./services/ws-transport";
 
-/** Data per-koneksi WebSocket (hasil otentikasi upgrade, Req 9.3). */
-interface WsData {
-  authed: boolean;
-}
+/** Data per-koneksi WebSocket (belum ada state per koneksi). */
+type WsData = Record<string, never>;
 
 export interface KcgServerOptions {
   config?: AppConfig;
-  auth?: AuthConfig;
   store?: SessionStore;
   /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
   servers?: OpenCodeServerManager;
@@ -108,9 +97,8 @@ async function staticFile(filePath: string, contentType: string): Promise<Respon
  */
 export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const config = opts.config ?? loadConfig();
-  const auth = opts.auth ?? loadAuthConfig();
   const store = opts.store ?? openSessionStore();
-  const hostname = opts.hostname ?? auth.hostname;
+  const hostname = opts.hostname ?? resolveHostname();
   const port = opts.port ?? resolvePort();
   // Direktori lampiran gambar. Absolut sejak awal agar URL `file:///…`
   // valid. Default sesuai mode runtime (dev: ./data/uploads, cli: ~/.kcgcode/...).
@@ -145,9 +133,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // Requirement 2.4: tandai Session "running" tanpa proses sebelum menerima koneksi.
   sessionManager.reconcileOnStartup();
 
-  // Middleware auth + konteks bersama untuk tabel rute API.
-  const { authOk, guard } = createApiGuard(auth);
-  const routeCtx: ApiRouteContext = { projectManager, sessionManager, attachments, guard };
+  // Konteks bersama untuk tabel rute API.
+  const routeCtx: ApiRouteContext = { projectManager, sessionManager, attachments };
 
   // Subscriber per koneksi (identitas stabil untuk Map gateway).
   const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
@@ -167,9 +154,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       ...sessionsRoutes(routeCtx),
       ...uploadsRoutes(routeCtx),
 
-      // ---- WebSocket_Gateway upgrade (Requirement 4, 9.3) ----
+      // ---- WebSocket_Gateway upgrade (Requirement 4) ----
       "/ws": (req: Request, server: Server<WsData>) => {
-        const upgraded = server.upgrade(req, { data: { authed: authOk(req) } });
+        const upgraded = server.upgrade(req, { data: {} });
         if (!upgraded) return new Response("Upgrade WebSocket gagal", { status: 400 });
         return undefined;
       },
@@ -187,13 +174,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       data: {} as WsData,
       open(ws) {
         wsSubs.set(ws, bunWsSubscriber(ws));
-        // Requirement 9.3: upgrade tanpa kredensial valid -> tutup dgn close code 4401.
-        if (!ws.data.authed) {
-          ws.close(WS_AUTH_CLOSE_CODE, "Unauthorized");
-        }
       },
       message(ws, message) {
-        // Socket yang tak terdaftar (auth gagal / sudah ditutup) diabaikan.
+        // Socket yang tak terdaftar (sudah ditutup) diabaikan.
         const sub = wsSubs.get(ws);
         if (!sub) return;
         dispatchClientMessage(gateway, sub, String(message));

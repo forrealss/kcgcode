@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
-import { ApiError, apiFetch, getAuthToken } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
 import { setPendingPrompt, takePendingPrompt } from "@/lib/pending-prompt";
 import { groupPrompts } from "@/lib/prompts";
@@ -196,7 +196,6 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     send,
     disconnect,
   } = useWebSocket({
-    token: getAuthToken() ?? undefined,
     onMessage,
   });
 

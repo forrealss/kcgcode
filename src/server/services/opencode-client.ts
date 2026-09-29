@@ -43,6 +43,96 @@ export interface AgentOption {
   description: string | null;
 }
 
+/** Status koneksi MCP server — mengikuti skema `MCPStatus` opencode. */
+export type McpStatus =
+  | "connected"
+  | "disabled"
+  | "failed"
+  | "needs_auth"
+  | "needs_client_registration"
+  | "unknown";
+
+/** Satu MCP server Project — hasil `GET /mcp` server headless. */
+export interface McpServerInfo {
+  name: string;
+  status: McpStatus;
+  /** Pesan error bila `status === "failed"`. */
+  error: string | null;
+}
+
+/** Asal sebuah skill: bawaan opencode, folder Project, atau global user. */
+export type SkillSource = "builtin" | "project" | "global";
+
+/** Satu skill yang terdaftar — hasil `GET /skill` (tanpa isi `content`). */
+export interface SkillInfo {
+  name: string;
+  description: string | null;
+  /** Path SKILL.md; null untuk skill bawaan. */
+  location: string | null;
+  source: SkillSource;
+}
+
+const MCP_STATUSES: readonly McpStatus[] = [
+  "connected",
+  "disabled",
+  "failed",
+  "needs_auth",
+  "needs_client_registration",
+];
+
+/**
+ * Flatten respons `GET /mcp` (`{ [name]: { status, error? } }`) menjadi
+ * daftar terurut nama. Status tak dikenal dipetakan ke `unknown`.
+ */
+export function flattenMcp(payload: unknown): McpServerInfo[] {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return [];
+  const out: McpServerInfo[] = [];
+  for (const [name, raw] of Object.entries(payload as Record<string, unknown>)) {
+    if (name === "") continue;
+    const v = (typeof raw === "object" && raw !== null ? raw : {}) as {
+      status?: unknown;
+      error?: unknown;
+    };
+    const status = MCP_STATUSES.includes(v.status as McpStatus)
+      ? (v.status as McpStatus)
+      : "unknown";
+    out.push({
+      name,
+      status,
+      error: typeof v.error === "string" && v.error !== "" ? v.error : null,
+    });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Flatten respons `GET /skill` menjadi daftar ringkas. `content` (isi
+ * SKILL.md, bisa panjang) sengaja dibuang. `projectPath` dipakai untuk
+ * mengklasifikasi asal skill: di dalam direktori Project -> `project`,
+ * `<built-in>` -> `builtin`, selain itu -> `global`.
+ */
+export function flattenSkills(payload: unknown, projectPath?: string): SkillInfo[] {
+  if (!Array.isArray(payload)) return [];
+  const root = projectPath ? projectPath.replace(/\/+$/, "") : null;
+  const out: SkillInfo[] = [];
+  for (const raw of payload) {
+    if (typeof raw !== "object" || raw === null) continue;
+    const s = raw as { name?: unknown; description?: unknown; location?: unknown };
+    if (typeof s.name !== "string" || s.name === "") continue;
+    const loc = typeof s.location === "string" && s.location !== "" ? s.location : null;
+    let source: SkillSource = "global";
+    if (loc === null || loc === "<built-in>") source = "builtin";
+    else if (root && (loc === root || loc.startsWith(`${root}/`))) source = "project";
+    out.push({
+      name: s.name,
+      description: typeof s.description === "string" && s.description !== "" ? s.description : null,
+      location: source === "builtin" ? null : loc,
+      source,
+    });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 /**
  * Flatten respons `GET /agent` menjadi opsi siap pakai UI: hanya agent
  * primary/all (subagent murni tidak bisa dipakai sebagai mode percakapan).
@@ -142,6 +232,13 @@ export interface OpenCodeClient {
    * subagent murni tidak bisa dipakai sebagai mode percakapan.
    */
   listAgents(): Promise<Result<AgentOption[]>>;
+  /** Status MCP server yang terkonfigurasi (`GET /mcp`). */
+  listMcp(): Promise<Result<McpServerInfo[]>>;
+  /**
+   * Skill yang terdaftar (`GET /skill`). `projectPath` untuk menandai skill
+   * yang berasal dari folder Project.
+   */
+  listSkills(projectPath?: string): Promise<Result<SkillInfo[]>>;
   /**
    * Hapus Session di server headless (`DELETE /session/{id}`) beserta
    * seluruh riwayat pesannya di sisi opencode.
@@ -166,6 +263,8 @@ export interface OpenCodeClient {
     model?: SessionModel | null,
     files?: OpenCodeFileRef[],
     agent?: string | null,
+    /** Instruksi tambahan (custom instruction Project) -> body `system`. */
+    system?: string | null,
   ): Promise<Result<null>>;
   /** Cari file project untuk autocomplete `@file` (path relatif). */
   findFiles(query: string): Promise<Result<string[]>>;
@@ -285,6 +384,7 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     model?: SessionModel | null,
     files: OpenCodeFileRef[] = [],
     agent?: string | null,
+    system?: string | null,
   ): Promise<Result<null>> {
     try {
       // Parts prompt: teks bebas + satu part `file` per referensi (teks/gambar).
@@ -299,6 +399,9 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
       // `agent` opsional (mis. build/plan atau agent kustom user); tanpa
       // field ini opencode memakai agent default-nya.
       if (agent) body.agent = agent;
+      // `system` opsional: custom instruction Project, ditambahkan opencode
+      // ke system prompt untuk turn ini (skema sama dengan POST /message).
+      if (system) body.system = system;
       const { status } = await requestJson(
         baseUrl,
         "POST",
@@ -358,6 +461,38 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
       return { ok: true, data: flattenAgents(json) };
     } catch (e) {
       return errResult(`OC_LIST_AGENTS_FAILED: ${(e as Error).message}`);
+    }
+  }
+
+  async function listMcp(): Promise<Result<McpServerInfo[]>> {
+    try {
+      const { status, json } = await requestJson(
+        baseUrl,
+        "GET",
+        "/mcp",
+        undefined,
+        AbortSignal.timeout(10_000),
+      );
+      if (status !== 200) return errResult(`OC_LIST_MCP_FAILED(${status})`);
+      return { ok: true, data: flattenMcp(json) };
+    } catch (e) {
+      return errResult(`OC_LIST_MCP_FAILED: ${(e as Error).message}`);
+    }
+  }
+
+  async function listSkills(projectPath?: string): Promise<Result<SkillInfo[]>> {
+    try {
+      const { status, json } = await requestJson(
+        baseUrl,
+        "GET",
+        "/skill",
+        undefined,
+        AbortSignal.timeout(10_000),
+      );
+      if (status !== 200) return errResult(`OC_LIST_SKILLS_FAILED(${status})`);
+      return { ok: true, data: flattenSkills(json, projectPath) };
+    } catch (e) {
+      return errResult(`OC_LIST_SKILLS_FAILED: ${(e as Error).message}`);
     }
   }
 
@@ -445,6 +580,8 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     deleteSession,
     sendMessage,
     promptAsync,
+    listMcp,
+    listSkills,
     findFiles,
     replyPermission,
     replyQuestion,

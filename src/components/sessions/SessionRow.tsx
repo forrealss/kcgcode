@@ -1,19 +1,12 @@
 /**
  * Satu baris Session di daftar (`SessionList`).
  *
- * Badan baris adalah tombol buka (target sentuh lebar), aksi sekunder
- * dikumpulkan di menu "..." — di layar HP deretan tombol ikon kecil sulit
- * ditekan dan mudah salah sentuh.
+ * Baris polos tanpa kotak: titik status, judul, meta tipis, waktu di kanan.
+ * Badan baris adalah tombol buka (target sentuh lebar); aksi sekunder ada di
+ * menu "..." — di perangkat dengan pointer halus (mouse) menu baru muncul
+ * saat hover/fokus agar daftar tetap bersih, di layar sentuh selalu tampil.
  */
-import {
-  BotIcon,
-  ChevronRightIcon,
-  MoreVerticalIcon,
-  PlayIcon,
-  SquareIcon,
-  Trash2Icon,
-} from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { MoreHorizontalIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -29,16 +22,7 @@ import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL } from "@/lib/session-status";
 import { describeSessionModel } from "@/lib/session-summary";
 import { displaySessionTitle } from "@/lib/session-title";
 import { cn } from "@/lib/utils";
-import type { Session, SessionStatus } from "@/types";
-
-function StatusBadge({ status }: { status: SessionStatus }) {
-  return (
-    <Badge variant="outline" className="gap-1.5 font-normal">
-      <span className={cn("size-1.5 rounded-full", SESSION_STATUS_DOT[status])} />
-      {SESSION_STATUS_LABEL[status]}
-    </Badge>
-  );
-}
+import type { Session } from "@/types";
 
 export interface SessionRowProps {
   session: Session;
@@ -50,39 +34,52 @@ export interface SessionRowProps {
   onDelete: () => void;
 }
 
+/** Titik status; running diberi denyut halus. */
+function StatusDot({ session, busy }: { session: Session; busy: boolean }) {
+  if (busy) return <Spinner className="size-3 text-muted-foreground" />;
+  const running = session.status === "running";
+  return (
+    <span className="relative flex size-2" aria-hidden>
+      {running && (
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-50" />
+      )}
+      <span
+        className={cn(
+          "relative inline-flex size-2 rounded-full",
+          SESSION_STATUS_DOT[session.status],
+        )}
+      />
+    </span>
+  );
+}
+
 export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }: SessionRowProps) {
   const running = session.status === "running";
   const title = displaySessionTitle(session.title);
 
   return (
-    <div className="group flex items-center gap-1 rounded-xl pr-1 transition-colors focus-within:bg-muted/60 hover:bg-muted/60">
+    <div className="group relative flex items-center rounded-lg transition-colors hover:bg-muted/50 has-focus-visible:bg-muted/50 has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50">
       <button
         type="button"
         onClick={onOpen}
         disabled={busy}
-        className="flex min-w-0 flex-1 items-center gap-3 rounded-xl px-2 py-2.5 text-left focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-60 sm:px-3"
-        aria-label={`Open session ${title}`}
+        className="flex min-w-0 flex-1 items-center gap-3.5 rounded-lg px-3 py-3 text-left focus-visible:outline-none disabled:opacity-60"
+        aria-label={`Open session ${title}, ${SESSION_STATUS_LABEL[session.status]}`}
       >
-        <span className="relative flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground group-hover:bg-background">
-          {busy ? <Spinner className="size-4" /> : <BotIcon className="size-4" />}
-          {running && !busy && (
-            <span
-              className="absolute -top-0.5 -right-0.5 size-2.5 rounded-full bg-emerald-500 ring-2 ring-background"
-              aria-hidden
-            />
-          )}
+        <span className="flex size-3 shrink-0 items-center justify-center">
+          <StatusDot session={session} busy={busy} />
         </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium sm:text-base">{title}</span>
-            <StatusBadge status={session.status} />
-          </span>
-          <span className="truncate text-xs text-muted-foreground sm:text-sm">
-            {session.agentType} · {describeSessionModel(session)} ·{" "}
-            {formatRelativeTime(session.updatedAt)}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-[15px] font-medium leading-snug">{title}</span>
+          <span className="truncate text-xs text-muted-foreground">
+            {session.agentType}
+            <span className="mx-1.5 opacity-50">/</span>
+            {describeSessionModel(session)}
           </span>
         </span>
-        <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+        <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatRelativeTime(session.updatedAt)}
+        </span>
       </button>
 
       <DropdownMenu>
@@ -90,12 +87,12 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
           <Button
             type="button"
             variant="ghost"
-            size="icon"
+            size="icon-sm"
             disabled={busy}
             aria-label={`Session actions ${title}`}
-            className="shrink-0"
+            className="mr-1.5 shrink-0 rounded-full text-muted-foreground transition-opacity pointer-fine:opacity-0 pointer-fine:group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
           >
-            <MoreVerticalIcon />
+            <MoreHorizontalIcon />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
@@ -124,15 +121,15 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
 /** Placeholder daftar Session saat memuat — menjaga tinggi konten. */
 export function SessionListSkeleton() {
   return (
-    <div className="flex flex-col gap-2" aria-hidden>
-      {[0, 1].map((i) => (
-        <div key={i} className="flex items-center gap-3 px-2 py-2.5 sm:px-3">
-          <Skeleton className="size-9 shrink-0 rounded-lg" />
+    <div className="flex flex-col" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <div key={i} className="flex items-center gap-3.5 py-3">
+          <Skeleton className="size-2 shrink-0 rounded-full" />
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <Skeleton className="h-5 w-28" />
-            <Skeleton className="h-4 w-40" />
+            <Skeleton className="h-4 w-48" />
+            <Skeleton className="h-3 w-32" />
           </div>
-          <Skeleton className="size-8 shrink-0 rounded-md" />
+          <Skeleton className="h-3 w-16" />
         </div>
       ))}
     </div>

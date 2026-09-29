@@ -70,6 +70,8 @@ interface FakeClient extends OpenCodeClient {
   availableAgents: AgentOption[];
   /** Agent yang diterima tiap panggilan promptAsync (null = default). */
   promptAgents: (string | null)[];
+  /** `system` (custom instruction Project) tiap promptAsync (null = tanpa). */
+  promptSystems: (string | null)[];
   /** Antrean jeda simulasi sebelum tiap sendMessage selesai (ms) — uji race. */
   sendDelays?: number[];
   emit(ev: OpenCodeEvent): void;
@@ -82,6 +84,7 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     calls,
     eventCb: null,
     promptFilesCalls: [],
+    promptSystems: [],
     sendMessageResult: { ok: true },
     promptAsyncResult: { ok: true },
     createSessionResult: { ok: true, id: "ses_remote1" },
@@ -137,6 +140,23 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
       calls.push("listAgents");
       return { ok: true, data: client.availableAgents };
     },
+    async listMcp() {
+      calls.push("listMcp");
+      return {
+        ok: true,
+        data: [
+          { name: "context7", status: "connected", error: null },
+          { name: "broken", status: "failed", error: "spawn ENOENT" },
+        ],
+      };
+    },
+    async listSkills(projectPath) {
+      calls.push(`listSkills:${projectPath ?? ""}`);
+      return {
+        ok: true,
+        data: [{ name: "shadcn", description: "UI", location: null, source: "project" }],
+      };
+    },
     async findFiles(query) {
       calls.push(`findFiles:${query}`);
       if (!client.findFilesResult.ok) {
@@ -159,8 +179,9 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         },
       };
     },
-    async promptAsync(_sessionId, text, model, files, agent) {
+    async promptAsync(_sessionId, text, model, files, agent, system) {
       calls.push(`promptAsync:${text}`);
+      client.promptSystems.push(system ?? null);
       client.promptFilesCalls.push(files ?? []);
       client.promptModels.push(model ? `${model.providerID}/${model.modelID}` : null);
       client.promptAgents.push(agent ?? null);
@@ -1917,6 +1938,28 @@ test("createSession + sendFreeTextInput meneruskan agent tersimpan ke promptAsyn
   }
 });
 
+test("sendFreeTextInput meneruskan custom instruction Project sebagai system", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h, "opencode");
+
+    // Tanpa instruksi -> system null.
+    await h.sm.sendFreeTextInput(sid, "halo");
+    await flush();
+
+    // Instruksi diubah setelah Session dibuat -> langsung berlaku.
+    expect(
+      h.store.updateProjectInstructions(h.project.id, "Selalu jawab dalam Bahasa Indonesia.").ok,
+    ).toBe(true);
+    await h.sm.sendFreeTextInput(sid, "lanjut");
+    await flush();
+
+    expect(clientOf(h).promptSystems).toEqual([null, "Selalu jawab dalam Bahasa Indonesia."]);
+  } finally {
+    h.close();
+  }
+});
+
 test("setSessionAgent: session tidak ada / nama kosong -> ditolak", async () => {
   const h = freshHarness();
   try {
@@ -1935,6 +1978,23 @@ test("listAgents -> daftar agent server headless", async () => {
     const res = await h.sm.listAgents("p1");
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.map((a) => a.name)).toEqual(["build", "plan"]);
+  } finally {
+    h.close();
+  }
+});
+
+test("listMcp / listSkills -> diteruskan ke server Project (skills menerima path Project)", async () => {
+  const h = freshHarness();
+  try {
+    const mcp = await h.sm.listMcp("p1");
+    expect(mcp.ok && mcp.data.map((m) => m.status)).toEqual(["connected", "failed"]);
+
+    const skills = await h.sm.listSkills("p1");
+    expect(skills.ok && skills.data[0]?.name).toBe("shadcn");
+    expect(clientOf(h).calls).toContain(`listSkills:${h.project.path}`);
+
+    expect((await h.sm.listMcp("nope")).ok).toBe(false);
+    expect((await h.sm.listSkills("nope")).ok).toBe(false);
   } finally {
     h.close();
   }

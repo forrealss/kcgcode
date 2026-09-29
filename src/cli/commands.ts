@@ -15,7 +15,7 @@ import {
 } from "../paths";
 import { isCliMode } from "../runtime";
 import { createKcgServer } from "../server/app";
-import { loadAuthConfig } from "../server/middleware/auth.middleware";
+import { resolveHostname } from "../server/host";
 import type { CliArgs } from "./args";
 import { openBrowser, startDashboard } from "./dashboard";
 import { c, panel, row, symbols } from "./theme";
@@ -46,13 +46,11 @@ export async function runStart(args: CliArgs): Promise<void> {
   const cfg = resolveConfig();
   if (!cfg.ok) failConfig(cfg.error);
 
-  const auth = loadAuthConfig();
   const port = args.port ?? Number(process.env.KCG_PORT ?? 3000);
-  const hostname = args.host ?? auth.hostname;
+  const hostname = args.host ?? resolveHostname();
 
   const app = createKcgServer({
     config: cfg.data,
-    auth,
     spa,
     spaPaths: SPA_PATHS,
     port,

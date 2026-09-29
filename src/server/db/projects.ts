@@ -10,8 +10,9 @@ import { errResult, mapProject, mapSession, type ProjectRow, type SessionRow } f
 export function createProjectRepo(db: Database) {
   const q = {
     insertProject: db.query(
-      "INSERT INTO projects (id, name, path, created_at) VALUES (?, ?, ?, ?)",
+      "INSERT INTO projects (id, name, path, instructions, created_at) VALUES (?, ?, ?, ?, ?)",
     ),
+    updateInstructions: db.query("UPDATE projects SET instructions = ? WHERE id = ?"),
     getProjectById: db.query("SELECT * FROM projects WHERE id = ?"),
     getProjectByName: db.query("SELECT * FROM projects WHERE name = ?"),
     getProjectByPath: db.query("SELECT * FROM projects WHERE path = ?"),
@@ -25,7 +26,13 @@ export function createProjectRepo(db: Database) {
   return {
     insertProject(project: Project): Result<Project> {
       try {
-        q.insertProject.run(project.id, project.name, project.path, project.createdAt);
+        q.insertProject.run(
+          project.id,
+          project.name,
+          project.path,
+          project.instructions ?? null,
+          project.createdAt,
+        );
         return { ok: true, data: project };
       } catch (e) {
         const msg = (e as Error).message;
@@ -51,6 +58,19 @@ export function createProjectRepo(db: Database) {
       const row = q.getProjectByPath.get(filePath) as ProjectRow | null;
       if (!row) return errResult("PROJECT_NOT_FOUND");
       return { ok: true, data: mapProject(row) };
+    },
+
+    /** Simpan custom instruction Project; `null` = hapus instruksi. */
+    updateProjectInstructions(projectId: string, instructions: string | null): Result<Project> {
+      try {
+        const res = q.updateInstructions.run(instructions, projectId);
+        if (res.changes === 0) return errResult("PROJECT_NOT_FOUND");
+        const row = q.getProjectById.get(projectId) as ProjectRow | null;
+        if (!row) return errResult("PROJECT_NOT_FOUND");
+        return { ok: true, data: mapProject(row) };
+      } catch (e) {
+        return errResult(`PROJECT_WRITE_FAILED: ${(e as Error).message}`);
+      }
     },
 
     listProjects(): Project[] {

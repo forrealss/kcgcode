@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { ApiError, apiFetch, getAuthToken } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { onDataChanged } from "@/lib/data-events";
 import { displaySessionTitle } from "@/lib/session-title";
 import {
@@ -74,7 +74,6 @@ export function useSidebarData(pathname: string): UseSidebarDataResult {
   useEffect(() => onDataChanged(() => void refresh()), [refresh]);
 
   const ws = useWebSocket({
-    token: getAuthToken() ?? undefined,
     onMessage: (msg) => {
       if (msg.type === "session_title") {
         setSessions((prev) =>

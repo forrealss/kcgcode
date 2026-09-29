@@ -1,25 +1,9 @@
 /**
  * Helper fetch API KCG Code (task 24).
  *
- * - Menambahkan header `Authorization: Bearer <token>` bila token tersimpan
- *   di `localStorage["kcg-auth-token"]` (Requirement 9.2).
  * - Kesalahan HTTP dilempar sebagai `ApiError` dengan `status` dan `code`
  *   (dari body `{ error }`) agar komponen menampilkan pesan yang tepat.
- * - Token yang sama dipakai untuk upgrade WebSocket via `?token=`
- *   (Requirement 9.3, lihat `useWebSocket.ts`).
  */
-export const AUTH_TOKEN_KEY = "kcg-auth-token";
-
-export function getAuthToken(): string | null {
-  if (typeof localStorage === "undefined") return null;
-  return localStorage.getItem(AUTH_TOKEN_KEY);
-}
-
-export function setAuthToken(token: string): void {
-  if (typeof localStorage === "undefined") return;
-  if (token.trim() === "") localStorage.removeItem(AUTH_TOKEN_KEY);
-  else localStorage.setItem(AUTH_TOKEN_KEY, token.trim());
-}
 
 /** Error hasil permintaan API dengan status HTTP dan kode domain. */
 export class ApiError extends Error {
@@ -78,6 +62,10 @@ export function apiErrorMessage(code: string): string {
       return "The session is already running.";
     case "MODEL_NOT_FOUND":
       return "The model is not available on this project's opencode server.";
+    case "INVALID_INSTRUCTIONS":
+      return "Instructions must be text.";
+    case "INSTRUCTIONS_TOO_LONG":
+      return "Instructions are too long (max 20,000 characters).";
     case "INVALID_JSON":
       return "The request JSON format is invalid.";
     case "UNSUPPORTED_IMAGE_MIME":
@@ -86,10 +74,6 @@ export function apiErrorMessage(code: string): string {
       return "The image exceeds the 20 MiB limit.";
     case "ATTACHMENT_NOT_FOUND":
       return "The image attachment was not found (it may have been deleted).";
-    case "AUTH_FAILED":
-      return "Authentication failed. Check your token.";
-    case "HTTP_401":
-      return "Authentication required (401).";
     default:
       return `Something went wrong (${code}).`;
   }
@@ -104,9 +88,6 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   if (init.body != null && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
   }
-  const token = getAuthToken();
-  if (token) headers.set("authorization", `Bearer ${token}`);
-
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     let code = `HTTP_${res.status}`;
@@ -124,20 +105,15 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 /**
  * Upload satu file (gambar) ke endpoint lampiran Session.
  * `fetch` multipart mengelola boundary-nya sendiri, jadi content-type TIDAK
- * di-set manual (header `Authorization` tetap ditambahkan).
+ * di-set manual.
  */
 export async function apiUploadImage(
   path: string,
   file: File,
 ): Promise<{ id: string; filename: string; mime: string; size: number }> {
-  const token = getAuthToken();
   const body = new FormData();
   body.append("file", file);
-  const res = await fetch(path, {
-    method: "POST",
-    headers: token ? { authorization: `Bearer ${token}` } : undefined,
-    body,
-  });
+  const res = await fetch(path, { method: "POST", body });
   if (!res.ok) {
     let code = `HTTP_${res.status}`;
     try {
@@ -157,13 +133,7 @@ export async function apiUploadImage(
   return parsed.upload;
 }
 
-/**
- * URL HTTP untuk memuat gambar lampiran di `<img>`.
- * Saat otentikasi aktif, token dikirim via query (`?token=`) karena `<img>`
- * tidak dapat menyertakan header Authorization (pola sama dengan WS).
- */
+/** URL HTTP untuk memuat gambar lampiran di `<img>`. */
 export function attachmentUrl(sessionId: string, attachmentId: string): string {
-  const base = `/api/uploads/${encodeURIComponent(sessionId)}/${encodeURIComponent(attachmentId)}`;
-  const token = getAuthToken();
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+  return `/api/uploads/${encodeURIComponent(sessionId)}/${encodeURIComponent(attachmentId)}`;
 }

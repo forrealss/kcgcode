@@ -80,6 +80,8 @@ export interface SessionStore {
   getProjectByName(name: string): Result<Project>;
   getProjectByPath(filePath: string): Result<Project>;
   listProjects(): Project[];
+  /** Simpan custom instruction Project; `null` = hapus instruksi. */
+  updateProjectInstructions(projectId: string, instructions: string | null): Result<Project>;
   /** Session milik satu Project (dipakai sebelum menghapus Project). */
   listProjectSessions(projectId: string): Session[];
   /**

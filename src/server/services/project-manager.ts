@@ -19,6 +19,11 @@ export interface ProjectManager {
   listProjects(): Project[];
   getProject(projectId: string): Result<Project>;
   /**
+   * Simpan custom instruction Project. Teks di-trim; kosong -> `null`
+   * (hapus). Menolak teks di atas `MAX_PROJECT_INSTRUCTIONS_LENGTH`.
+   */
+  updateInstructions(projectId: string, instructions: string): Result<Project>;
+  /**
    * Hapus registrasi Project dari Session_Store. Direktori kerja di
    * filesystem TIDAK disentuh — Project hanyalah pendaftaran sebuah folder,
    * jadi menghapusnya tidak boleh menghapus kode/pekerjaan pengguna.
@@ -26,6 +31,9 @@ export interface ProjectManager {
    */
   deleteProject(projectId: string): SimpleResult;
 }
+
+/** Batas panjang custom instruction Project (karakter). */
+export const MAX_PROJECT_INSTRUCTIONS_LENGTH = 20_000;
 
 /** Peta hasil validasi sandbox -> pesan error publik. */
 function sandboxError(reason: string): string {
@@ -82,6 +90,7 @@ export function createProjectManager(sandboxRoot: string, store: SessionStore): 
       name: trimmed,
       path: realPath,
       createdAt: Date.now(),
+      instructions: null,
     };
     const inserted = store.insertProject(project);
     if (!inserted.ok) return inserted;
@@ -96,6 +105,14 @@ export function createProjectManager(sandboxRoot: string, store: SessionStore): 
     return store.getProjectById(projectId);
   }
 
+  function updateInstructions(projectId: string, instructions: string): Result<Project> {
+    const trimmed = instructions.trim();
+    if (trimmed.length > MAX_PROJECT_INSTRUCTIONS_LENGTH) {
+      return { ok: false, error: "INSTRUCTIONS_TOO_LONG" };
+    }
+    return store.updateProjectInstructions(projectId, trimmed === "" ? null : trimmed);
+  }
+
   /**
    * Hapus pendaftaran Project. Direktori kerjanya dibiarkan utuh: Project
    * adalah referensi ke sebuah folder Sandbox, bukan pemiliknya — menghapus
@@ -105,5 +122,12 @@ export function createProjectManager(sandboxRoot: string, store: SessionStore): 
     return store.deleteProject(projectId);
   }
 
-  return { listDirectory, createProject, listProjects, getProject, deleteProject };
+  return {
+    listDirectory,
+    createProject,
+    listProjects,
+    getProject,
+    updateInstructions,
+    deleteProject,
+  };
 }

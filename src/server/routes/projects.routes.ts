@@ -1,7 +1,8 @@
 /**
  * Tabel rute API Project & Folder_Browser (Requirement 10).
  *
- * `/api/projects` (GET daftar / POST buat), `/api/projects/:id` (DELETE hapus
+ * `/api/projects` (GET daftar / POST buat), `/api/projects/:id` (PATCH ubah
+ * custom instruction, DELETE hapus
  * pendaftaran Project beserta seluruh Session-nya), `/api/fs` (GET list
  * direktori untuk Folder_Browser), dan `/api/projects/:id/models` (GET model
  * yang tersedia pada server headless Project). Dipasang composition root
@@ -12,18 +13,18 @@ import { errorStatus, json, readJson, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 export function projectsRoutes(ctx: ApiRouteContext) {
-  const { projectManager, sessionManager, guard } = ctx;
+  const { projectManager, sessionManager } = ctx;
   return {
     // ---- Project & Folder_Browser (Requirement 10) ----
     "/api/projects": {
-      GET: guard(() => {
+      GET: () => {
         try {
           return json({ projects: projectManager.listProjects() });
         } catch (e) {
           return serverError(e);
         }
-      }),
-      POST: guard(async (req) => {
+      },
+      POST: async (req: Request) => {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
@@ -37,10 +38,30 @@ export function projectsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     "/api/projects/:id": {
+      /**
+       * Perbarui Project. Saat ini hanya `instructions` (custom instruction
+       * yang dikirim sebagai `system` di setiap prompt). String kosong =
+       * hapus instruksi.
+       */
+      PATCH: async (req: BunRequest<"/api/projects/:id">) => {
+        try {
+          const body = await readJson(req);
+          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
+          const { instructions } = (body.data ?? {}) as { instructions?: unknown };
+          if (instructions !== null && typeof instructions !== "string") {
+            return json({ error: "INVALID_INSTRUCTIONS" }, 400);
+          }
+          const res = projectManager.updateInstructions(req.params.id, instructions ?? "");
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ project: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
       /**
        * Hapus pendaftaran Project. Seluruh Session miliknya dihapus lebih dulu
        * (`releaseProject`) sehingga sesi remote opencode dan lampiran gambar
@@ -50,7 +71,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
        * Kegagalan pembersihan Session -> error diteruskan, baris Project tetap
        * ada supaya operasi bisa dicoba ulang tanpa meninggalkan sesi yatim.
        */
-      DELETE: guard(async (req: BunRequest<"/api/projects/:id">) => {
+      DELETE: async (req: BunRequest<"/api/projects/:id">) => {
         try {
           const released = await sessionManager.releaseProject(req.params.id);
           if (!released.ok) {
@@ -64,11 +85,11 @@ export function projectsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     "/api/fs": {
-      GET: guard((req) => {
+      GET: (req: Request) => {
         try {
           const url = new URL(req.url);
           const res = projectManager.listDirectory(url.searchParams.get("path") ?? "");
@@ -77,12 +98,12 @@ export function projectsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
 
     // ---- Daftar model yang tersedia pada server headless Project ----
     "/api/projects/:id/models": {
-      GET: guard(async (req: BunRequest<"/api/projects/:id/models">) => {
+      GET: async (req: BunRequest<"/api/projects/:id/models">) => {
         try {
           const res = await sessionManager.listModels(req.params.id);
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
@@ -90,12 +111,37 @@ export function projectsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
+    },
+
+    // ---- MCP server & skill Project (panel samping halaman Project) ----
+    "/api/projects/:id/mcp": {
+      GET: async (req: BunRequest<"/api/projects/:id/mcp">) => {
+        try {
+          const res = await sessionManager.listMcp(req.params.id);
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ mcp: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+    },
+
+    "/api/projects/:id/skills": {
+      GET: async (req: BunRequest<"/api/projects/:id/skills">) => {
+        try {
+          const res = await sessionManager.listSkills(req.params.id);
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ skills: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
     },
 
     // ---- Agent (mode) opencode: build/plan + agent kustom user ----
     "/api/projects/:id/agents": {
-      GET: guard(async (req: BunRequest<"/api/projects/:id/agents">) => {
+      GET: async (req: BunRequest<"/api/projects/:id/agents">) => {
         try {
           const res = await sessionManager.listAgents(req.params.id);
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
@@ -103,7 +149,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
         } catch (e) {
           return serverError(e);
         }
-      }),
+      },
     },
   };
 }

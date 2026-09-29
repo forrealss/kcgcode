@@ -7,27 +7,20 @@
  *   di sini `useRouter()` (pathname) + `parseRoute()` memilih halaman dari
  *   `src/pages/*` — tiap halaman me-resolve ulang datanya dari API sehingga
  *   refresh/direct link tetap berfungsi.
- * - `useTheme.ts` (dark mode) dipakai lewat `ThemeToggle` (Req 8.2, 8.6).
- * - Header memuat tombol token otentikasi (opsional, Req 9.2/9.3): token
- *   disimpan di `localStorage` dan dipakai `apiFetch` + `useWebSocket`.
+ * - Toggle tema (`ThemeToggle`, Req 8.2/8.6) ada di footer `AppSidebar`.
  * - Halaman Session di-`key` per id agar remount saat pindah Session.
  * - `AppSidebar` (shadcn `sidebar`) menampilkan seluruh Session digroup per
  *   Project: panel tetap di desktop, Sheet off-canvas di HP (`SidebarTrigger`
  *   di header shell & header Session).
  */
 
-import { KeyRoundIcon, SparklesIcon } from "lucide-react";
-import { useState } from "react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
-import { ThemeToggle } from "@/components/layout/ThemeToggle";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRouter } from "@/hooks/useRouter";
 import { useSidebarData } from "@/hooks/useSidebarData";
-import { getAuthToken, setAuthToken } from "@/lib/api";
 import { parseRoute, projectsPath } from "@/lib/routes";
+import { cn } from "@/lib/utils";
 import { ProjectDetailPage } from "@/pages/projects/ProjectDetailPage";
 import { ProjectsPage } from "@/pages/projects/ProjectsPage";
 import { SessionPage } from "@/pages/sessions/SessionPage";
@@ -37,15 +30,7 @@ import logo from "../../logo.svg";
 export function AppShell() {
   const { pathname } = useRouter();
   const route = parseRoute(pathname);
-  const [tokenOpen, setTokenOpen] = useState(false);
-  const [token, setToken] = useState(getAuthToken() ?? "");
   const sidebarData = useSidebarData(pathname);
-
-  const saveToken = (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    setAuthToken(token);
-    setTokenOpen(false);
-  };
 
   const isHome = route.name === "projects";
   /**
@@ -75,43 +60,7 @@ export function AppShell() {
                   </span>
                   <span className="truncate text-sm font-semibold tracking-tight">KCG Code</span>
                 </span>
-                <div className="ml-auto flex shrink-0 items-center gap-1 rounded-full border bg-muted/40 p-0.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setTokenOpen((o) => !o)}
-                    aria-label="Authentication token settings"
-                    title="Auth token"
-                    data-active={tokenOpen}
-                  >
-                    <KeyRoundIcon data-icon="inline-start" />
-                  </Button>
-                  <ThemeToggle />
-                </div>
               </header>
-            )}
-
-            {/* Input token (opsional, Requirement 9.2/9.3) */}
-            {!isSession && tokenOpen && (
-              <form
-                onSubmit={saveToken}
-                className="flex shrink-0 flex-col gap-2 border-b bg-muted/40 px-4 py-3 sm:flex-row sm:items-center sm:px-6"
-              >
-                <Input
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  placeholder="Auth token (leave empty to remove)"
-                  aria-label="Auth token"
-                  type="password"
-                  autoComplete="off"
-                  className="h-9 sm:h-8"
-                />
-                <Button type="submit" size="sm" className="w-full sm:w-auto">
-                  <SparklesIcon data-icon="inline-start" />
-                  Save token
-                </Button>
-              </form>
             )}
 
             {/* Konten per URL */}
@@ -122,7 +71,13 @@ export function AppShell() {
                 sessionId={route.sessionId}
               />
             ) : (
-              <main className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-background">
+              <main
+                className={cn(
+                  "min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-background",
+                  // Detail Project lg+: kolom-kolomnya yang scroll, bukan <main>.
+                  route.name === "project" && "lg:overflow-y-hidden",
+                )}
+              >
                 <div
                   className={
                     isHome
@@ -131,7 +86,13 @@ export function AppShell() {
                        atas besar — dan daftar yang lebih tinggi dari layar
                        tetap bisa di-scroll seluruhnya. */
                         "flex min-h-full flex-col px-4 py-6 sm:px-6 sm:py-10"
-                      : "mx-auto w-full max-w-3xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
+                      : route.name === "project"
+                        ? /* Detail Project: dua kolom (Session + panel samping).
+                             Layar lg+: tinggi dikunci ke viewport (`h-full`),
+                             tiap kolom scroll sendiri; lebih sempit: halaman
+                             scroll biasa (panel samping ada di Sheet). */
+                          "mx-auto w-full max-w-6xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16 lg:h-full lg:pb-0"
+                        : "mx-auto w-full max-w-3xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
                   }
                 >
                   {route.name === "projects" && <ProjectsPage />}

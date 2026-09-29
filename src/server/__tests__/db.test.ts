@@ -307,6 +307,24 @@ test("5.1: CRUD projects — insert, get by name/path, list", () => {
   store.close();
 });
 
+test("updateProjectInstructions: simpan, hapus (null), id tak dikenal -> PROJECT_NOT_FOUND", () => {
+  const store = makeMemoryStore();
+  const proj = { id: "p3", name: "proj3", path: "/sandbox/proj3", createdAt: 3 };
+  expect(store.insertProject(proj).ok).toBe(true);
+
+  const fresh = store.getProjectById("p3");
+  expect(fresh.ok && fresh.data.instructions).toBeNull();
+
+  const saved = store.updateProjectInstructions("p3", "Use tabs.");
+  expect(saved.ok && saved.data.instructions).toBe("Use tabs.");
+
+  const cleared = store.updateProjectInstructions("p3", null);
+  expect(cleared.ok && cleared.data.instructions).toBeNull();
+
+  expect(store.updateProjectInstructions("nope", "x").ok).toBe(false);
+  store.close();
+});
+
 test("deleteProject: menolak selama masih ada Session, sukses setelah Session dihapus", () => {
   const store = makeMemoryStore();
   expect(store.insertSession(makeSession("s1")).ok).toBe(true);
@@ -369,6 +387,10 @@ test("migrasi: DB lama (skema PTY) dibuka dengan store baru -> kolom & tabel dit
   // Tabel & kolom baru bisa dipakai.
   expect(store.insertSession(makeSession("s2")).ok).toBe(true);
   expect(store.insertMessage(makeMessage("m1")).ok).toBe(true);
+  // Kolom projects.instructions ditambahkan; Project lama tanpa instruksi.
+  const oldProj = store.getProjectById("p1");
+  expect(oldProj.ok && oldProj.data.instructions).toBeNull();
+  expect(store.updateProjectInstructions("p1", "hi").ok).toBe(true);
   store.close();
   rmSync(dir, { recursive: true, force: true });
 });

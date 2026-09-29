@@ -29,6 +29,8 @@ export function errorStatus(code: string): number {
     case "UNSUPPORTED_AGENT_TYPE":
     case "INVALID_SIZE":
     case "MODEL_NOT_FOUND":
+    case "INVALID_INSTRUCTIONS":
+    case "INSTRUCTIONS_TOO_LONG":
       return 400;
     case "PROJECT_NOT_FOUND":
     case "PROJECT_DIR_NOT_FOUND":

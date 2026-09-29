@@ -11,6 +11,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SessionList } from "@/components/sessions/SessionList";
+import { SessionListSkeleton } from "@/components/sessions/SessionRow";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
@@ -55,20 +56,35 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
 
   if (state.phase === "loading") {
     return (
-      <div className="flex flex-col gap-6" aria-hidden>
-        {/* Bentuk sama dengan header SessionList: ikon + nama/path + aksi. */}
-        <div className="flex items-start gap-3">
-          <Skeleton className="size-11 shrink-0 rounded-xl" />
-          <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-            <Skeleton className="h-6 w-40" />
-            <Skeleton className="h-4 w-56" />
+      <div
+        className="grid grid-cols-1 gap-x-10 gap-y-8 pt-4 sm:pt-8 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]"
+        aria-hidden
+      >
+        {/* Bentuk sama dengan SessionList: kolom Session + panel samping. */}
+        <div className="flex flex-col gap-8">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <Skeleton className="h-8 w-48" />
+                <Skeleton className="h-3 w-64" />
+              </div>
+              <Skeleton className="h-8 w-28 rounded-full" />
+            </div>
+            <Skeleton className="h-4 w-36" />
           </div>
-          <Skeleton className="h-8 w-28 rounded-md" />
+          <SessionListSkeleton />
         </div>
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-4 w-16" />
-          <Skeleton className="h-14 w-full rounded-xl" />
-          <Skeleton className="h-14 w-full rounded-xl" />
+        <div className="mb-6 hidden flex-col gap-8 self-start rounded-2xl border bg-muted/30 px-5 py-5 lg:flex">
+          {[3, 2, 4].map((rows, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
+            <div key={i} className="flex flex-col gap-2.5">
+              <Skeleton className="h-4 w-24" />
+              {Array.from({ length: rows }, (_, j) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
+                <Skeleton key={j} className="h-3.5" style={{ width: `${80 - j * 15}%` }} />
+              ))}
+            </div>
+          ))}
         </div>
       </div>
     );

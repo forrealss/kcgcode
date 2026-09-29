@@ -1,16 +1,21 @@
 /**
  * Daftar & pembuatan Session milik sebuah Project (Requirement 1.1, 1.3, 1.5).
  *
- * Halaman detail Project. Fokus: melanjutkan Session yang sudah ada, dengan
- * navigasi yang nyaman di layar HP.
- * - Seluruh baris Session dapat diketuk untuk membuka (target sentuh besar);
- *   aksi sekunder (stop/start/hapus) dikumpulkan di menu "..." supaya tidak
- *   ada deretan tombol ikon kecil berdempetan di layar sempit.
- * - Header Project: nama + path, tombol "New session" dan menu aksi Project
- *   (reload, hapus). Tanpa tombol back — navigasi lewat sidebar. Di bawahnya
- *   chip ringkasan status; daftar Session berupa baris polos (hover bg).
- * - `GET /api/sessions` di-filter per `projectId` (Requirement 1.5), lalu
- *   diurutkan `lib/session-summary.ts`: running -> crashed -> stopped.
+ * Halaman detail Project — sengaja minimal: tipografi & ruang kosong yang
+ * bekerja, bukan kartu/tile.
+ * - Header: nama Project besar, path (salin saat hover), satu baris ringkasan
+ *   ("3 sessions · 1 running"). Aksi: "New session" + grup pil Reload/Delete
+ *   (`SecondaryActions`; hapus tetap lewat dialog konfirmasi). Desktop: di
+ *   kanan judul. Layar sempit: "New session" jadi tombol melayang kanan-bawah
+ *   (area jempol); toolbar di bawah judul berisi "Details" (panel samping)
+ *   dan grup Reload/Delete.
+ * - Panel samping (`ProjectSidePanel`, gaya Claude Projects): custom
+ *   instruction, MCP server, dan skill. Layar `lg`+ = kolom kanan sticky;
+ *   lebih sempit = Sheet dari kanan lewat tombol di header.
+ *   Tanpa tombol back — navigasi lewat sidebar.
+ * - Daftar Session: baris polos dipisah hairline, status lewat titik warna.
+ *   Urutan dari `sortSessions` (running -> crashed -> stopped, terbaru dulu).
+ * - `GET /api/sessions` di-filter per `projectId` (Requirement 1.5).
  *
  * File ini hanya menyusun area dari bagian yang sudah dipisah:
  * - State & aksi daftar: `hooks/useSessionList.ts`.
@@ -19,14 +24,15 @@
  *   `ConfirmSessionDeleteDialog.tsx` & `ConfirmDeleteProjectDialog.tsx`.
  */
 import {
-  BotIcon,
-  FolderIcon,
-  MoreVerticalIcon,
+  CheckIcon,
+  CopyIcon,
+  PanelRightIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ProjectSidePanel } from "@/components/projects/ProjectSidePanel";
 import { ConfirmDeleteProjectDialog } from "@/components/sessions/ConfirmDeleteProjectDialog";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
 import { NewSessionDialog } from "@/components/sessions/NewSessionDialog";
@@ -34,23 +40,21 @@ import { SessionListSkeleton, SessionRow } from "@/components/sessions/SessionRo
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Empty,
-  EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
-} from "@/components/ui/empty";
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionList } from "@/hooks/useSessionList";
+import { describeSessionSummary } from "@/lib/session-summary";
 import { cn } from "@/lib/utils";
 import type { Project, Session } from "@/types";
+
+/** Breakpoint `lg` Tailwind — di atasnya panel samping tampil inline. */
+const WIDE_QUERY = "(min-width: 1024px)";
 
 export interface SessionListProps {
   project: Project;
@@ -59,158 +63,280 @@ export interface SessionListProps {
   onDeleted?: () => void;
 }
 
-/** Chip ringkasan status (mis. "● Running 2"). */
-function SummaryChip({ label, value, dot }: { label: string; value: number; dot?: string }) {
+/** Path Project yang bisa diklik untuk disalin — ikon muncul saat hover. */
+function CopyablePath({ path }: { path: string }) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(true);
+    } catch {
+      // Clipboard tak tersedia (mis. konteks non-HTTPS) — abaikan diam-diam.
+    }
+  };
+
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-muted/60 px-2.5 py-1 text-xs text-muted-foreground">
-      {dot && <span className={cn("size-1.5 rounded-full", dot)} aria-hidden />}
-      {label}
-      <span className="font-medium tabular-nums text-foreground">{value}</span>
-    </span>
+    <button
+      type="button"
+      onClick={() => void copy()}
+      title={path}
+      aria-label={copied ? "Path copied" : `Copy path ${path}`}
+      className="group/path -mx-1 flex max-w-full min-w-0 items-center gap-1.5 rounded px-1 font-mono text-xs text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+    >
+      <span className="truncate">{path}</span>
+      {copied ? (
+        <CheckIcon className="size-3 shrink-0 text-emerald-500" aria-hidden />
+      ) : (
+        <CopyIcon
+          className="size-3 shrink-0 opacity-0 transition-opacity group-hover/path:opacity-100 group-focus-visible/path:opacity-100"
+          aria-hidden
+        />
+      )}
+    </button>
   );
 }
 
-export function SessionList({ project, onOpenSession, onDeleted }: SessionListProps) {
+/**
+ * Aksi sekunder Project (Reload, Delete) dalam satu grup pil berdivider —
+ * dua ikon terbaca sebagai satu kontrol, bukan deretan tombol lepas.
+ * Delete tetap lewat dialog konfirmasi.
+ */
+function SecondaryActions({
+  loading,
+  onReload,
+  onDelete,
+  size = "sm",
+}: {
+  loading: boolean;
+  onReload: () => void;
+  onDelete: () => void;
+  /** `lg` = target sentuh 40px (toolbar mobile). */
+  size?: "sm" | "lg";
+}) {
+  const btn = cn(
+    "flex items-center justify-center text-muted-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
+    size === "lg" ? "size-10" : "size-8",
+  );
+  return (
+    <fieldset
+      aria-label="Project actions"
+      className="m-0 flex shrink-0 items-center divide-x overflow-hidden rounded-full border bg-background p-0"
+    >
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onReload}
+            disabled={loading}
+            aria-label="Reload sessions"
+            className={cn(btn, "hover:bg-muted hover:text-foreground")}
+          >
+            <RefreshCwIcon className={cn(loading && "animate-spin")} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Reload</TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            onClick={onDelete}
+            aria-label="Delete project"
+            className={cn(btn, "hover:bg-destructive/10 hover:text-destructive")}
+          >
+            <Trash2Icon />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent>Delete project</TooltipContent>
+      </Tooltip>
+    </fieldset>
+  );
+}
+
+export function SessionList({
+  project: initialProject,
+  onOpenSession,
+  onDeleted,
+}: SessionListProps) {
+  /** Salinan lokal agar perubahan (mis. instruksi) langsung tampil. */
+  const [project, setProject] = useState(initialProject);
+  useEffect(() => setProject(initialProject), [initialProject]);
   const list = useSessionList({ projectId: project.id, onDeleted });
   /** Form pembuatan Session — dialog, dibuka lewat tombol. */
   const [formOpen, setFormOpen] = useState(false);
-
   const openForm = () => setFormOpen(true);
 
+  const hasSessions = !list.loading && !list.loadError && list.ordered.length > 0;
+  /** Layar lebar: panel samping inline. Sempit: panel di Sheet (tombol header). */
+  const wide = useMediaQuery(WIDE_QUERY);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const sidePanel = <ProjectSidePanel project={project} onProjectChange={setProject} />;
+
   return (
-    <div className="flex flex-col gap-5">
-      {/* Header Project: identitas + aksi. Tanpa tombol back — navigasi lewat
-          sidebar. Aksi utama (New session) langsung terlihat di kanan. */}
-      <header className="flex items-start gap-3">
-        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <FolderIcon className="size-5" />
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1 className="truncate text-xl font-semibold leading-tight tracking-tight">
-            {project.name}
-          </h1>
-          <p className="truncate font-mono text-xs text-muted-foreground" title={project.path}>
-            {project.path}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <Button type="button" size="sm" onClick={openForm} className="hidden sm:inline-flex">
-            <PlusIcon data-icon="inline-start" />
-            New session
-          </Button>
-          <Button
-            type="button"
-            size="icon-sm"
-            onClick={openForm}
-            aria-label="New session"
-            className="sm:hidden"
-          >
-            <PlusIcon />
-          </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button type="button" variant="ghost" size="icon-sm" aria-label="Project actions">
-                <MoreVerticalIcon />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onSelect={() => void list.refresh()} disabled={list.loading}>
-                <RefreshCwIcon />
-                Reload
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={list.openProjectDelete}>
-                <Trash2Icon />
-                Delete project
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </header>
+    // lg+: grid setinggi viewport; tiap kolom scroll sendiri (min-h-0).
+    <div className="grid grid-cols-1 gap-x-10 gap-y-8 pt-4 sm:pt-8 lg:h-full lg:min-h-0 lg:grid-cols-[minmax(0,1fr)_20rem] xl:grid-cols-[minmax(0,1fr)_22rem]">
+      <div className="flex min-w-0 flex-col gap-8 lg:min-h-0 lg:gap-0">
+        {/* Header tetap di atas; hanya daftar Session yang scroll (lg+). */}
+        <header className="flex shrink-0 flex-col gap-4 lg:pb-6">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex min-w-0 flex-col gap-1.5">
+              <h1 className="truncate text-2xl font-semibold tracking-tight sm:text-3xl">
+                {project.name}
+              </h1>
+              <CopyablePath path={project.path} />
+            </div>
 
-      {/* Ringkasan status — chip kecil, hanya yang bernilai > 0. Tiap chip
-          sudah punya teks label sendiri, jadi wrapper tak perlu aria-label. */}
-      {!list.loading && !list.loadError && list.summary.total > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <SummaryChip label="Total" value={list.summary.total} />
-          {list.summary.running > 0 && (
-            <SummaryChip label="Running" value={list.summary.running} dot="bg-emerald-500" />
-          )}
-          {list.summary.crashed > 0 && (
-            <SummaryChip label="Crashed" value={list.summary.crashed} dot="bg-destructive" />
-          )}
-          {list.summary.stopped > 0 && (
-            <SummaryChip
-              label="Stopped"
-              value={list.summary.stopped}
-              dot="bg-muted-foreground/50"
-            />
-          )}
-        </div>
-      )}
-
-      {list.actionError && (
-        <Alert variant="destructive">
-          <AlertTitle>Action failed</AlertTitle>
-          <AlertDescription>{list.actionError}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Daftar Session */}
-      <section className="flex flex-col gap-2" aria-labelledby="session-list-heading">
-        <h2
-          id="session-list-heading"
-          className="px-1 text-xs font-medium tracking-wide text-muted-foreground uppercase"
-        >
-          Sessions
-        </h2>
-
-        {list.loading ? (
-          <SessionListSkeleton />
-        ) : list.loadError ? (
-          <Alert variant="destructive">
-            <AlertTitle>Failed to load sessions</AlertTitle>
-            <AlertDescription>{list.loadError}</AlertDescription>
-          </Alert>
-        ) : list.ordered.length === 0 ? (
-          <Empty className="rounded-xl border border-dashed bg-card">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <BotIcon />
-              </EmptyMedia>
-              <EmptyTitle>No sessions yet</EmptyTitle>
-              <EmptyDescription>
-                Create a session to run CLI_Agent in this project.
-              </EmptyDescription>
-              <EmptyContent>
-                <Button type="button" onClick={openForm}>
+            {/* Desktop: aksi di kanan judul (panel detail sudah inline). */}
+            {wide && (
+              <div className="flex shrink-0 items-center gap-2">
+                <SecondaryActions
+                  loading={list.loading}
+                  onReload={() => void list.refresh()}
+                  onDelete={list.openProjectDelete}
+                />
+                <Button type="button" size="sm" onClick={openForm} className="rounded-full px-3.5">
                   <PlusIcon data-icon="inline-start" />
                   New session
                 </Button>
-              </EmptyContent>
-            </EmptyHeader>
-          </Empty>
-        ) : (
-          <ul className="flex flex-col gap-0.5">
-            {list.ordered.map((session) => (
-              <li key={session.id}>
-                <SessionRow
-                  session={session}
-                  busy={
-                    list.stopping === session.id ||
-                    list.starting === session.id ||
-                    list.deleting === session.id
-                  }
-                  onOpen={() => onOpenSession(session)}
-                  onStop={() => void list.stop(session.id)}
-                  onStart={() => void list.start(session.id)}
-                  onDelete={() => list.requestDelete(session)}
-                />
-              </li>
-            ))}
-          </ul>
+              </div>
+            )}
+          </div>
+
+          {/* Satu baris ringkasan — cukup teks, tanpa tile. */}
+          {!list.loading && !list.loadError && (
+            <p className="text-sm text-muted-foreground">{describeSessionSummary(list.summary)}</p>
+          )}
+
+          {/* Layar sempit: toolbar aksi sekunder di bawah judul. Aksi utama
+              (New session) jadi tombol melayang kanan-bawah — area jempol. */}
+          {!wide && (
+            <div className="flex items-center justify-between gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setDetailsOpen(true)}
+                aria-label="Project details: instructions, MCP servers, skills"
+                className="h-10 rounded-full px-3.5"
+              >
+                <PanelRightIcon data-icon="inline-start" />
+                Details
+              </Button>
+              <SecondaryActions
+                size="lg"
+                loading={list.loading}
+                onReload={() => void list.refresh()}
+                onDelete={list.openProjectDelete}
+              />
+            </div>
+          )}
+        </header>
+
+        {list.actionError && (
+          <Alert variant="destructive" className="shrink-0 lg:mb-6">
+            <AlertTitle>Action failed</AlertTitle>
+            <AlertDescription>{list.actionError}</AlertDescription>
+          </Alert>
         )}
-      </section>
+
+        <section
+          aria-label="Sessions"
+          // pb-24 (mobile): ruang agar baris terakhir tidak tertutup FAB.
+          className="-mx-3 px-3 pb-24 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overscroll-contain lg:pb-16"
+        >
+          {list.loading ? (
+            <SessionListSkeleton />
+          ) : list.loadError ? (
+            <Alert variant="destructive">
+              <AlertTitle>Failed to load sessions</AlertTitle>
+              <AlertDescription className="flex flex-col items-start gap-3">
+                {list.loadError}
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void list.refresh()}
+                >
+                  <RefreshCwIcon data-icon="inline-start" />
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : hasSessions ? (
+            <ul className="-mx-3 flex flex-col">
+              {list.ordered.map((session) => (
+                <li key={session.id}>
+                  <SessionRow
+                    session={session}
+                    busy={
+                      list.stopping === session.id ||
+                      list.starting === session.id ||
+                      list.deleting === session.id
+                    }
+                    onOpen={() => onOpenSession(session)}
+                    onStop={() => void list.stop(session.id)}
+                    onStart={() => void list.start(session.id)}
+                    onDelete={() => list.requestDelete(session)}
+                  />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            // Empty state ringan: satu kalimat + tautan aksi, tanpa kotak.
+            <div className="flex flex-col items-start gap-3 border-t pt-8">
+              <p className="text-sm text-muted-foreground">
+                Start a session to run CLI_Agent in this project.
+              </p>
+              <Button type="button" variant="outline" size="sm" onClick={openForm}>
+                <PlusIcon data-icon="inline-start" />
+                New session
+              </Button>
+            </div>
+          )}
+        </section>
+      </div>
+
+      {/* Panel samping: Instructions, MCP, Skills (gaya Claude Projects). */}
+      {wide ? (
+        <aside
+          aria-label="Project details"
+          // Panel mandiri: padding sama di keempat sisi; scrollbar-gutter
+          // stable di kedua tepi agar scrollbar tidak menggeser isi ke kiri.
+          className="mb-6 min-h-0 overflow-y-auto overscroll-contain rounded-2xl border bg-muted/30 px-4 py-5 [scrollbar-gutter:stable_both-edges] [scrollbar-width:thin]"
+        >
+          {sidePanel}
+        </aside>
+      ) : (
+        <Sheet open={detailsOpen} onOpenChange={setDetailsOpen}>
+          <SheetContent side="right" className="w-[88vw] gap-0 overflow-y-auto sm:max-w-sm">
+            <SheetHeader className="pb-2">
+              <SheetTitle>{project.name}</SheetTitle>
+              <SheetDescription>Instructions, MCP servers, and skills.</SheetDescription>
+            </SheetHeader>
+            <div className="px-4 pt-2 pb-6">{sidePanel}</div>
+          </SheetContent>
+        </Sheet>
+      )}
+
+      {/* Mobile/tablet: aksi utama melayang di kanan-bawah (jangkauan jempol,
+          selalu terlihat saat scroll). Label teks tetap ada agar jelas —
+          bukan ikon "+" tanpa arti. Safe-area iOS dihormati. */}
+      {!wide && (
+        <Button
+          type="button"
+          onClick={openForm}
+          className="fixed right-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 h-12 rounded-full px-5 text-[15px] shadow-lg shadow-primary/25 sm:right-6 sm:bottom-6"
+        >
+          <PlusIcon data-icon="inline-start" className="size-5" />
+          New session
+        </Button>
+      )}
 
       {/* Form pembuatan Session — dialog agar daftar tidak terdorong di HP */}
       <NewSessionDialog

@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import fc from "fast-check";
 import type { OpenCodeClient } from "../opencode-client";
-import { flattenAgents, flattenProviders } from "../opencode-client";
+import { flattenAgents, flattenMcp, flattenProviders, flattenSkills } from "../opencode-client";
 import {
   configFingerprint,
   createOpenCodeServerManager,
@@ -260,4 +260,61 @@ test("ensureFreshServer: config tak berubah -> instance sama; berubah -> restart
   expect(procs).toHaveLength(2);
   expect(procs[0]?.kills).toContain("SIGTERM");
   expect(third.data.baseUrl).not.toBe(first.data.baseUrl);
+});
+
+test("flattenMcp: map nama -> status, terurut; status tak dikenal -> unknown", () => {
+  expect(
+    flattenMcp({
+      zeta: { status: "connected" },
+      alpha: { status: "failed", error: "spawn ENOENT" },
+      mid: { status: "weird" },
+      "": { status: "connected" },
+    }),
+  ).toEqual([
+    { name: "alpha", status: "failed", error: "spawn ENOENT" },
+    { name: "mid", status: "unknown", error: null },
+    { name: "zeta", status: "connected", error: null },
+  ]);
+  expect(flattenMcp(null)).toEqual([]);
+  expect(flattenMcp([])).toEqual([]);
+});
+
+test("flattenSkills: klasifikasi asal (builtin/project/global), content dibuang", () => {
+  const out = flattenSkills(
+    [
+      {
+        name: "shadcn",
+        description: "UI",
+        location: "/work/app/.agents/skills/shadcn/SKILL.md",
+        content: "x",
+      },
+      { name: "customize", description: "", location: "<built-in>", content: "x" },
+      {
+        name: "firecrawl",
+        description: "Web",
+        location: "/home/u/.config/opencode/skills/f/SKILL.md",
+      },
+      // Prefix path mirip tapi bukan di dalam Project -> global.
+      { name: "other", location: "/work/app-2/SKILL.md" },
+      { description: "tanpa nama" },
+    ],
+    "/work/app/",
+  );
+  expect(out).toEqual([
+    { name: "customize", description: null, location: null, source: "builtin" },
+    {
+      name: "firecrawl",
+      description: "Web",
+      location: "/home/u/.config/opencode/skills/f/SKILL.md",
+      source: "global",
+    },
+    { name: "other", description: null, location: "/work/app-2/SKILL.md", source: "global" },
+    {
+      name: "shadcn",
+      description: "UI",
+      location: "/work/app/.agents/skills/shadcn/SKILL.md",
+      source: "project",
+    },
+  ]);
+  expect(flattenSkills({})).toEqual([]);
 });

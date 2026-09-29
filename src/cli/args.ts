@@ -37,8 +37,6 @@ ENV
   KCG_PORT              HTTP port
   KCG_HOST              Bind host
   KCG_CONFIG_PATH       Config file path
-  KCG_AUTH_ENABLED      "true" to require bearer token
-  KCG_AUTH_TOKEN        Auth token
   KCG_DB_PATH           SQLite path (default ~/.kcgcode/data/kcg-code.sqlite)
 
 EXAMPLES

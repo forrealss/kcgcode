@@ -8,7 +8,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { ApiError, apiFetch, getAuthToken } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
 import type { Session } from "@/types";
 
@@ -89,7 +89,6 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
    * `session_title` agar baris terkait terbarui live tanpa refresh manual.
    */
   const ws = useWebSocket({
-    token: getAuthToken() ?? undefined,
     onMessage: (msg) => {
       if (msg.type === "session_title") {
         // Update baris terkait saja — state lain (urutan, summary) tidak berubah.

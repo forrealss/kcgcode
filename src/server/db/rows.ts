@@ -23,6 +23,7 @@ export interface ProjectRow {
   id: string;
   name: string;
   path: string;
+  instructions: string | null;
   created_at: number;
 }
 
@@ -64,7 +65,13 @@ export interface MessageRow {
 }
 
 export function mapProject(r: ProjectRow): Project {
-  return { id: r.id, name: r.name, path: r.path, createdAt: r.created_at };
+  return {
+    id: r.id,
+    name: r.name,
+    path: r.path,
+    createdAt: r.created_at,
+    instructions: r.instructions ?? null,
+  };
 }
 
 /**

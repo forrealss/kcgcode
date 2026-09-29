@@ -9,8 +9,6 @@
  *   `disconnect()` menutup koneksi secara manual tanpa reconnect.
  * - Pesan masuk (`history`, `output`, `prompt`, `prompt_resolved`,
  *   `session_status`, `error`) diteruskan ke `onMessage` sesuai `ws-protocol.ts`.
- * - Token otentikasi (opsional) dikirim via `?token=` pada upgrade WebSocket,
- *   karena browser WebSocket API tidak mendukung header custom (Requirement 9.3).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ClientMessage, ServerMessage } from "../ws-protocol";
@@ -20,8 +18,6 @@ export type WsConnectionStatus = "idle" | "connecting" | "connected" | "reconnec
 export interface UseWebSocketOptions {
   /** URL WebSocket; default: `ws(s)://<host>/ws`. */
   url?: string;
-  /** Token otentikasi (dikirim sebagai `?token=` saat upgrade, Req 9.3). */
-  token?: string;
   /** Dipanggil untuk setiap pesan Server -> Client. */
   onMessage?: (msg: ServerMessage) => void;
   /** Jeda reconnect setelah koneksi putus tak terduga (ms). */
@@ -41,16 +37,14 @@ export interface UseWebSocketResult {
   disconnect(): void;
 }
 
-function defaultWsUrl(token?: string): string | null {
+function defaultWsUrl(): string | null {
   if (typeof location === "undefined") return null;
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  const target = new URL(`${proto}://${location.host}/ws`);
-  if (token) target.searchParams.set("token", token);
-  return target.toString();
+  return `${proto}://${location.host}/ws`;
 }
 
 export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult {
-  const { onMessage, reconnectDelayMs = 1500, url, token } = opts;
+  const { onMessage, reconnectDelayMs = 1500, url } = opts;
   const [status, setStatus] = useState<WsConnectionStatus>("idle");
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -60,7 +54,7 @@ export function useWebSocket(opts: UseWebSocketOptions = {}): UseWebSocketResult
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
 
-  const buildUrl = useCallback(() => url ?? defaultWsUrl(token), [url, token]);
+  const buildUrl = useCallback(() => url ?? defaultWsUrl(), [url]);
 
   const open = useCallback(() => {
     if (wsRef.current) return;
