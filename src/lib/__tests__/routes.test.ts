@@ -7,7 +7,14 @@
  * `useRouter` dan `navigate` (History API) diuji manual via dev server.
  */
 import { describe, expect, test } from "bun:test";
-import { parseRoute, projectPath, projectsPath, sessionPath } from "../routes";
+import {
+  parseRoute,
+  parseSkillsProject,
+  projectPath,
+  projectsPath,
+  sessionPath,
+  skillsPath,
+} from "../routes";
 
 describe("pembangun path", () => {
   test("projectsPath menghasilkan /", () => {
@@ -67,5 +74,31 @@ describe("parseRoute", () => {
     expect(parseRoute("/projects/p1/other/s2")).toEqual({ name: "not-found" });
     // Trailing slash dikonsumsi, jadi ini bukan case "segmen kosong".
     expect(parseRoute("/projects//sessions/s2")).toEqual({ name: "not-found" });
+  });
+});
+
+describe("rute skills", () => {
+  test("skillsPath menghasilkan /skills", () => {
+    expect(skillsPath()).toBe("/skills");
+  });
+
+  test("/skills (dengan/tanpa trailing slash) -> skills", () => {
+    expect(parseRoute("/skills")).toEqual({ name: "skills" });
+    expect(parseRoute("/skills/")).toEqual({ name: "skills" });
+  });
+
+  test("skillsPath dengan Project menambahkan ?project=", () => {
+    expect(skillsPath("p1")).toBe("/skills?project=p1");
+    expect(skillsPath(null)).toBe("/skills");
+  });
+
+  test("parseSkillsProject membaca ?project=", () => {
+    expect(parseSkillsProject("?project=p1")).toBe("p1");
+    expect(parseSkillsProject("")).toBeNull();
+    expect(parseSkillsProject("?project=")).toBeNull();
+  });
+
+  test("sub-path skills tidak dikenal -> not-found", () => {
+    expect(parseRoute("/skills/x")).toEqual({ name: "not-found" });
   });
 });

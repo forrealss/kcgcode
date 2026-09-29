@@ -8,9 +8,13 @@
 import type { AttachmentManager } from "../services/attachments";
 import type { ProjectManager } from "../services/project-manager";
 import type { SessionManager } from "../services/session-manager";
+import type { SkillInstallJobs } from "../services/skill-install-jobs";
+import type { SkillsRegistry } from "../services/skills-registry";
 
 export interface ApiRouteContext {
   projectManager: ProjectManager;
   sessionManager: SessionManager;
   attachments: AttachmentManager;
+  skillsRegistry: SkillsRegistry;
+  skillInstalls: SkillInstallJobs;
 }

@@ -19,6 +19,7 @@ import type { ServerMessage } from "../../ws-protocol";
 import { createKcgServer, type KcgServer } from "../app";
 import type { OpenCodeClient, OpenCodeEvent } from "../services/opencode-client";
 import type { OpenCodeServerManager } from "../services/opencode-server";
+import type { SkillsRegistry } from "../services/skills-registry";
 
 // ---------------------------------------------------------------------------
 // Mock OpenCodeClient + OpenCodeServerManager
@@ -88,6 +89,9 @@ function makeFakeClient(projectId: string): FakeClient {
     },
     async listMcp() {
       return { ok: true, data: [{ name: "context7", status: "connected" as const, error: null }] };
+    },
+    async disposeInstance() {
+      return { ok: true };
     },
     async listSkills() {
       return {
@@ -241,6 +245,36 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
   let app: KcgServer;
   let root: string;
   let servers: FakeServers;
+  /** Instalasi yang diminta ke Skills_Registry palsu: [cwd, source, skill]. */
+  const installCalls: [string, string, string][] = [];
+  const skillsRegistry: SkillsRegistry = {
+    async search(q) {
+      if (q.trim().length < 2) return { ok: false, error: "INVALID_SKILL_QUERY" };
+      return {
+        ok: true,
+        data: [
+          {
+            id: "a/b/c",
+            name: "c",
+            source: "a/b",
+            skillId: "c",
+            installs: 3,
+            url: "https://skills.sh/a/b/c",
+          },
+        ],
+      };
+    },
+    async audit(source) {
+      if (source === "bad") return { ok: false, error: "INVALID_SKILL_ID" };
+      return { ok: true, data: { audits: null, overall: null } };
+    },
+    async install(cwd, source, skill, onLine) {
+      installCalls.push([cwd, source, skill]);
+      onLine?.(`installing ${skill}`);
+      if (skill === "boom") return { ok: false, error: "SKILL_INSTALL_FAILED" };
+      return { ok: true, data: { name: skill, path: `${cwd}/.agents/skills/${skill}` } };
+    },
+  };
 
   beforeAll(() => {
     store = openSessionStore(":memory:");
@@ -253,6 +287,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
       servers: servers.manager,
       uploadsRoot: path.join(root, "uploads"),
       port: 0,
+      skillsRegistry,
     });
   });
 
@@ -859,5 +894,71 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect((await patch(proj.project.id, { instructions: 42 })).status).toBe(400);
     expect((await patch(proj.project.id, { instructions: "x".repeat(20_001) })).status).toBe(400);
     expect((await patch("tidak-ada", { instructions: "x" })).status).toBe(404);
+  });
+
+  test("skills.sh: search, audit, install ke folder Project (+ validasi & 404)", async () => {
+    mkdirSync(path.join(root, "proj-skills"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "skills-proj", path: "proj-skills" }),
+      })
+    ).json()) as { project: Project };
+
+    const search = await fetch(`${baseUrl()}/api/skills/search?q=react`);
+    expect(search.status).toBe(200);
+    expect(((await search.json()) as { skills: { id: string }[] }).skills[0]?.id).toBe("a/b/c");
+    expect((await fetch(`${baseUrl()}/api/skills/search?q=a`)).status).toBe(400);
+
+    const audit = await fetch(`${baseUrl()}/api/skills/audit?source=a/b&skill=c`);
+    expect(audit.status).toBe(200);
+    expect((await fetch(`${baseUrl()}/api/skills/audit?source=bad&skill=c`)).status).toBe(400);
+
+    const install = (id: string, body: unknown) =>
+      fetch(`${baseUrl()}/api/projects/${id}/skills/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+    // Instalasi berjalan sebagai job: 202 + job, lalu status & log via polling.
+    const ok = await install(proj.project.id, { source: "a/b", skill: "c" });
+    expect(ok.status).toBe(202);
+    const { job } = (await ok.json()) as { job: { id: string; status: string } };
+    expect(job.status).toBe("running");
+    await app.skillInstalls.settled(job.id);
+
+    const polled = await fetch(`${baseUrl()}/api/skills/installs/${job.id}?from=0`);
+    expect(polled.status).toBe(200);
+    const log = (await polled.json()) as {
+      job: { status: string; refreshed: boolean };
+      lines: string[];
+    };
+    expect(log.job.status).toBe("succeeded");
+    // Server headless Project belum hidup -> tidak perlu refresh.
+    expect(log.job.refreshed).toBe(true);
+    expect(log.lines).toContain("installing c");
+    expect(installCalls).toContainEqual([proj.project.path, "a/b", "c"]);
+
+    const all = (await (await fetch(`${baseUrl()}/api/skills/installs`)).json()) as {
+      jobs: { id: string }[];
+    };
+    expect(all.jobs.map((j) => j.id)).toContain(job.id);
+    expect((await fetch(`${baseUrl()}/api/skills/installs/tidak-ada`)).status).toBe(404);
+
+    // Kegagalan CLI -> job failed (bukan HTTP error).
+    const boom = (await (
+      await install(proj.project.id, { source: "a/b", skill: "boom" })
+    ).json()) as { job: { id: string } };
+    await app.skillInstalls.settled(boom.job.id);
+    const boomLog = (await (
+      await fetch(`${baseUrl()}/api/skills/installs/${boom.job.id}`)
+    ).json()) as { job: { status: string; error: string } };
+    expect(boomLog.job.status).toBe("failed");
+    expect(boomLog.job.error).toBe("SKILL_INSTALL_FAILED");
+
+    expect((await install(proj.project.id, { source: 1, skill: "c" })).status).toBe(400);
+    expect((await install("tidak-ada", { source: "a/b", skill: "c" })).status).toBe(404);
   });
 });

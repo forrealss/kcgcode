@@ -184,6 +184,13 @@ export interface SessionManager {
   listMcp(projectId: string): Promise<Result<McpServerInfo[]>>;
   /** Skill yang terdaftar untuk Project (global, folder Project, bawaan). */
   listSkills(projectId: string): Promise<Result<SkillInfo[]>>;
+  /**
+   * Muat ulang daftar skill server headless Project setelah skill dipasang.
+   * Dilewati (`refreshed: false`) bila ada turn aktif di Project agar chat
+   * yang sedang berjalan tidak terganggu; skill tetap terbaca saat server
+   * dimuat ulang berikutnya. Server yang belum hidup tidak perlu di-refresh.
+   */
+  refreshSkills(projectId: string): Promise<Result<{ refreshed: boolean }>>;
   /** Cari file project untuk autocomplete `@file` di composer. */
   findFiles(projectId: string, query: string): Promise<Result<string[]>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
@@ -772,6 +779,22 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     return serverRes.data.client.listSkills(project.data.path);
   }
 
+  async function refreshSkills(projectId: string): Promise<Result<{ refreshed: boolean }>> {
+    const project = store.getProjectById(projectId);
+    if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    const handle = servers.getServer(projectId);
+    // Server belum hidup -> skill terbaca saat server di-spawn nanti.
+    if (!handle) return { ok: true, data: { refreshed: true } };
+    const busy = store.listSessions().some((s) => s.projectId === projectId && turns.has(s.id));
+    if (busy) return { ok: true, data: { refreshed: false } };
+    const res = await handle.client.disposeInstance();
+    if (!res.ok) {
+      console.warn(`[kcg-code] refresh skill Project ${projectId} gagal:`, res.error);
+      return { ok: true, data: { refreshed: false } };
+    }
+    return { ok: true, data: { refreshed: true } };
+  }
+
   /**
    * Cari file di Project untuk autocomplete `@file` — index pencarian
    * milik server headless opencode (sesuai perilaku `@` di opencode TUI).
@@ -1130,6 +1153,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     listAgents,
     listMcp,
     listSkills,
+    refreshSkills,
     setSessionModel,
     setSessionAgent,
     findFiles,

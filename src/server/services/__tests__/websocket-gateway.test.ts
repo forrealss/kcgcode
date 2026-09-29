@@ -153,6 +153,9 @@ function makeFakeSessionManager(): FakeSessionManager {
     async listSkills() {
       return { ok: false, error: "not-used" };
     },
+    async refreshSkills() {
+      return { ok: false, error: "not-used" };
+    },
     setSessionModel() {
       return { ok: false, error: "not-used" };
     },

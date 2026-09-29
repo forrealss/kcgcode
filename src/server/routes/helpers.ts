@@ -31,6 +31,8 @@ export function errorStatus(code: string): number {
     case "MODEL_NOT_FOUND":
     case "INVALID_INSTRUCTIONS":
     case "INSTRUCTIONS_TOO_LONG":
+    case "INVALID_SKILL_QUERY":
+    case "INVALID_SKILL_ID":
       return 400;
     case "PROJECT_NOT_FOUND":
     case "PROJECT_DIR_NOT_FOUND":
@@ -43,7 +45,13 @@ export function errorStatus(code: string): number {
     case "SESSION_NOT_ACTIVE":
     case "SESSION_ALREADY_RUNNING":
     case "PROJECT_HAS_SESSIONS":
+    case "SKILL_INSTALL_IN_PROGRESS":
+    case "INSTALL_JOB_NOT_RUNNING":
       return 409;
+    case "SKILLS_RATE_LIMITED":
+      return 429;
+    case "SKILL_INSTALL_FAILED":
+      return 502;
     // Server headless menolak operasi (mis. hapus session remote gagal).
     case "OC_DELETE_SESSION_FAILED":
       return 502;
@@ -53,8 +61,13 @@ export function errorStatus(code: string): number {
     case "IMAGE_TOO_LARGE":
       return 413;
     case "ATTACHMENT_NOT_FOUND":
+    case "INSTALL_JOB_NOT_FOUND":
       return 404;
     default:
+      // Kegagalan layanan skills.sh (hulu) -> 502.
+      if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
+        return 502;
+      }
       return 500;
   }
 }

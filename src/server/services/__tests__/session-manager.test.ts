@@ -150,6 +150,10 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         ],
       };
     },
+    async disposeInstance() {
+      calls.push("disposeInstance");
+      return { ok: true };
+    },
     async listSkills(projectPath) {
       calls.push(`listSkills:${projectPath ?? ""}`);
       return {
@@ -1995,6 +1999,37 @@ test("listMcp / listSkills -> diteruskan ke server Project (skills menerima path
 
     expect((await h.sm.listMcp("nope")).ok).toBe(false);
     expect((await h.sm.listSkills("nope")).ok).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+
+test("refreshSkills: server belum hidup -> tanpa dispose; Project tak dikenal -> error", async () => {
+  const h = freshHarness();
+  try {
+    const res = await h.sm.refreshSkills("p1");
+    expect(res.ok && res.data.refreshed).toBe(true);
+    expect(h.fake.clients.get("p1")).toBeUndefined();
+    expect((await h.sm.refreshSkills("nope")).ok).toBe(false);
+  } finally {
+    h.close();
+  }
+});
+
+test("refreshSkills: server idle -> dispose; ada turn aktif -> dilewati", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const idle = await h.sm.refreshSkills("p1");
+    expect(idle.ok && idle.data.refreshed).toBe(true);
+    expect(clientOf(h).calls).toContain("disposeInstance");
+
+    // Mulai turn (belum ada session.idle) -> refresh ditunda.
+    await h.sm.sendFreeTextInput(sid, "halo");
+    const before = clientOf(h).calls.filter((c) => c === "disposeInstance").length;
+    const busy = await h.sm.refreshSkills("p1");
+    expect(busy.ok && busy.data.refreshed).toBe(false);
+    expect(clientOf(h).calls.filter((c) => c === "disposeInstance")).toHaveLength(before);
   } finally {
     h.close();
   }

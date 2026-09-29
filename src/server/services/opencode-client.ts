@@ -240,6 +240,12 @@ export interface OpenCodeClient {
    */
   listSkills(projectPath?: string): Promise<Result<SkillInfo[]>>;
   /**
+   * Buang cache instance Project di server (`POST /instance/dispose`) agar
+   * skill/config dibaca ulang dari disk — `GET /skill` di-cache per
+   * instance. Instance dibuat ulang otomatis pada request berikutnya.
+   */
+  disposeInstance(): Promise<SimpleResult>;
+  /**
    * Hapus Session di server headless (`DELETE /session/{id}`) beserta
    * seluruh riwayat pesannya di sisi opencode.
    */
@@ -496,6 +502,21 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     }
   }
 
+  async function disposeInstance(): Promise<SimpleResult> {
+    try {
+      const { status } = await requestJson(
+        baseUrl,
+        "POST",
+        "/instance/dispose",
+        undefined,
+        AbortSignal.timeout(10_000),
+      );
+      return status === 200 ? { ok: true } : { ok: false, error: `OC_DISPOSE_FAILED(${status})` };
+    } catch (e) {
+      return { ok: false, error: `OC_DISPOSE_FAILED: ${(e as Error).message}` };
+    }
+  }
+
   async function deleteSession(sessionId: string): Promise<SimpleResult> {
     try {
       const { status } = await requestJson(
@@ -582,6 +603,7 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     promptAsync,
     listMcp,
     listSkills,
+    disposeInstance,
     findFiles,
     replyPermission,
     replyQuestion,

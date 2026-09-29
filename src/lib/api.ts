@@ -31,6 +31,9 @@ export function apiErrorMessage(code: string): string {
   if (code.startsWith("OC_DELETE_SESSION_FAILED")) {
     return "Failed to delete the session on the opencode server.";
   }
+  if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
+    return "Couldn't reach skills.sh. Check your connection and try again.";
+  }
   if (code.startsWith("SERVER_START_FAILED")) {
     return "Failed to start the opencode server for this project.";
   }
@@ -66,6 +69,26 @@ export function apiErrorMessage(code: string): string {
       return "Instructions must be text.";
     case "INSTRUCTIONS_TOO_LONG":
       return "Instructions are too long (max 20,000 characters).";
+    case "INVALID_SKILL_QUERY":
+      return "Type at least 2 characters to search.";
+    case "INVALID_SKILL_ID":
+      return "That skill identifier is not valid.";
+    case "SKILLS_RATE_LIMITED":
+      return "skills.sh is rate limiting requests. Wait a moment and try again.";
+    case "SKILL_INSTALL_IN_PROGRESS":
+      return "Another skill is being installed in this project. Try again when it finishes.";
+    case "SKILL_INSTALL_FAILED":
+      return "Failed to install the skill. See the output for details.";
+    case "SKILL_INSTALL_CANCELLED":
+      return "Installation was cancelled.";
+    case "SKILL_INSTALL_TIMEOUT":
+      return "Installation timed out and was stopped.";
+    case "INSTALL_JOB_NOT_RUNNING":
+      return "That installation has already finished.";
+    case "INSTALL_JOB_LOST":
+      return "The server restarted before the installation finished.";
+    case "INSTALL_JOB_NOT_FOUND":
+      return "That installation is no longer available.";
     case "INVALID_JSON":
       return "The request JSON format is invalid.";
     case "UNSUPPORTED_IMAGE_MIME":

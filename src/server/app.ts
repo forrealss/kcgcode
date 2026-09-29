@@ -5,8 +5,8 @@
  * `Bun.serve({ hostname, port, routes, websocket })`. Mengikuti struktur
  * kcgcode: handler HTTP dikelompokkan per fitur di `routes/*.routes.ts`
  * (di-assemble di sini) dan domain logic di `services/`.
- * - Routes HTTP `/api/projects`, `/api/fs`, `/api/sessions`, upload lampiran
- *   (tabel rute terpisah) + upgrade WebSocket di `/ws`.
+ * - Routes HTTP `/api/projects`, `/api/fs`, `/api/sessions`, upload lampiran,
+ *   `/api/skills` (tabel rute terpisah) + upgrade WebSocket di `/ws`.
  * - Tanpa otentikasi: server bind ke `127.0.0.1` secara default (lihat
  *   `host.ts`), jadi hanya dapat diakses dari mesin ini.
  * - `reconcileOnStartup()` dipanggil sebelum `Bun.serve` menerima koneksi
@@ -24,6 +24,7 @@ import { PUBLIC_DIR, resolveEffectiveUploadsDir } from "../paths";
 import { resolveHostname } from "./host";
 import { projectsRoutes } from "./routes/projects.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
+import { skillsRoutes } from "./routes/skills.routes";
 import type { ApiRouteContext } from "./routes/types";
 import { uploadsRoutes } from "./routes/uploads.routes";
 import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
@@ -33,6 +34,13 @@ import {
 } from "./services/opencode-server";
 import { createProjectManager, type ProjectManager } from "./services/project-manager";
 import { createSessionManager, type SessionManager } from "./services/session-manager";
+import { createSkillInstallJobs } from "./services/skill-install-jobs";
+import {
+  createSkillsRegistry,
+  isValidSkillId,
+  isValidSource,
+  type SkillsRegistry,
+} from "./services/skills-registry";
 import {
   createWebSocketGateway,
   type Subscriber,
@@ -48,6 +56,8 @@ export interface KcgServerOptions {
   store?: SessionStore;
   /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
   servers?: OpenCodeServerManager;
+  /** Injeksi Skills_Registry (skills.sh + CLI `skills`) untuk pengujian. */
+  skillsRegistry?: SkillsRegistry;
   /** Direktori lampiran gambar upload (default: `~/.kcgcode/data/uploads`). */
   uploadsRoot?: string;
   hostname?: string;
@@ -67,6 +77,8 @@ export interface KcgServer {
   projectManager: ProjectManager;
   sessionManager: SessionManager;
   gateway: WebSocketGateway;
+  /** Job instalasi skill (diekspos untuk pengujian). */
+  skillInstalls: ApiRouteContext["skillInstalls"];
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
   close(): Promise<void>;
 }
@@ -134,7 +146,19 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   sessionManager.reconcileOnStartup();
 
   // Konteks bersama untuk tabel rute API.
-  const routeCtx: ApiRouteContext = { projectManager, sessionManager, attachments };
+  const skillsRegistry = opts.skillsRegistry ?? createSkillsRegistry();
+  const skillInstalls = createSkillInstallJobs({
+    registry: skillsRegistry,
+    refreshSkills: (projectId) => sessionManager.refreshSkills(projectId),
+    validate: (source, skill) => isValidSource(source) && isValidSkillId(skill),
+  });
+  const routeCtx: ApiRouteContext = {
+    projectManager,
+    sessionManager,
+    attachments,
+    skillsRegistry,
+    skillInstalls,
+  };
 
   // Subscriber per koneksi (identitas stabil untuk Map gateway).
   const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
@@ -153,6 +177,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       ...projectsRoutes(routeCtx),
       ...sessionsRoutes(routeCtx),
       ...uploadsRoutes(routeCtx),
+      ...skillsRoutes(routeCtx),
 
       // ---- WebSocket_Gateway upgrade (Requirement 4) ----
       "/ws": (req: Request, server: Server<WsData>) => {
@@ -196,11 +221,13 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   });
 
   async function close(): Promise<void> {
+    // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
+    await skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
     await sessionManager.shutdown();
     await server.stop(true);
     store.close();
   }
 
-  return { server, store, projectManager, sessionManager, gateway, close };
+  return { server, store, projectManager, sessionManager, gateway, skillInstalls, close };
 }

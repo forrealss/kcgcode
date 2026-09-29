@@ -15,6 +15,7 @@
  */
 
 import { AppSidebar } from "@/components/layout/AppSidebar";
+import { InstallNotifications } from "@/components/skills/InstallNotifications";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useRouter } from "@/hooks/useRouter";
@@ -24,6 +25,7 @@ import { cn } from "@/lib/utils";
 import { ProjectDetailPage } from "@/pages/projects/ProjectDetailPage";
 import { ProjectsPage } from "@/pages/projects/ProjectsPage";
 import { SessionPage } from "@/pages/sessions/SessionPage";
+import { SkillsPage } from "@/pages/skills/SkillsPage";
 
 import logo from "../../logo.svg";
 
@@ -92,13 +94,17 @@ export function AppShell() {
                              tiap kolom scroll sendiri; lebih sempit: halaman
                              scroll biasa (panel samping ada di Sheet). */
                           "mx-auto w-full max-w-6xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16 lg:h-full lg:pb-0"
-                        : "mx-auto w-full max-w-3xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
+                        : route.name === "skills"
+                          ? /* Skills: grid kartu 2 kolom butuh ruang lebih lebar. */
+                            "mx-auto w-full max-w-5xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
+                          : "mx-auto w-full max-w-3xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
                   }
                 >
                   {route.name === "projects" && <ProjectsPage />}
                   {route.name === "project" && (
                     <ProjectDetailPage key={route.projectId} projectId={route.projectId} />
                   )}
+                  {route.name === "skills" && <SkillsPage />}
                   {route.name === "not-found" && <NotFoundView />}
                 </div>
               </main>
@@ -106,6 +112,8 @@ export function AppShell() {
           </div>
         </SidebarInset>
       </SidebarProvider>
+      {/* Notifikasi instalasi skill: global agar tetap tampil di halaman mana pun. */}
+      <InstallNotifications />
     </TooltipProvider>
   );
 }

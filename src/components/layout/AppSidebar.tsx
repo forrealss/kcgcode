@@ -9,18 +9,23 @@
  *   Layar sentuh & keyboard tidak punya dobel klik, jadi baris terakhir tiap
  *   Project selalu berupa tautan ke halaman Project ("Show all (n)" bila ada
  *   Session tersembunyi, selain itu "Project details").
- * - Tombol "New Session" di atas daftar membuka homepage (composer chat).
+ * - Navigasi utama di atas daftar: "New session" (homepage/composer chat),
+ *   "Search" (command palette `SearchDialog`, juga Ctrl/⌘+K), dan "Skills"
+ *   (`/skills`).
  * - Footer: toggle tema terang/gelap.
  */
 import {
   ChevronRightIcon,
   FolderIcon,
   FolderOpenIcon,
+  MessageCirclePlusIcon,
   RefreshCwIcon,
-  SquarePenIcon,
+  SearchIcon,
+  SparklesIcon,
 } from "lucide-react";
 import type * as React from "react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { SearchDialog } from "@/components/layout/SearchDialog";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -32,7 +37,6 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
-  SidebarInput,
   SidebarMenu,
   SidebarMenuBadge,
   SidebarMenuButton,
@@ -46,13 +50,16 @@ import {
 } from "@/components/ui/sidebar";
 import { useRouter } from "@/hooks/useRouter";
 import type { UseSidebarDataResult } from "@/hooks/useSidebarData";
-import { type AppRoute, projectPath, projectsPath, sessionPath } from "@/lib/routes";
+import { type AppRoute, projectPath, projectsPath, sessionPath, skillsPath } from "@/lib/routes";
 import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL } from "@/lib/session-status";
 import { displaySessionTitle } from "@/lib/session-title";
 import type { SidebarProjectGroup } from "@/lib/sidebar-groups";
 import { cn } from "@/lib/utils";
 
 import logo from "../../logo.svg";
+
+/** Indentasi kiri tombol navigasi utama (New session / Search / Skills). */
+const NAV_BUTTON_CLASS = "pl-4";
 
 /** Batas Session per Project yang tampil sebelum tautan "Show all". */
 const MAX_VISIBLE_SESSIONS = 5;
@@ -65,6 +72,19 @@ export interface AppSidebarProps {
 export function AppSidebar({ route, data }: AppSidebarProps) {
   const { navigate } = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Pintasan global Ctrl/⌘+K membuka pencarian.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setSearchOpen((o) => !o);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   /** Navigasi SPA dari tautan sidebar; Sheet mobile ditutup setelahnya. */
   const go = (path: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -89,45 +109,65 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary p-1.5">
                   <img src={logo} alt="" className="size-full" />
                 </span>
-                <span className="flex min-w-0 flex-col leading-tight">
-                  <span className="truncate font-semibold">KCG Code</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    Control CLI_Agent from anywhere
-                  </span>
-                </span>
+                <span className="truncate font-semibold">KCG Code</span>
               </a>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-        <SidebarInput
-          type="search"
-          value={data.query}
-          onChange={(e) => data.setQuery(e.target.value)}
-          placeholder="Search sessions…"
-          aria-label="Search projects and sessions"
-        />
+
+        {/* Navigasi utama */}
+        <SidebarMenu className="mt-1">
+          <SidebarMenuItem>
+            {/* Homepage = composer chat: kirim pesan di sana membuat Session
+                baru di Project yang dipilih. */}
+            <SidebarMenuButton
+              asChild
+              isActive={route.name === "projects"}
+              className={NAV_BUTTON_CLASS}
+            >
+              <a href={projectsPath()} onClick={go(projectsPath())}>
+                <MessageCirclePlusIcon />
+                <span>New session</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              type="button"
+              onClick={() => {
+                if (isMobile) setOpenMobile(false);
+                setSearchOpen(true);
+              }}
+              aria-haspopup="dialog"
+              aria-keyshortcuts="Control+K Meta+K"
+              className={NAV_BUTTON_CLASS}
+            >
+              <SearchIcon />
+              <span>Search</span>
+              <kbd className="ml-auto hidden rounded border bg-sidebar px-1.5 font-mono text-[10px] text-muted-foreground md:inline">
+                Ctrl K
+              </kbd>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              isActive={route.name === "skills"}
+              className={NAV_BUTTON_CLASS}
+            >
+              {/* Bawa Project aktif agar otomatis terpilih di halaman Skills. */}
+              <a href={skillsPath(activeProjectId)} onClick={go(skillsPath(activeProjectId))}>
+                <SparklesIcon />
+                <span>Skills</span>
+              </a>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
       </SidebarHeader>
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                {/* Homepage = composer chat: kirim pesan di sana membuat Session
-                    baru di Project yang dipilih. */}
-                <SidebarMenuButton asChild isActive={route.name === "projects"}>
-                  <a href={projectsPath()} onClick={go(projectsPath())}>
-                    <SquarePenIcon />
-                    <span>New Session</span>
-                  </a>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Sessions by project</SidebarGroupLabel>
+          <SidebarGroupLabel>Projects</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarBody
               data={data}
@@ -152,6 +192,13 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
       </SidebarFooter>
 
       <SidebarRail />
+
+      <SearchDialog
+        open={searchOpen}
+        onOpenChange={setSearchOpen}
+        groups={data.groups}
+        onSelect={navigate}
+      />
     </Sidebar>
   );
 }
@@ -198,24 +245,14 @@ function SidebarBody({ data, activeProjectId, activeSessionId, go, navigate }: S
     return <p className="px-2 py-1 text-xs text-muted-foreground">No projects yet.</p>;
   }
 
-  if (data.groups.length === 0) {
-    return (
-      <p className="px-2 py-1 text-xs text-muted-foreground">
-        No matches for “{data.query.trim()}”.
-      </p>
-    );
-  }
-
   return (
     <SidebarMenu>
       {data.groups.map((group) => (
         <ProjectGroup
-          // Remount saat query berubah agar hasil pencarian selalu terbuka.
-          key={`${group.project.id}:${data.query.trim() !== ""}`}
+          key={group.project.id}
           group={group}
           active={group.project.id === activeProjectId}
           activeSessionId={activeSessionId}
-          forceOpen={data.query.trim() !== ""}
           go={go}
           navigate={navigate}
         />
@@ -229,21 +266,13 @@ interface ProjectGroupProps {
   /** Project sedang dibuka (halaman Project atau salah satu Session-nya). */
   active: boolean;
   activeSessionId: string | null;
-  forceOpen: boolean;
   go: GoHandler;
   navigate: NavigateFn;
 }
 
-function ProjectGroup({
-  group,
-  active,
-  activeSessionId,
-  forceOpen,
-  go,
-  navigate,
-}: ProjectGroupProps) {
+function ProjectGroup({ group, active, activeSessionId, go, navigate }: ProjectGroupProps) {
   const { isMobile } = useSidebar();
-  const [open, setOpen] = useState(forceOpen || active || group.sessions.length > 0);
+  const [open, setOpen] = useState(active || group.sessions.length > 0);
   /**
    * Jenis pointer klik terakhir. Dobel klik hanya berlaku untuk mouse —
    * double-tap di layar sentuh bisa ikut menghasilkan `detail === 2` dan

@@ -13,6 +13,7 @@ export type AppRoute =
   | { name: "projects" }
   | { name: "project"; projectId: string }
   | { name: "session"; projectId: string; sessionId: string }
+  | { name: "skills" }
   | { name: "not-found" };
 
 /** URL daftar Project. */
@@ -31,6 +32,20 @@ export function sessionPath(projectId: string, sessionId: string): string {
 }
 
 /**
+ * URL halaman Skills. `projectId` (opsional) jadi query `?project=` agar
+ * Project tersebut otomatis terpilih saat halaman dibuka.
+ */
+export function skillsPath(projectId?: string | null): string {
+  return projectId ? `/skills?project=${encodeURIComponent(projectId)}` : "/skills";
+}
+
+/** Ambil id Project dari query string halaman Skills (`?project=`). */
+export function parseSkillsProject(search: string): string | null {
+  const id = new URLSearchParams(search).get("project");
+  return id !== null && id.length > 0 ? id : null;
+}
+
+/**
  * Pemetaan `pathname` -> `AppRoute`. Segment id dianggap opaque — id
  * Project/Session berupa UUID sehingga aman tanpa decoding. Trailing slash
  * diabaikan (`/projects/x/` sama dengan `/projects/x`).
@@ -42,6 +57,7 @@ export function parseRoute(pathname: string): AppRoute {
     .filter((segment) => segment.length > 0);
 
   if (segments.length === 0) return { name: "projects" };
+  if (segments[0] === "skills" && segments.length === 1) return { name: "skills" };
   if (segments[0] !== "projects") return { name: "not-found" };
 
   const projectId = segments[1];
