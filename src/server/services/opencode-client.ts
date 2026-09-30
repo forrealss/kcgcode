@@ -216,6 +216,10 @@ export interface OpenCodeEvent {
 }
 
 export interface OpenCodeClient {
+  /**
+   * Buat Session di server headless. Tanpa `title` (disarankan) opencode
+   * meng-generate judul dari prompt pertama; dengan `title`, judul tetap.
+   */
   createSession(opts?: { title?: string }): Promise<Result<OpenCodeSessionInfo>>;
   /**
    * Cek keberadaan Session di server headless (`GET /session/{id}`):
@@ -342,9 +346,15 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     opts: { title?: string } = {},
   ): Promise<Result<OpenCodeSessionInfo>> {
     try {
-      const { status, json } = await requestJson(baseUrl, "POST", "/session", {
-        title: opts.title ?? "KCG Code Session",
-      });
+      // Tanpa `title`: opencode memberi placeholder `New session - <ISO>` dan
+      // HANYA untuk judul berpola itu ia meng-generate judul otomatis
+      // (agent `title`) setelah prompt pertama. Judul eksplisit mematikannya.
+      const { status, json } = await requestJson(
+        baseUrl,
+        "POST",
+        "/session",
+        opts.title === undefined ? {} : { title: opts.title },
+      );
       if (status !== 200) return errResult(`OC_CREATE_SESSION_FAILED(${status})`);
       const info = json as OpenCodeSessionInfo;
       if (typeof info?.id !== "string") return errResult("OC_CREATE_SESSION_FAILED");

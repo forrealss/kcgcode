@@ -1687,6 +1687,60 @@ test("session.updated -> judul akar disimpan + onTitleChange; judul sama diabaik
   }
 });
 
+test("createSession tidak mengirim judul -> opencode yang meng-generate judul", async () => {
+  const h = freshHarness();
+  try {
+    await createSession(h);
+    const calls = clientOf(h).calls.filter((c) => c.startsWith("createSession:"));
+    expect(calls).toEqual(["createSession:"]);
+    const sess = h.store.listSessions()[0];
+    expect(sess?.title).toBeNull();
+  } finally {
+    h.close();
+  }
+});
+
+test("judul sementara dari prompt pertama, lalu diganti judul hasil opencode", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    await h.sm.sendFreeTextInput(sid, "tolong jelaskan cara kerja rate limiting di express");
+    const temp = h.store.getSession(sid);
+    expect(temp.ok && temp.data.title).toBe("tolong jelaskan cara kerja rate limiting di…");
+
+    // Placeholder opencode (dikirim saat Session dibuat) tidak menimpa judul.
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: "New session - 2026-09-29T10:59:18.048Z" },
+    });
+    const still = h.store.getSession(sid);
+    expect(still.ok && still.data.title).toBe("tolong jelaskan cara kerja rate limiting di…");
+
+    // Judul hasil generate opencode menggantikan judul sementara.
+    client.emit({
+      type: "session.updated",
+      sessionID: "ses_remote1",
+      info: { id: "ses_remote1", title: "Cara Kerja Rate Limiting di Express" },
+    });
+    const final = h.store.getSession(sid);
+    expect(final.ok && final.data.title).toBe("Cara Kerja Rate Limiting di Express");
+    expect(h.titles.map(([, t]) => t)).toEqual([
+      "tolong jelaskan cara kerja rate limiting di…",
+      "Cara Kerja Rate Limiting di Express",
+    ]);
+
+    // Prompt kedua tidak mengubah judul lagi.
+    await h.sm.sendFreeTextInput(sid, "lanjut ke nestjs");
+    const after = h.store.getSession(sid);
+    expect(after.ok && after.data.title).toBe("Cara Kerja Rate Limiting di Express");
+  } finally {
+    h.close();
+  }
+});
+
 test("session.updated child sub-agent -> judul Session akar tidak tertimpa", async () => {
   const h = freshHarness();
   try {

@@ -10,6 +10,7 @@
  *   sini (daftar pesan, kartu prompt, status Session, error banner).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
@@ -280,8 +281,9 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     try {
       await apiFetch(`/api/sessions/${session.id}`, { method: "POST" });
       // Status baru dikirim gateway ke semua subscriber; tak perlu setState di sini.
+      toast.success("Session resumed.");
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to start session");
+      toast.error(e instanceof ApiError ? e.message : "Couldn't resume the session.");
     } finally {
       setStarting(false);
     }
@@ -296,8 +298,9 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     setError(null);
     try {
       await apiFetch(`/api/sessions/${session.id}/stop`, { method: "POST" });
+      toast.success("Session stopped.");
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to stop session");
+      toast.error(e instanceof ApiError ? e.message : "Couldn't stop the session.");
     } finally {
       setStopping(false);
     }
@@ -312,9 +315,10 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     try {
       await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
       setDeleteOpen(false);
+      toast.success("Session deleted.");
       (onDeleted ?? onBack)();
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to delete session");
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");
     } finally {
       setDeleting(false);
     }

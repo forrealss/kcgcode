@@ -73,14 +73,43 @@ To use it from your phone:
    run commands on your machine. The sidebar shows a "Not protected" warning while there's no
    lock.
 2. **Expose it.** Either:
-   - Use an HTTPS tunnel such as Cloudflare Tunnel or ngrok, pointed at the kcgcode port
-     (recommended), or
+   - Turn on **Settings → Remote access** (built in, see below), or
+   - Use an HTTPS tunnel such as Cloudflare Tunnel or ngrok, pointed at the kcgcode port, or
    - Bind to your LAN with `kcgcode --host 0.0.0.0` and open `http://<your-ip>:3000` on the
      same network. Traffic isn't encrypted on plain HTTP, so prefer a tunnel.
 3. Open the URL on your phone, unlock, and optionally add it to your home screen.
 
 Only tunnel the kcgcode port. The per-project `opencode serve` processes have no password of
 their own and should stay local.
+
+### Remote access (`https://<name>.<your-domain>`)
+
+kcgcode can publish itself at your own subdomain through a kcgcode tunnel server you host
+(see [`reverse-proxy/`](reverse-proxy)).
+
+1. Set an app lock. Remote access can't be turned on without one, and removing the lock turns
+   it off.
+2. **Settings → Remote access → Connect.** kcgcode shows a code, a link, and a QR code.
+3. Open the link on any device (your phone works), sign in with Google, check that the code
+   matches, and approve. First time only: pick a name (3–20 lowercase letters, numbers, or
+   hyphens).
+4. kcgcode connects and turns the tunnel on. It downloads `frpc` v0.71.0 to `~/.kcgcode/bin`
+   (SHA-256 verified; an existing `frpc` on `PATH` is used instead). The tunnel reconnects on its
+   own and comes back after a restart.
+
+Google sign-in happens entirely on the tunnel service, so kcgcode never holds Google
+credentials. What it stores is a device token (revocable, per machine) and the tunnel secret, in
+SQLite plus `frpc.toml` (mode 0600) next to it. Neither is ever sent to the browser.
+**Disconnect this machine** revokes the device token on the server. **Rotate tunnel secret**
+issues a new frp secret if you think it leaked.
+
+The tunnel server URL is baked into the published npm package, so users don't configure
+anything. `KCG_TUNNEL_API_URL` overrides it, for example to point at your own server.
+
+| Environment variable | Default |
+| --- | --- |
+| `KCG_TUNNEL_API_URL` | The URL built into the package (none in a git checkout) |
+| `KCG_FRPC_PATH` | auto (`~/.kcgcode/bin/frpc`, then `PATH`, then download) |
 
 ## Security
 
@@ -175,6 +204,9 @@ Skills installed from the Skills page go into the project folder under `.agents/
 
 ## Develop
 
+Copy `.env.example` to `.env`. Bun loads it automatically, and it's gitignored. Set
+`KCG_TUNNEL_API_URL` to your tunnel server to use Remote access while developing.
+
 ```bash
 bun install
 bun dev             # dev server with HMR (uses ./kcg-code.config.json if present)
@@ -182,6 +214,16 @@ bun test
 bun run lint
 bun run typecheck
 bun run build
+```
+
+### Publishing
+
+`bun publish` (or `bun pm pack`) runs `prepack`, which writes `KCG_TUNNEL_API_URL` from `.env`
+into `src/build-config.ts`. `postpack` then resets it, so the URL never ends up in git.
+Publishing fails if the variable is missing or isn't `https://`. Check what gets published with:
+
+```bash
+bun pm pack && tar -xOzf kcgcode-*.tgz package/src/build-config.ts
 ```
 
 Built with [Bun](https://bun.com).

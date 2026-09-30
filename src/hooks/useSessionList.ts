@@ -7,6 +7,7 @@
  * baru hidup di `NewSessionDialog`.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
@@ -26,9 +27,6 @@ export interface SessionListEngine {
   ordered: Session[];
   summary: SessionSummary;
   refresh: () => Promise<void>;
-
-  /** Error aksi (stop/start/hapus) — banner di atas daftar. */
-  actionError: string | null;
 
   // Aksi per-Session
   stopping: string | null;
@@ -54,7 +52,6 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
   const [starting, setStarting] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
@@ -112,12 +109,12 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const stop = useCallback(
     async (sessionId: string) => {
       setStopping(sessionId);
-      setActionError(null);
       try {
         await apiFetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
+        toast.success("Session stopped.");
         await refresh();
       } catch (e) {
-        setActionError(e instanceof ApiError ? e.message : "Failed to stop session");
+        toast.error(e instanceof ApiError ? e.message : "Couldn't stop the session.");
       } finally {
         setStopping(null);
       }
@@ -129,12 +126,12 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const start = useCallback(
     async (sessionId: string) => {
       setStarting(sessionId);
-      setActionError(null);
       try {
         await apiFetch(`/api/sessions/${sessionId}`, { method: "POST" });
+        toast.success("Session resumed.");
         await refresh();
       } catch (e) {
-        setActionError(e instanceof ApiError ? e.message : "Failed to start session");
+        toast.error(e instanceof ApiError ? e.message : "Couldn't resume the session.");
       } finally {
         setStarting(null);
       }
@@ -154,13 +151,13 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     const session = pendingDelete;
     if (!session) return;
     setDeleting(session.id);
-    setActionError(null);
     try {
       await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
       setPendingDelete(null);
+      toast.success("Session deleted.");
       await refresh();
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : "Failed to delete session");
+      toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");
     } finally {
       setDeleting(null);
     }
@@ -175,13 +172,13 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
    */
   const confirmRemoveProject = useCallback(async () => {
     setDeletingProject(true);
-    setActionError(null);
     try {
       await apiFetch(`/api/projects/${projectId}`, { method: "DELETE" });
       setProjectDeleteOpen(false);
+      toast.success("Project removed.");
       onDeleted?.();
     } catch (e) {
-      setActionError(e instanceof ApiError ? e.message : "Failed to delete project");
+      toast.error(e instanceof ApiError ? e.message : "Couldn't remove the project.");
     } finally {
       setDeletingProject(false);
     }
@@ -194,7 +191,6 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     ordered,
     summary,
     refresh,
-    actionError,
     stopping,
     stop,
     starting,

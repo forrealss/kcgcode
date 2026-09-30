@@ -45,6 +45,24 @@ export function errorStatus(code: string): number {
     case "AVATAR_PRESET_INVALID":
     case "AUTH_NOT_CONFIGURED":
       return 400;
+    // Tunnel: prasyarat belum terpenuhi.
+    case "TUNNEL_LOCK_REQUIRED":
+    case "TUNNEL_SIGNED_OUT":
+      return 409;
+    case "TUNNEL_DEVICE_REVOKED":
+      // Bukan 401: itu sinyal lock screen kcgcode di klien.
+      return 403;
+    case "TUNNEL_RATE_LIMITED":
+      return 429;
+    case "FRPC_UNSUPPORTED_PLATFORM":
+    case "TUNNEL_NOT_CONFIGURED":
+      return 501;
+    case "TUNNEL_API_UNREACHABLE":
+    case "FRPC_DOWNLOAD_FAILED":
+    case "FRPC_CHECKSUM_MISMATCH":
+    case "FRPC_NOT_FOUND":
+    case "FRPC_START_FAILED":
+      return 502;
     case "AUTH_INVALID":
     case "CURRENT_SECRET_INVALID":
     case "AUTH_REQUIRED":

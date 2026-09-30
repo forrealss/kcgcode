@@ -87,6 +87,22 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   last_seen_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
 );
+
+-- Tunnel publik (<username>.<domain>) lewat API kcgcode-rp + frpc.
+-- Satu baris (id = 1). device_token (dari device flow, bisa dicabut di VPS)
+-- & tunnel_secret tidak pernah dikirim ke browser; enabled = tunnel
+-- dinyalakan ulang saat start.
+CREATE TABLE IF NOT EXISTS tunnel_account (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  email TEXT,
+  username TEXT,
+  subdomain TEXT,
+  device_id TEXT,
+  device_token TEXT,
+  tunnel_secret TEXT,
+  enabled INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);
 `;
 
 /** Menambah kolom bila belum ada (migrasi DB lama yang idempoten). */

@@ -7,6 +7,7 @@
  * - Profil: avatar besar di tengah dengan tombol pensil (pilih avatar bawaan
  *   / upload foto), nickname sebagai entry row.
  * - Security (`#security`): kunci aplikasi, jenis kunci, kunci otomatis.
+ * - Remote access (`#remote`): tunnel publik lewat Google sign-in.
  * - Devices: sesi login per perangkat.
  */
 import {
@@ -17,8 +18,10 @@ import {
   SmartphoneIcon,
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { toast } from "sonner";
 import { AvatarEditor } from "@/components/auth/AvatarEditor";
 import { ActionRow, EntryRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
+import { RemoteAccessGroup } from "@/components/settings/RemoteAccessGroup";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -55,25 +58,11 @@ function errorText(e: unknown, fallback: string): string {
   return e instanceof ApiError ? e.message : fallback;
 }
 
-/** Toast kecil di bawah halaman (hasil aksi), hilang sendiri. */
-function useToast() {
-  const [toast, setToast] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), toast.kind === "ok" ? 3000 : 6000);
-    return () => clearTimeout(t);
-  }, [toast]);
-  return {
-    toast,
-    ok: (text: string) => setToast({ kind: "ok", text }),
-    error: (text: string) => setToast({ kind: "error", text }),
-  };
-}
-
 export function SettingsPage() {
   const auth = useAuth();
   const status = auth.phase === "ready" ? auth.status : null;
-  const { toast, ok, error } = useToast();
+  const ok = useCallback((text: string) => toast.success(text), []);
+  const error = useCallback((text: string) => toast.error(text), []);
 
   // Tautan `#security` (dari banner "Not protected") -> gulir ke bagiannya.
   useEffect(() => {
@@ -95,20 +84,8 @@ export function SettingsPage() {
     <div className="mx-auto flex w-full max-w-[40rem] flex-col gap-8 pb-10">
       <ProfileHeader status={status} onOk={ok} onError={error} />
       <SecurityGroup status={status} onOk={ok} />
+      <RemoteAccessGroup protectedApp={status.protected} />
       {status.protected && <DevicesGroup onError={error} />}
-
-      {toast && (
-        <div
-          role={toast.kind === "error" ? "alert" : "status"}
-          className={cn(
-            "fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full px-4 py-2 text-sm shadow-lg",
-            "animate-in fade-in-0 slide-in-from-bottom-2",
-            toast.kind === "error" ? "bg-destructive text-white" : "bg-foreground text-background",
-          )}
-        >
-          {toast.text}
-        </div>
-      )}
     </div>
   );
 }
@@ -184,6 +161,11 @@ function SecurityGroup({ status, onOk }: { status: AuthStatus; onOk: (t: string)
         method: "PATCH",
         body: JSON.stringify({ autoLockMinutes: minutes }),
       });
+      toast.success(
+        minutes === 0
+          ? "Auto-lock turned off."
+          : `Auto-lock set to ${AUTO_LOCK_OPTIONS.find((o) => o.value === minutes)?.label ?? `${minutes} minutes`}.`,
+      );
       void refreshAuth();
     } catch (err) {
       setAutoLock(prev);

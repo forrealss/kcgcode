@@ -32,5 +32,6 @@
     "noPropertyAccessFromIndexSignature": false
   },
 
-  "exclude": ["dist", "node_modules"]
+  // reverse-proxy/ = submodule kcgcode-rp (VPS API) dengan deps & tsconfig sendiri.
+  "exclude": ["dist", "node_modules", "reverse-proxy"]
 }

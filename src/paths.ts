@@ -108,3 +108,14 @@ export function resolveEffectiveDbPath(): string {
 export function resolveEffectiveUploadsDir(): string {
   return defaultUploadsDir();
 }
+
+/** Binary pihak ketiga yang diunduh otomatis (mis. `frpc`): `~/.kcgcode/bin`. */
+export const USER_BIN_DIR = path.join(KCG_HOME, "bin");
+
+/**
+ * Config frpc hasil unduhan dari API tunnel (berisi secret — mode 0600).
+ * Diletakkan di samping SQLite agar ikut mode runtime (dev: ./data).
+ */
+export function resolveFrpcConfigPath(): string {
+  return path.join(path.dirname(resolveEffectiveDbPath()), "frpc.toml");
+}

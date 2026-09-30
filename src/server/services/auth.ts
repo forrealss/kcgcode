@@ -122,6 +122,8 @@ export interface AuthService {
   revokeDevice(id: string): void;
   /** Dipanggil saat sesi dicabut / kedaluwarsa (mis. tutup WebSocket-nya). */
   onSessionEnded(cb: (sessionId: string) => void): () => void;
+  /** Dipanggil setelah kunci diatur / diganti / dihapus (mis. matikan tunnel). */
+  onLockChanged(cb: (protectedNow: boolean) => void): () => void;
   /** Bersihkan sesi kedaluwarsa & idle (dipanggil berkala). */
   sweep(): void;
   /** Reset total dari CLI: hapus kunci & semua sesi. */
@@ -220,6 +222,18 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
   const GLOBAL = "\u0000global";
   const lastTouch = new Map<string, number>();
   const endedListeners = new Set<(sessionId: string) => void>();
+  const lockListeners = new Set<(protectedNow: boolean) => void>();
+
+  function lockChanged(): void {
+    const prot = isProtected();
+    for (const cb of lockListeners) {
+      try {
+        cb(prot);
+      } catch (e) {
+        console.error("[kcg-code] lock listener gagal:", e);
+      }
+    }
+  }
 
   function settings() {
     return store.getAuthSettings(now());
@@ -440,6 +454,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     store.setAuthLock(input.kind, h, now());
     // Sandi berubah -> seluruh sesi lama tidak berlaku lagi.
     revokeAllExcept(null);
+    lockChanged();
     return { ok: true, data: issue(ctx) };
   }
 
@@ -453,6 +468,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
       };
     store.setAuthLock(null, null, now());
     revokeAllExcept(null);
+    lockChanged();
     return { ok: true, data: null };
   }
 
@@ -539,6 +555,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
   function resetLock(): void {
     store.setAuthLock(null, null, now());
     revokeAllExcept(null);
+    lockChanged();
   }
 
   return {
@@ -561,6 +578,10 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     onSessionEnded(cb) {
       endedListeners.add(cb);
       return () => endedListeners.delete(cb);
+    },
+    onLockChanged(cb) {
+      lockListeners.add(cb);
+      return () => lockListeners.delete(cb);
     },
     sweep,
     resetLock,

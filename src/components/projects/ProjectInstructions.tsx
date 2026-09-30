@@ -8,6 +8,7 @@
  */
 import { PencilIcon, PlusIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
+import { toast } from "sonner";
 import { PanelSection } from "@/components/projects/PanelSection";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -137,6 +138,7 @@ function InstructionsDialog({
       });
       const body = (await res.json()) as { project: Project };
       onSaved(body.project);
+      toast.success(body.project.instructions ? "Instructions saved." : "Instructions cleared.");
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to save instructions");
     } finally {

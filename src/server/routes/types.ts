@@ -10,6 +10,7 @@ import type { ProjectManager } from "../services/project-manager";
 import type { SessionManager } from "../services/session-manager";
 import type { SkillInstallJobs } from "../services/skill-install-jobs";
 import type { SkillsRegistry } from "../services/skills-registry";
+import type { TunnelManager } from "../services/tunnel";
 
 export interface ApiRouteContext {
   projectManager: ProjectManager;
@@ -17,4 +18,5 @@ export interface ApiRouteContext {
   attachments: AttachmentManager;
   skillsRegistry: SkillsRegistry;
   skillInstalls: SkillInstallJobs;
+  tunnel: TunnelManager;
 }

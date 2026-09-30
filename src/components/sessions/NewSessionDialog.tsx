@@ -8,6 +8,7 @@
  * ini tampil sebagai dialog agar tidak mendorong daftar ke bawah.
  */
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -92,6 +93,7 @@ export function NewSessionDialog({
       });
       onOpenChange(false);
       onCreated();
+      toast.success("Session created.");
     } catch (e) {
       setCreateError(e instanceof ApiError ? e.message : "Failed to create session");
     } finally {

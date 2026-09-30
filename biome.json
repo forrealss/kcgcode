@@ -7,7 +7,17 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**", "!dist", "!data", "!out", "!coverage", "!.kiro", "!.claude", "!.agents"]
+    "includes": [
+      "**",
+      "!dist",
+      "!data",
+      "!out",
+      "!coverage",
+      "!.kiro",
+      "!.claude",
+      "!.agents",
+      "!reverse-proxy"
+    ]
   },
   "formatter": {
     "enabled": true,

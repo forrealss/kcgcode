@@ -11,6 +11,7 @@ function makeInfo(overrides: Partial<DashboardInfo> = {}): DashboardInfo {
           { id: "s2", status: "idle", title: null },
         ],
       },
+      tunnel: { status: () => ({ phase: "signed_out", account: null, error: null }) },
     } as unknown as DashboardInfo["server"],
     port: 3000,
     hostname: "127.0.0.1",
@@ -38,6 +39,13 @@ describe("renderDashboard", () => {
           listProjects: () => [],
           listSessions: () => sessions,
         },
+        tunnel: {
+          status: () => ({
+            phase: "online",
+            account: { url: "https://demo.example.com" },
+            error: null,
+          }),
+        },
       } as unknown as DashboardInfo["server"],
     });
 
@@ -47,6 +55,8 @@ describe("renderDashboard", () => {
     sessions = [{ id: "s9", status: "running", title: "fresh" }];
     const after = renderDashboard(info, "0.1.0");
     expect(after).toContain("fresh");
+    expect(after).toContain("TUNNEL");
+    expect(after).toContain("https://demo.example.com");
     expect(after).not.toBe(before);
   });
 });

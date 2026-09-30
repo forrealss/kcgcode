@@ -136,6 +136,35 @@ export function apiErrorMessage(code: string): string {
       return "The image exceeds the 20 MiB limit.";
     case "ATTACHMENT_NOT_FOUND":
       return "The image attachment was not found (it may have been deleted).";
+    case "TUNNEL_LOCK_REQUIRED":
+      return "Set an app lock before turning on remote access.";
+    case "TUNNEL_NOT_CONFIGURED":
+      return "Remote access isn't configured. Set KCG_TUNNEL_API_URL and restart kcgcode.";
+    case "TUNNEL_SIGNED_OUT":
+      return "Connect this machine first.";
+    case "TUNNEL_PAIRING_EXPIRED":
+      return "The code expired before it was approved. Connect again.";
+    case "TUNNEL_PAIRING_DENIED":
+      return "The request was denied on the sign-in page.";
+    case "TUNNEL_DEVICE_REVOKED":
+      return "This machine was disconnected from your account. Connect again.";
+    case "TUNNEL_RATE_LIMITED":
+      return "Too many attempts. Wait a few minutes and try again.";
+    case "TUNNEL_API_UNREACHABLE":
+      return "Couldn't reach the remote access service. Check your connection.";
+    case "TUNNEL_AUTH_FAILED":
+      return "The tunnel server rejected this device. Try rotating the secret.";
+    case "TUNNEL_PROXY_FAILED":
+      return "The tunnel server couldn't publish your address. See the log for details.";
+    case "FRPC_UNSUPPORTED_PLATFORM":
+      return "Remote access isn't supported on this OS or CPU yet.";
+    case "FRPC_DOWNLOAD_FAILED":
+    case "FRPC_NOT_FOUND":
+      return "Couldn't install the tunnel client (frpc). See the log for details.";
+    case "FRPC_CHECKSUM_MISMATCH":
+      return "The downloaded tunnel client failed verification and was discarded.";
+    case "FRPC_START_FAILED":
+      return "Couldn't start the tunnel client. See the log for details.";
     default:
       return `Something went wrong (${code}).`;
   }

@@ -1,11 +1,18 @@
 /**
  * Helper judul Session — dipakai Client & Server agar placeholder
- * konsisten diperlakukan sebagai \"belum ada judul\".
+ * konsisten diperlakukan sebagai "belum ada judul".
  *
- * Seperti daftar session opencode, tiap Session harus punya judul beda.
- * Opencode meng-generate-nya via summarization setelah prompt pertama
- * (SSE `session.updated`); sementara itu KCG Code menurunkan judul lokal
- * dari teks prompt pertama agar daftar tidak penuh dengan \"New session\" / \"KCG Code Session\".
+ * Alur (sama seperti opencode):
+ * 1. Session dibuat di opencode TANPA judul -> opencode memberi placeholder
+ *    `New session - <ISO>`. Hanya judul berpola itu yang memicu opencode
+ *    meng-generate judul (agent `title`, setelah langkah pertama prompt
+ *    pertama), lalu dikirim lewat SSE `session.updated`.
+ * 2. Sambil menunggu (biasanya beberapa detik), KCG Code menampilkan judul
+ *    sementara dari baris pertama prompt (`deriveSessionTitle`).
+ * 3. Judul hasil opencode selalu menggantikan judul sementara.
+ *
+ * `SESSION_TITLE_PLACEHOLDERS` = judul lama yang dulu dikirim KCG Code saat
+ * membuat Session (opencode tidak pernah meng-generate judul untuk itu).
  */
 
 export const SESSION_TITLE_PLACEHOLDERS = new Set<string>([
@@ -13,11 +20,22 @@ export const SESSION_TITLE_PLACEHOLDERS = new Set<string>([
   "KCG Code Session (resumed)",
 ]);
 
+/**
+ * Judul default opencode (`packages/opencode/src/session/session.ts`,
+ * `isDefaultTitle`): `New session - ` / `Child session - ` + ISO timestamp.
+ */
+const OPENCODE_DEFAULT_TITLE =
+  /^(New session - |Child session - )\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export function isOpencodeDefaultTitle(title: string): boolean {
+  return OPENCODE_DEFAULT_TITLE.test(title.trim());
+}
+
 export function isPlaceholderTitle(title: string | null | undefined): boolean {
   if (title === null || title === undefined) return true;
   const t = title.trim();
   if (t === "") return true;
-  return SESSION_TITLE_PLACEHOLDERS.has(t);
+  return SESSION_TITLE_PLACEHOLDERS.has(t) || isOpencodeDefaultTitle(t);
 }
 
 /**
@@ -38,7 +56,7 @@ export function deriveSessionTitle(text: string, maxLength = 50): string | null 
   return `${cut.trim()}…`;
 }
 
-/** Judul untuk ditampilkan di daftar — placeholder difallback ke \"New session\". */
+/** Judul untuk ditampilkan di daftar — placeholder difallback ke "New session". */
 export function displaySessionTitle(title: string | null | undefined): string {
   if (isPlaceholderTitle(title ?? null)) return "New session";
   return (title as string).trim();

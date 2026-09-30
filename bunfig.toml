@@ -7,3 +7,6 @@ env = "BUN_PUBLIC_*"
 # import logo.svg di komponen gagal ("Missing 'default' export").
 [test]
 preload = ["./tests/preload.ts"]
+# reverse-proxy/ = submodule kcgcode-rp dengan deps sendiri; jalankan
+# test-nya dari dalam folder itu (`cd reverse-proxy && bun test`).
+pathIgnorePatterns = ["reverse-proxy/**"]

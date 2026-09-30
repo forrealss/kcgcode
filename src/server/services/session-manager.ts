@@ -381,8 +381,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const { id, title } = info as { id?: unknown; title?: unknown };
       if (typeof id !== "string" || typeof title !== "string") return;
       if (title.trim() === "") return;
-      // Placeholder opencode ("KCG Code Session") bukan judul percakapan —
-      // abaikan agar tidak menimpa judul turunan lokal yang sudah bagus.
+      // Placeholder (`New session - <ISO>`, judul lama "KCG Code Session")
+      // bukan judul percakapan — abaikan agar tidak menimpa judul sementara.
+      // Judul hasil opencode selalu menggantikan judul sementara lokal.
       if (isPlaceholderTitle(title)) return;
       const sessionId = ocToSession.get(id);
       if (sessionId === undefined) return;
@@ -585,18 +586,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (!known) return { ok: false, error: "MODEL_NOT_FOUND" };
     }
 
-    // (6) buat Session di server headless
-    const created = await client.createSession({
-      title: "KCG Code Session",
-    });
+    // (6) buat Session di server headless — TANPA judul, agar opencode
+    //     meng-generate judul dari prompt pertama (lihat lib/session-title.ts).
+    const created = await client.createSession();
     if (!created.ok) return { ok: false, error: created.error };
 
     const sessionId = randomUUID();
     const createdAt = now();
-    // Judul dari opencode sering kosong / placeholder ("KCG Code Session").
-    // Filter placeholder agar UI tidak menampilkan judul sama untuk semua
-    // Session — judul bagus akan datang dari SSE `session.updated` atau
-    // turunan lokal prompt pertama di `sendFreeTextInput`.
+    // Judul awal opencode berupa placeholder (`New session - <ISO>`) — tidak
+    // disimpan. Judul datang dari SSE `session.updated`; sementara itu
+    // `sendFreeTextInput` memberi judul turunan prompt pertama.
     const remoteTitle =
       typeof created.data.title === "string" && !isPlaceholderTitle(created.data.title)
         ? created.data.title
@@ -706,9 +705,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       }
     }
     if (!ocSessionId) {
-      const created = await serverRes.data.client.createSession({
-        title: "KCG Code Session (resumed)",
-      });
+      // Sesi remote baru (yang lama hilang). Tanpa judul: bila Session belum
+      // punya judul, opencode akan meng-generate-nya dari prompt berikutnya.
+      const created = await serverRes.data.client.createSession();
       if (!created.ok) return { ok: false, error: created.error };
       ocSessionId = created.data.id;
       mapOcSession(ocSessionId, sessionId);
@@ -1047,9 +1046,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!store.insertMessage(userMessage).ok) return { ok: false, error: "MESSAGE_WRITE_FAILED" };
     onMessage?.(userMessage);
 
-    // Auto-title seperti opencode TUI: tiap Session harus punya judul beda.
-    // Bila masih placeholder/null (belum ada prompt nyata), turunkan judul
-    // dari teks prompt pertama. Gambar saja (text kosong) -> pakai "Image".
+    // Judul SEMENTARA sampai opencode mengirim judul hasil generate
+    // (`session.updated`, biasanya beberapa detik). Bila masih placeholder /
+    // null, turunkan dari teks prompt pertama. Gambar saja -> "Image".
     if (isPlaceholderTitle(cur.data.title)) {
       const candidate = deriveSessionTitle(text) ?? (hasImages ? "Image" : null);
       if (candidate && store.updateSessionTitle(sessionId, candidate).ok) {

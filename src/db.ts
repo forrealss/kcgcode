@@ -10,6 +10,7 @@
  * - `messages.ts`      — repository pesan terstruktur (append-only)
  * - `prompts.ts`       — repository prompt interaktif
  * - `auth.ts`          — kunci aplikasi (lock screen) & sesi login
+ * - `tunnel.ts`        — akun tunnel publik (Google + kcgcode-rp)
  *
  * Konvensi: `session_status_history` dan `messages` bersifat **append-only**
  * (insert-only) sehingga Requirement 3.1/3.3 terpenuhi secara struktural.
@@ -26,6 +27,7 @@ import { createProjectRepo, type ProjectRepo } from "./server/db/projects";
 import { createPromptRepo, type PromptRepo } from "./server/db/prompts";
 import { runMigrations } from "./server/db/schema";
 import { createSessionRepo, type SessionRepo, type StatusHistoryEntry } from "./server/db/sessions";
+import { createTunnelRepo, type TunnelRepo } from "./server/db/tunnel";
 import type { Result, SimpleResult } from "./server/result";
 import type {
   InteractivePrompt,
@@ -39,7 +41,7 @@ import type {
 
 export { DEFAULT_DB_PATH };
 
-export interface SessionStore extends AuthRepo {
+export interface SessionStore extends AuthRepo, TunnelRepo {
   // ---- Pesan terstruktur (append-only) ----
   insertMessage(message: SessionMessage): Result<SessionMessage>;
   getMessages(sessionId: string): Result<SessionMessage[]>;
@@ -126,6 +128,7 @@ export function openSessionStore(dbPath?: string): SessionStore {
   const messages: MessageRepo = createMessageRepo(db);
   const prompts: PromptRepo = createPromptRepo(db);
   const auth: AuthRepo = createAuthRepo(db);
+  const tunnel: TunnelRepo = createTunnelRepo(db);
 
   const store: SessionStore = {
     ...projects,
@@ -133,6 +136,7 @@ export function openSessionStore(dbPath?: string): SessionStore {
     ...messages,
     ...prompts,
     ...auth,
+    ...tunnel,
     close() {
       db.close();
     },

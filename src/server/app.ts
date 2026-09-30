@@ -21,17 +21,19 @@ import path from "node:path";
 import { type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
 import { type AppConfig, loadConfig } from "../config";
 import { openSessionStore, type SessionStore } from "../db";
-import { PUBLIC_DIR, resolveEffectiveUploadsDir } from "../paths";
+import { PUBLIC_DIR, resolveEffectiveUploadsDir, resolveFrpcConfigPath } from "../paths";
 import { resolveHostname } from "./host";
 import { authRoutes } from "./routes/auth.routes";
 import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
 import { projectsRoutes } from "./routes/projects.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
 import { skillsRoutes } from "./routes/skills.routes";
+import { tunnelRoutes } from "./routes/tunnel.routes";
 import type { ApiRouteContext } from "./routes/types";
 import { uploadsRoutes } from "./routes/uploads.routes";
 import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
 import { type AuthService, createAuthService } from "./services/auth";
+import { createFrpcInstaller } from "./services/frpc-installer";
 import {
   createOpenCodeServerManager,
   type OpenCodeServerManager,
@@ -45,6 +47,9 @@ import {
   isValidSource,
   type SkillsRegistry,
 } from "./services/skills-registry";
+import { createTunnelManager, type TunnelManager } from "./services/tunnel";
+import { createTunnelApi } from "./services/tunnel-api";
+import { resolveTunnelConfig } from "./services/tunnel-config";
 import {
   createWebSocketGateway,
   type Subscriber,
@@ -68,6 +73,16 @@ export interface KcgServerOptions {
   skillsRegistry?: SkillsRegistry;
   /** Injeksi Auth_Service (mis. hash cepat untuk test). */
   auth?: AuthService;
+  /**
+   * Factory Tunnel_Manager (test menyuntik API/spawn palsu). Menerima
+   * dependensi yang hanya diketahui composition root.
+   */
+  tunnel?: (deps: {
+    store: SessionStore;
+    auth: AuthService;
+    port: number;
+    hostname: string;
+  }) => TunnelManager;
   /** Direktori lampiran gambar upload (default: `~/.kcgcode/data/uploads`). */
   uploadsRoot?: string;
   hostname?: string;
@@ -91,6 +106,8 @@ export interface KcgServer {
   skillInstalls: ApiRouteContext["skillInstalls"];
   /** Kunci aplikasi (diekspos untuk pengujian & CLI). */
   auth: AuthService;
+  /** Tunnel publik (diekspos untuk dashboard terminal & pengujian). */
+  tunnel: TunnelManager;
   /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
   apiRoutePatterns: string[];
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
@@ -172,6 +189,31 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // Requirement 2.4: tandai Session "running" tanpa proses sebelum menerima koneksi.
   sessionManager.reconcileOnStartup();
 
+  // Subscriber per koneksi (identitas stabil untuk Map gateway).
+  const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
+
+  // ---- Kunci aplikasi (lock screen) ----
+  const auth = opts.auth ?? createAuthService({ store });
+
+  // ---- Tunnel publik (<username>.<domain dari VPS>) — wajib app lock ----
+  const tunnel = opts.tunnel
+    ? opts.tunnel({ store, auth, port, hostname })
+    : (() => {
+        const tcfg = resolveTunnelConfig();
+        return createTunnelManager({
+          store,
+          config: tcfg,
+          // Tanpa URL API: klien yang selalu gagal (connect() sudah menolak lebih dulu).
+          api: createTunnelApi(tcfg.apiUrl ?? "http://tunnel-api.invalid"),
+          installer: createFrpcInstaller(),
+          localPort: port,
+          localHost: hostname,
+          configPath: resolveFrpcConfigPath(),
+          isProtected: () => auth.isProtected(),
+        });
+      })();
+  auth.onLockChanged((prot) => tunnel.handleLockChanged(prot));
+
   // Konteks bersama untuk tabel rute API.
   const routeCtx: ApiRouteContext = {
     projectManager,
@@ -179,13 +221,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     attachments,
     skillsRegistry,
     skillInstalls,
+    tunnel,
   };
-
-  // Subscriber per koneksi (identitas stabil untuk Map gateway).
-  const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
-
-  // ---- Kunci aplikasi (lock screen) ----
-  const auth = opts.auth ?? createAuthService({ store });
   // Sesi dicabut / terkunci / kedaluwarsa -> tutup WebSocket miliknya agar
   // perangkat itu tidak terus menerima data percakapan.
   auth.onSessionEnded((sessionId) => {
@@ -217,6 +254,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     ...sessionsRoutes(routeCtx),
     ...uploadsRoutes(routeCtx),
     ...skillsRoutes(routeCtx),
+    ...tunnelRoutes(routeCtx),
   });
 
   const server = serve<WsData>({
@@ -293,8 +331,15 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     },
   });
 
+  // Tunnel yang aktif sebelum restart dinyalakan lagi setelah server listen.
+  // Port nyata diketahui setelah `serve` (port 0 di test) — factory default
+  // memakai `port` yang diminta, sama seperti yang dicetak dashboard.
+  tunnel.autoStart();
+
   async function close(): Promise<void> {
     clearInterval(sweepTimer);
+    // Hentikan frpc lebih dulu agar URL publik tidak menunjuk server mati.
+    await tunnel.shutdown();
     // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
     await skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
@@ -311,6 +356,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     gateway,
     skillInstalls,
     auth,
+    tunnel,
     apiRoutePatterns: Object.keys(apiRoutes),
     close,
   };

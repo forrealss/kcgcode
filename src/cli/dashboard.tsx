@@ -105,6 +105,67 @@ function Brand({ version }: { version: string }) {
   );
 }
 
+const TUNNEL_COLOR: Record<string, string> = {
+  online: "green",
+  connecting: "yellow",
+  starting: "yellow",
+  reconnecting: "yellow",
+  error: "red",
+};
+
+/** Status tunnel publik (`https://<username>.<domain>`). */
+function TunnelCard({ server }: { server: KcgServer }) {
+  const t = server.tunnel.status();
+  if (!t.account) {
+    return (
+      <Card title="TUNNEL">
+        {t.pairing ? (
+          <>
+            <Box gap={1}>
+              <Text color="yellow">○</Text>
+              <Text dimColor>{"code".padEnd(8)}</Text>
+              <Text bold color="yellow">
+                {t.pairing.userCode}
+              </Text>
+            </Box>
+            <Box gap={1}>
+              <Text color="gray"> </Text>
+              <Text dimColor>{"open".padEnd(8)}</Text>
+              <Text color="cyan" underline>
+                {t.pairing.verificationUriComplete}
+              </Text>
+            </Box>
+          </>
+        ) : (
+          <Box gap={1}>
+            <Text color="gray">○</Text>
+            <Text dimColor>off · connect in Settings → Remote access</Text>
+          </Box>
+        )}
+      </Card>
+    );
+  }
+  const color = TUNNEL_COLOR[t.phase] ?? "gray";
+  return (
+    <Card title="TUNNEL">
+      <Box gap={1}>
+        <Text color={color}>{t.phase === "online" ? "●" : "○"}</Text>
+        <Text dimColor>{"public".padEnd(8)}</Text>
+        <Text color="cyan" underline={t.phase === "online"}>
+          {t.account.url}
+        </Text>
+      </Box>
+      <Box gap={1}>
+        <Text dimColor>{"status".padEnd(10)}</Text>
+        <Text color={color} bold>
+          {t.phase === "stopped" ? "off" : t.phase}
+        </Text>
+        {t.error && <Text color="red">({t.error})</Text>}
+      </Box>
+    </Card>
+  );
+}
+
 interface DashboardUIProps {
   info: DashboardInfo;
   version: string;
@@ -136,6 +197,8 @@ function DashboardUI({ info, version }: DashboardUIProps) {
           </Text>
         </Box>
       </Card>
+
+      <TunnelCard server={server} />
 
       <Card title="ACTIVITY">
         <Metric label="projects" value={String(projects)} />

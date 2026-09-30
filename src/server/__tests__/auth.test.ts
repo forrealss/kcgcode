@@ -115,6 +115,14 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       // Publik hanya untuk GET; PUT/DELETE wajib login.
       "/api/auth/avatar",
       "/api/auth/avatar/preset",
+      "/api/tunnel",
+      "/api/tunnel/logs",
+      "/api/tunnel/connect",
+      "/api/tunnel/connect/cancel",
+      "/api/tunnel/start",
+      "/api/tunnel/stop",
+      "/api/tunnel/rotate-secret",
+      "/api/tunnel/signout",
     ];
     // Setiap pola rute /api terdaftar (kecuali publik) harus tercakup daftar
     // di atas — rute baru yang belum diuji membuat test ini gagal.

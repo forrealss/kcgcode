@@ -8,15 +8,21 @@
 
 import { AuthGate } from "@/components/auth/AuthGate";
 import { AppShell } from "@/components/layout/AppShell";
+import { Toaster } from "@/components/ui/sonner";
 import "./index.css";
 
 export function App() {
   // Kunci aplikasi: shell (dan semua request datanya) baru dirender setelah
   // lock screen dibuka.
   return (
-    <AuthGate>
-      <AppShell />
-    </AuthGate>
+    <>
+      <AuthGate>
+        <AppShell />
+      </AuthGate>
+      {/* Toast global (juga tampil di lock screen). Atas-tengah agar tidak
+          menutupi kartu instalasi skill di kanan bawah. */}
+      <Toaster position="top-center" closeButton />
+    </>
   );
 }
 

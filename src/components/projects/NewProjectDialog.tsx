@@ -9,6 +9,7 @@
 
 import { ArrowLeftIcon, ArrowRightIcon, FolderIcon, FolderPlusIcon } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 import { FolderBrowser } from "@/components/projects/FolderBrowser";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -82,6 +83,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
       await apiFetch("/api/projects", { method: "POST", body: JSON.stringify({ name, path }) });
       await onCreated();
       handleOpenChange(false);
+      toast.success(`Project "${name.trim()}" created.`);
     } catch (e) {
       setFormError(e instanceof ApiError ? e.message : "Failed to create project");
     } finally {

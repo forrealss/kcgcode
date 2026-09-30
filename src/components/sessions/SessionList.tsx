@@ -32,6 +32,7 @@ import {
   Trash2Icon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { ProjectSidePanel } from "@/components/projects/ProjectSidePanel";
 import { ConfirmDeleteProjectDialog } from "@/components/sessions/ConfirmDeleteProjectDialog";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
@@ -77,8 +78,10 @@ function CopyablePath({ path }: { path: string }) {
     try {
       await navigator.clipboard.writeText(path);
       setCopied(true);
+      toast.success("Path copied.");
     } catch {
-      // Clipboard tak tersedia (mis. konteks non-HTTPS) — abaikan diam-diam.
+      // Clipboard API butuh konteks aman (HTTPS / localhost).
+      toast.error("Couldn't copy. Select the path and copy it manually.");
     }
   };
 
@@ -237,13 +240,6 @@ export function SessionList({
             </div>
           )}
         </header>
-
-        {list.actionError && (
-          <Alert variant="destructive" className="shrink-0 lg:mb-6">
-            <AlertTitle>Action failed</AlertTitle>
-            <AlertDescription>{list.actionError}</AlertDescription>
-          </Alert>
-        )}
 
         <section
           aria-label="Sessions"
