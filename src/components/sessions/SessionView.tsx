@@ -16,9 +16,13 @@
  * - Logika transformasi pesan murni: `lib/turns.ts` (type di `types/turns.ts`).
  * - Area UI: `SessionHeader`, `SessionTimeline`, `PromptPanel`,
  *   `SessionComposer` di folder yang sama.
+ * - Drag & drop file: `FileDropOverlay` (portal, menutupi seluruh viewport)
+ *   meneruskan file ke composer (`SessionComposerHandle.addFiles`).
  */
+import { useRef } from "react";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
-import { SessionComposer } from "@/components/sessions/SessionComposer";
+import { FileDropOverlay } from "@/components/sessions/FileDropOverlay";
+import { SessionComposer, type SessionComposerHandle } from "@/components/sessions/SessionComposer";
 import { SessionHeader } from "@/components/sessions/SessionHeader";
 import { SessionTimeline } from "@/components/sessions/SessionTimeline";
 import { useSessionChat } from "@/hooks/useSessionChat";
@@ -39,6 +43,15 @@ export interface SessionViewProps {
 export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const chat = useSessionChat({ session, onBack, onDeleted });
   const empty = chat.messages.length === 0;
+  const composerRef = useRef<SessionComposerHandle>(null);
+  // Composer tidak dirender saat pertanyaan menunggu jawaban (panel docked).
+  const composerShown = empty || !chat.hasPendingQuestion;
+  const acceptingFiles = composerShown && chat.canInput;
+  const blockedReason = !composerShown
+    ? "Answer the question first, then add your files."
+    : chat.busy
+      ? "Wait for the response to finish, then drop your files."
+      : "Start the session to add files.";
 
   return (
     // `data-vt-name`: tujuan transisi "to-session" — composer homepage meluas
@@ -68,6 +81,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               No conversation yet
             </h1>
             <SessionComposer
+              ref={composerRef}
               session={session}
               inputAllowed={chat.canInput}
               busy={chat.busy}
@@ -106,6 +120,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
 
           {!chat.hasPendingQuestion && (
             <SessionComposer
+              ref={composerRef}
               session={session}
               inputAllowed={chat.canInput}
               busy={chat.busy}
@@ -118,6 +133,12 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
           )}
         </>
       )}
+
+      <FileDropOverlay
+        accepting={acceptingFiles}
+        blockedReason={blockedReason}
+        onDropFiles={(files, from) => composerRef.current?.addFiles(files, from)}
+      />
 
       {/* Konfirmasi hapus Session dari menu aksi header */}
       <ConfirmSessionDeleteDialog

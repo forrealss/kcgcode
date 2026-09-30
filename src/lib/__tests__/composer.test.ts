@@ -19,7 +19,7 @@ describe("composerPlaceholder", () => {
 
   test("wide screen: full hint when input is ready", () => {
     expect(composerPlaceholder({ busy: false, canInput: true, compact: false })).toBe(
-      "Type a message… type @ for file references, or paste an image",
+      "Type a message… type @ for file references, or drop files here",
     );
   });
 

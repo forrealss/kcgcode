@@ -2,7 +2,7 @@
  * Unit test `attachments.ts` — Attachment_Store gambar upload.
  *
  * Yang diuji (tanpa server sungguhan):
- * - save hanya menerima mime gambar didukung + batas ukuran.
+ * - save menerima semua jenis file + batas ukuran; mime & nama dinormalkan.
  * - id dibangkitkan server (UUID) dan path aman dari traversal.
  * - info/read mengembalikan metadata & bytes yang sama (round-trip).
  * - remove & removeSession membersihkan file.
@@ -49,16 +49,32 @@ test("save + info + read: round-trip bytes & metadata per Session", () => {
   }
 });
 
-test("save menolak mime non-gambar, file kosong, dan file > 20 MiB", () => {
+test("save menerima file apa saja, menolak file kosong dan file > 20 MiB", () => {
   const root = freshRoot();
   try {
     const m = createAttachmentManager(root);
-    expect(m.save("s", "a.txt", "text/plain", new TextEncoder().encode("x")).ok).toBe(false);
-    expect(m.save("s", "a.svg", "image/svg+xml", new TextEncoder().encode("<svg/>")).ok).toBe(
-      false,
-    );
+    const txt = m.save("s", "a.txt", "text/plain", new TextEncoder().encode("x"));
+    expect(txt.ok).toBe(true);
+    const zip = m.save("s", "arsip.zip", "application/zip", new Uint8Array([1, 2]));
+    expect(zip.ok && zip.data.mime).toBe("application/zip");
     expect(m.save("s", "a.png", "image/png", new Uint8Array(0)).ok).toBe(false);
-    expect(m.save("s", "a.png", "image/png", new Uint8Array(MAX_UPLOAD_BYTES + 1)).ok).toBe(false);
+    const big = m.save("s", "a.png", "image/png", new Uint8Array(MAX_UPLOAD_BYTES + 1));
+    expect(!big.ok && big.error).toBe("FILE_TOO_LARGE");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("save menormalkan mime & nama file (tanpa path / karakter kontrol)", () => {
+  const root = freshRoot();
+  try {
+    const m = createAttachmentManager(root);
+    const r = m.save("s", "../../etc/pa\nss.txt", "text/html\r\nx: y", new Uint8Array([1]));
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.data.filename).toBe("pass.txt");
+      expect(r.data.mime).toBe("application/octet-stream");
+    }
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

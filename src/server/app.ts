@@ -50,6 +50,7 @@ import {
 import { createTunnelManager, type TunnelManager } from "./services/tunnel";
 import { createTunnelApi } from "./services/tunnel-api";
 import { resolveTunnelConfig } from "./services/tunnel-config";
+import { createLhrManager, type LhrManager } from "./services/tunnel-lhr";
 import {
   createWebSocketGateway,
   type Subscriber,
@@ -83,6 +84,13 @@ export interface KcgServerOptions {
     port: number;
     hostname: string;
   }) => TunnelManager;
+  /** Factory tunnel localhost.run (test menyuntik spawn palsu). */
+  lhr?: (deps: {
+    store: SessionStore;
+    auth: AuthService;
+    port: number;
+    hostname: string;
+  }) => LhrManager;
   /** Direktori lampiran gambar upload (default: `~/.kcgcode/data/uploads`). */
   uploadsRoot?: string;
   hostname?: string;
@@ -214,7 +222,20 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
           isProtected: () => auth.isProtected(),
         });
       })();
-  auth.onLockChanged((prot) => tunnel.handleLockChanged(prot));
+  // ---- Tunnel localhost.run (gratis, via ssh) — wajib app lock ----
+  const lhr = opts.lhr
+    ? opts.lhr({ store, auth, port, hostname })
+    : createLhrManager({
+        store,
+        localPort: port,
+        localHost: hostname,
+        dataDir: path.dirname(resolveFrpcConfigPath()),
+        isProtected: () => auth.isProtected(),
+      });
+  auth.onLockChanged((prot) => {
+    tunnel.handleLockChanged(prot);
+    lhr.handleLockChanged(prot);
+  });
 
   // Konteks bersama untuk tabel rute API.
   const routeCtx: ApiRouteContext = {
@@ -224,6 +245,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     skillsRegistry,
     skillInstalls,
     tunnel,
+    lhr,
+    tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
+    setTunnelProvider: (provider) => store.setTunnelProvider(provider, Date.now()),
     notifyDataChanged: () => gateway.notifyDataChanged(),
   };
   // Sesi dicabut / terkunci / kedaluwarsa -> tutup WebSocket miliknya agar
@@ -337,12 +361,14 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // Tunnel yang aktif sebelum restart dinyalakan lagi setelah server listen.
   // Port nyata diketahui setelah `serve` (port 0 di test) — factory default
   // memakai `port` yang diminta, sama seperti yang dicetak dashboard.
-  tunnel.autoStart();
+  // Hanya penyedia terpilih yang dinyalakan ulang (satu tunnel aktif).
+  if (store.getTunnelSettings(Date.now()).provider === "lhr") lhr.autoStart();
+  else tunnel.autoStart();
 
   async function close(): Promise<void> {
     clearInterval(sweepTimer);
     // Hentikan frpc lebih dulu agar URL publik tidak menunjuk server mati.
-    await tunnel.shutdown();
+    await Promise.all([tunnel.shutdown(), lhr.shutdown()]);
     // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
     await skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.

@@ -28,7 +28,8 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { encode } from "uqr";
-import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
+import { LhrRemoteAccess } from "@/components/settings/LhrRemoteAccess";
+import { ActionRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,7 +62,324 @@ async function readTunnel(res: Response): Promise<TunnelStatus> {
   return ((await res.json()) as { tunnel: TunnelStatus }).tunnel;
 }
 
+/** Penyedia remote access (sinkron dengan `TunnelProvider` di server). */
+type Provider = "kcg" | "lhr";
+
+/**
+ * Pembungkus Remote access: pemilih penyedia (KCG Code bawaan / localhost.run)
+ * lalu panel penyedia terpilih. Hanya satu tunnel aktif — berpindah
+ * penyedia mematikan yang lain di server (`PUT /api/tunnel/provider`).
+ */
+/** Ringkasan status kedua penyedia untuk kartu pilihan (bukan detail panel). */
+interface ProviderOverview {
+  provider: Provider;
+  /** URL publik penyedia yang sedang menyala, null bila tidak ada. */
+  liveUrl: string | null;
+  live: Provider | null;
+}
+
+function readOverview(b: {
+  provider?: Provider;
+  tunnel?: TunnelStatus;
+  lhr?: { enabled: boolean; phase: string; url: string | null };
+}): ProviderOverview {
+  const kcgOn = !!b.tunnel && b.tunnel.enabled && b.tunnel.phase !== "stopped";
+  const lhrOn = !!b.lhr && b.lhr.enabled && b.lhr.phase !== "stopped";
+  const live: Provider | null = kcgOn ? "kcg" : lhrOn ? "lhr" : null;
+  return {
+    provider: b.provider === "lhr" ? "lhr" : "kcg",
+    live,
+    liveUrl:
+      live === "kcg"
+        ? (b.tunnel?.account?.url ?? null)
+        : live === "lhr"
+          ? (b.lhr?.url ?? null)
+          : null,
+  };
+}
+
 export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
+  const [provider, setProvider] = useState<Provider | null>(null);
+  const [live, setLive] = useState<{ provider: Provider | null; url: string | null }>({
+    provider: null,
+    url: null,
+  });
+  const [switching, setSwitching] = useState(false);
+  /** Pindah penyedia saat yang lain menyala -> minta konfirmasi dulu. */
+  const [pendingSwitch, setPendingSwitch] = useState<Provider | null>(null);
+  /** Konfirmasi mematikan localhost.run (dialog yang sama dengan penyedia bawaan). */
+  const [lhrStop, setLhrStop] = useState<{ run: () => Promise<void>; via: boolean } | null>(null);
+  const [lhrStopping, setLhrStopping] = useState(false);
+
+  const refresh = useCallback(async (): Promise<ProviderOverview | null> => {
+    try {
+      const o = readOverview(await (await apiFetch("/api/tunnel")).json());
+      setLive({ provider: o.live, url: o.liveUrl });
+      return o;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void refresh().then((o) => {
+      if (!cancelled) setProvider((cur) => cur ?? o?.provider ?? "kcg");
+    });
+    // Status "On" di kartu ikut berubah saat tunnel dinyalakan/dimatikan di panel.
+    const id = setInterval(() => void refresh(), 5000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [refresh]);
+
+  const applySwitch = async (next: Provider) => {
+    setSwitching(true);
+    try {
+      await apiFetch("/api/tunnel/provider", {
+        method: "PUT",
+        body: JSON.stringify({ provider: next }),
+      });
+      setProvider(next);
+      await refresh();
+    } catch (e) {
+      toast.error(errorText(e, "Couldn't switch the remote access option."));
+    } finally {
+      setSwitching(false);
+      setPendingSwitch(null);
+    }
+  };
+
+  const choose = async (next: Provider) => {
+    if (next === provider || switching) return;
+    // Status terbaru: jangan mematikan tunnel yang menyala tanpa bertanya.
+    const o = await refresh();
+    if (o?.live && o.live !== next) setPendingSwitch(next);
+    else void applySwitch(next);
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      <ProviderPicker
+        value={provider}
+        live={live.provider}
+        disabled={switching}
+        onChange={(p) => void choose(p)}
+      />
+      <SwitchDialog
+        to={pendingSwitch}
+        viaTunnel={live.url !== null && sameOrigin(live.url)}
+        busy={switching}
+        onCancel={() => setPendingSwitch(null)}
+        onConfirm={(p) => void applySwitch(p)}
+      />
+      {provider === null ? (
+        <PrefsGroup>
+          <li className="flex min-h-14 items-center justify-center" role="status">
+            <Spinner className="size-5 text-muted-foreground" />
+            <span className="sr-only">Loading remote access…</span>
+          </li>
+        </PrefsGroup>
+      ) : provider === "lhr" ? (
+        <LhrRemoteAccess
+          protectedApp={protectedApp}
+          LiveAddress={LiveAddress}
+          LogPanel={LogPanel}
+          onRequestStop={(run, via) => setLhrStop({ run, via })}
+          onUseRecommended={() => void choose("kcg")}
+        />
+      ) : (
+        <KcgRemoteAccess protectedApp={protectedApp} />
+      )}
+      <ConfirmDialog
+        kind={lhrStop ? "stop" : null}
+        viaTunnel={lhrStop?.via ?? false}
+        busy={lhrStopping}
+        onOpenChange={(open) => !open && setLhrStop(null)}
+        onConfirm={() => {
+          const job = lhrStop;
+          if (!job) return;
+          setLhrStopping(true);
+          void job.run().finally(() => {
+            setLhrStopping(false);
+            setLhrStop(null);
+            void refresh();
+          });
+        }}
+      />
+    </div>
+  );
+}
+
+interface ProviderInfo {
+  id: Provider;
+  title: string;
+  /** Satu kalimat pembeda (gaya subjudul AdwActionRow). */
+  subtitle: string;
+  recommended?: boolean;
+}
+
+const PROVIDERS: ProviderInfo[] = [
+  {
+    id: "kcg",
+    title: "KCG Code link",
+    subtitle: "Same address every time. Sign in with Google once.",
+    recommended: true,
+  },
+  {
+    id: "lhr",
+    title: "localhost.run",
+    subtitle: "No account needed. Address changes every few hours.",
+  },
+];
+
+const PROVIDER_TITLE: Record<Provider, string> = { kcg: "KCG Code link", lhr: "localhost.run" };
+
+/**
+ * Pilihan penyedia sebagai kartu radio (dua kolom di layar lebar).
+ * KCG Code link ditandai "Recommended"; penyedia yang sedang menyala
+ * diberi penanda "On" agar jelas mana yang aktif sebelum berpindah.
+ */
+function ProviderPicker({
+  value,
+  live,
+  disabled,
+  onChange,
+}: {
+  value: Provider | null;
+  live: Provider | null;
+  disabled: boolean;
+  onChange: (p: Provider) => void;
+}) {
+  return (
+    <section aria-labelledby="remote-provider" className="flex flex-col gap-2.5">
+      <div className="flex flex-col gap-0.5 px-1">
+        <h2 id="remote-provider" className="text-[15px] font-semibold tracking-tight">
+          Remote access
+        </h2>
+        <p className="text-[13px] text-muted-foreground">{DESCRIPTION}</p>
+      </div>
+      {/* Boxed list ala AdwPreferencesGroup: satu baris radio per penyedia
+          (AdwActionRow + GtkCheckButton grup). Radio native di dalam label:
+          panah atas/bawah & Spasi bawaan browser. */}
+      <fieldset
+        aria-labelledby="remote-provider"
+        disabled={disabled || value === null}
+        className="m-0 min-w-0 overflow-hidden rounded-xl border bg-card p-0 shadow-xs"
+      >
+        <ul className="flex flex-col divide-y">
+          {PROVIDERS.map((p) => {
+            const selected = value === p.id;
+            return (
+              <li key={p.id}>
+                <label
+                  className={cn(
+                    "flex min-h-14 cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors",
+                    "hover:bg-muted/60 active:bg-muted has-[:focus-visible]:bg-muted/60",
+                    "has-[:disabled]:cursor-default has-[:disabled]:opacity-60 has-[:disabled]:hover:bg-transparent",
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="remote-provider"
+                    value={p.id}
+                    checked={selected}
+                    onChange={() => onChange(p.id)}
+                    className="peer sr-only"
+                  />
+                  {/* Radio GTK4: lingkaran, terisi aksen + titik saat dipilih. */}
+                  <span
+                    aria-hidden
+                    className={cn(
+                      "flex size-[18px] shrink-0 items-center justify-center rounded-full border-2 transition-colors",
+                      "peer-focus-visible:ring-[3px] peer-focus-visible:ring-ring/40",
+                      selected ? "border-primary bg-primary" : "border-muted-foreground/45",
+                    )}
+                  >
+                    {selected && <span className="size-1.5 rounded-full bg-primary-foreground" />}
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-[15px] leading-5">{p.title}</span>
+                      {p.recommended && (
+                        <span className="rounded-full bg-primary/12 px-2 py-px text-[11.5px] font-medium leading-4 text-primary">
+                          Recommended
+                        </span>
+                      )}
+                    </span>
+                    <span className="text-[13px] leading-snug text-muted-foreground">
+                      {p.subtitle}
+                    </span>
+                  </span>
+                  {live === p.id && <RowBadge tone="success">On</RowBadge>}
+                </label>
+              </li>
+            );
+          })}
+        </ul>
+      </fieldset>
+    </section>
+  );
+}
+
+/** Konfirmasi pindah penyedia saat penyedia lain sedang menyala. */
+function SwitchDialog({
+  to,
+  viaTunnel,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  to: Provider | null;
+  viaTunnel: boolean;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: (p: Provider) => void;
+}) {
+  // Simpan tujuan terakhir agar teks tidak hilang saat animasi tutup.
+  const [last, setLast] = useState<Provider>("kcg");
+  if (to && to !== last) setLast(to);
+  const target = to ?? last;
+  const from: Provider = target === "kcg" ? "lhr" : "kcg";
+
+  return (
+    <AlertDialog open={to !== null} onOpenChange={(o) => !o && !busy && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Switch to {PROVIDER_TITLE[target]}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Only one link can be on at a time, so your {PROVIDER_TITLE[from]} link will turn off and
+            stop working. You can turn on {PROVIDER_TITLE[target]} right after.
+            {viaTunnel && (
+              <>
+                {" "}
+                <strong className="font-medium text-foreground">
+                  You're using this link right now, so this page will close its connection.
+                </strong>
+              </>
+            )}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={busy}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={busy}
+            onClick={(e) => {
+              e.preventDefault();
+              onConfirm(target);
+            }}
+          >
+            {busy && <Spinner data-icon="inline-start" />}
+            Switch
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
+function KcgRemoteAccess({ protectedApp }: { protectedApp: boolean }) {
   const [t, setT] = useState<TunnelStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
@@ -97,7 +415,7 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
 
   if (!t) {
     return (
-      <PrefsGroup title="Remote access">
+      <PrefsGroup>
         <li className="flex min-h-14 items-center justify-center" role="status">
           <Spinner className="size-5 text-muted-foreground" />
           <span className="sr-only">Loading remote access…</span>
@@ -109,7 +427,7 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
   // ---- API tunnel belum diatur (KCG_TUNNEL_API_URL / build) ----
   if (!t.configured) {
     return (
-      <PrefsGroup id="remote" title="Remote access" description={DESCRIPTION}>
+      <PrefsGroup id="remote">
         <ActionRow
           prefix={<StatusIcon tone="muted" />}
           title="Not available in this version"
@@ -127,7 +445,7 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
   // ---- belum tersambung ----
   if (!t.account) {
     return (
-      <PrefsGroup id="remote" title="Remote access" description={DESCRIPTION}>
+      <PrefsGroup id="remote">
         {t.pairing ? (
           <PairingRow
             pairing={t.pairing}
@@ -165,7 +483,7 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
 
   return (
     <>
-      <PrefsGroup id="remote" title="Remote access" description={DESCRIPTION}>
+      <PrefsGroup id="remote">
         {running && <StatusHeader t={t} protectedApp={protectedApp} busy={busy} onStop={turnOff} />}
         <AddressPanel
           t={{ ...t, account }}
@@ -778,7 +1096,7 @@ function RowGlyph({ icon, destructive }: { icon: ReactNode; destructive?: boolea
 }
 
 /** Log frpc live (polling bertahap `?from=`). */
-function LogPanel() {
+function LogPanel({ endpoint = "/api/tunnel/logs" }: { endpoint?: string }) {
   const [lines, setLines] = useState<string[]>([]);
   const next = useRef(0);
   const box = useRef<HTMLPreElement>(null);
@@ -787,7 +1105,7 @@ function LogPanel() {
     let stop = false;
     const tick = async () => {
       try {
-        const res = await apiFetch(`/api/tunnel/logs?from=${next.current}`);
+        const res = await apiFetch(`${endpoint}?from=${next.current}`);
         const body = (await res.json()) as { lines: string[]; next: number };
         if (stop) return;
         next.current = body.next;
@@ -802,7 +1120,7 @@ function LogPanel() {
       stop = true;
       clearInterval(id);
     };
-  }, []);
+  }, [endpoint]);
 
   // Ikuti baris terbaru.
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll saat baris bertambah

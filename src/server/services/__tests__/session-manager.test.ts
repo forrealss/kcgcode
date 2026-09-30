@@ -3292,6 +3292,39 @@ test("sendFreeTextInput dengan gambar -> echo user berisi part file image + prom
   }
 });
 
+test("sendFreeTextInput file non-gambar -> teks dikirim text/plain, biner hanya dirujuk lewat path", async () => {
+  const h = freshHarnessWithHooks({}, { withAttachments: true });
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    const csv = h.attachments?.save(sid, "data.csv", "text/csv", new TextEncoder().encode("a,b"));
+    const zip = h.attachments?.save(sid, "arsip.zip", "application/zip", new Uint8Array([1, 2]));
+    if (!csv?.ok || !zip?.ok) throw new Error("save gagal");
+
+    const res = await h.sm.sendFreeTextInput(sid, "cek ini", [], [csv.data.id, zip.data.id]);
+    expect(res.ok).toBe(true);
+    await flush();
+
+    // Echo: kedua file tampil dengan mime aslinya (renderer memilih kartu).
+    const user = h.messages.find((m) => m.role === "user");
+    const echoed = (user?.parts ?? []).filter((p) => p.type === "file" && p.attachmentId);
+    expect(echoed.map((p) => p.mime)).toEqual(["text/csv", "application/zip"]);
+    // Teks tampilan tetap teks asli (catatan path tidak ikut di bubble).
+    expect(user?.parts.find((p) => p.type === "text")?.text).toBe("cek ini");
+
+    // Ke model: CSV jadi text/plain; ZIP tidak dikirim sebagai part.
+    const files = client.promptFilesCalls.at(-1) ?? [];
+    expect(files.map((f) => [f.filename, f.mime])).toEqual([["data.csv", "text/plain"]]);
+    // ...tapi path ZIP disebut di teks prompt agar model bisa memakai tool.
+    const prompt = client.calls.filter((c) => c.startsWith("promptAsync:")).at(-1) ?? "";
+    expect(prompt).toContain("cek ini");
+    expect(prompt).toContain("arsip.zip");
+    expect(prompt).toContain(zip.data.id);
+  } finally {
+    h.close();
+  }
+});
+
 test("sendFreeTextInput gambar + @file -> part text + file image + file teks di echo", async () => {
   const h = freshHarnessWithHooks({}, { withAttachments: true });
   try {

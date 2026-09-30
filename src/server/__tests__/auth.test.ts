@@ -123,6 +123,11 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/tunnel/stop",
       "/api/tunnel/rotate-secret",
       "/api/tunnel/signout",
+      "/api/tunnel/provider",
+      "/api/tunnel/lhr",
+      "/api/tunnel/lhr/logs",
+      "/api/tunnel/lhr/start",
+      "/api/tunnel/lhr/stop",
     ];
     // Setiap pola rute /api terdaftar (kecuali publik) harus tercakup daftar
     // di atas — rute baru yang belum diuji membuat test ini gagal.

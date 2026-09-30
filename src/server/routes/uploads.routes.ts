@@ -6,6 +6,7 @@
  * root (`app.ts`) — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
+import { isPreviewableImage } from "../../lib/attachments";
 import { errorStatus, json, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
@@ -20,8 +21,20 @@ export function uploadsRoutes(ctx: ApiRouteContext) {
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           // Salin ke Uint8Array ber-buffer ArrayBuffer agar lolos tipe BodyInit.
           const bytes = new Uint8Array(res.data.bytes);
+          // Lampiran bisa file apa saja (html/svg/js …) dan disajikan dari
+          // origin yang sama dengan aplikasi: hanya gambar raster yang boleh
+          // tampil inline; sisanya dipaksa unduh + nosniff + CSP sandbox agar
+          // tidak pernah dieksekusi browser (XSS).
+          const inline = isPreviewableImage(res.data.mime);
+          const name = encodeURIComponent(res.data.filename);
           return new Response(new Blob([bytes]), {
-            headers: { "content-type": res.data.mime },
+            headers: {
+              "content-type": inline ? res.data.mime : "application/octet-stream",
+              "content-disposition": `${inline ? "inline" : "attachment"}; filename*=UTF-8''${name}`,
+              "x-content-type-options": "nosniff",
+              "content-security-policy": "default-src 'none'; sandbox",
+              "cache-control": "private, max-age=3600",
+            },
           });
         } catch (e) {
           return serverError(e);

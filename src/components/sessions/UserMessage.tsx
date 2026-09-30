@@ -2,16 +2,19 @@
  * Render satu pesan user: teks + lampiran gambar (thumbnail) + @file.
  *
  * Part `file` gambar (punya `attachmentId` + mime image) dimuat bytes-nya
- * lewat route HTTP `/api/uploads/...` (`attachmentUrl`); part `file` lain
+ * lewat route HTTP `/api/uploads/...` (`attachmentUrl`); file upload lain
+ * tampil sebagai kartu yang bisa diunduh; part `file` tanpa `attachmentId`
  * (echo @file) tampil sebagai chip nama file.
  */
 import { FileIcon } from "lucide-react";
 import { useState } from "react";
+import { FileTile } from "@/components/sessions/AttachmentTile";
 import { ImageLightbox } from "@/components/sessions/ImageLightbox";
 import { CopyMessageButton } from "@/components/sessions/MessageActions";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
 import { attachmentUrl } from "@/lib/api";
+import { isPreviewableImage } from "@/lib/attachments";
 import { splitComposerMentions } from "@/lib/composer";
 import { formatTime } from "@/lib/time";
 import { textOf } from "@/lib/turns";
@@ -29,8 +32,20 @@ function isImageAttachment(
   return (
     p.type === "file" &&
     typeof p.mime === "string" &&
-    p.mime.startsWith("image/") &&
+    isPreviewableImage(p.mime) &&
     typeof p.attachmentId === "string"
+  );
+}
+
+/** File upload non-gambar (dokumen, kode, arsip, …). */
+function isFileAttachment(
+  p: MessagePart,
+): p is MessagePart & { attachmentId: string; filename: string } {
+  return (
+    p.type === "file" &&
+    typeof p.attachmentId === "string" &&
+    typeof p.filename === "string" &&
+    !isImageAttachment(p)
   );
 }
 
@@ -42,18 +57,14 @@ export function UserMessage({ message: m }: UserMessageProps) {
     src: attachmentUrl(m.sessionId, p.attachmentId),
     alt: p.filename ?? "Attached image",
   }));
-  /** Path file yang benar-benar dilampirkan (part `file` non-gambar). */
-  const mentionedPaths = new Set(
-    m.parts
-      .filter((p) => p.type === "file" && !isImageAttachment(p) && typeof p.filename === "string")
-      .map((p) => p.filename as string),
-  );
+  const uploadedFiles = m.parts.filter(isFileAttachment);
+  /** Echo @file: part `file` tanpa `attachmentId` (path relatif project). */
+  const isMention = (p: MessagePart) =>
+    p.type === "file" && typeof p.attachmentId !== "string" && typeof p.filename === "string";
+  const mentionedPaths = new Set(m.parts.filter(isMention).map((p) => p.filename as string));
   const attachedFiles = m.parts
-    .map((p) => ({ part: p, filename: p.filename }))
-    .filter(
-      (x): x is { part: MessagePart; filename: string } =>
-        x.part.type === "file" && !isImageAttachment(x.part) && typeof x.filename === "string",
-    );
+    .filter(isMention)
+    .map((p) => ({ part: p, filename: p.filename as string }));
   return (
     <Message align="end">
       <MessageContent>
@@ -88,6 +99,31 @@ export function UserMessage({ message: m }: UserMessageProps) {
                     )}
                   />
                 </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* File non-gambar: kartu unduhan di atas bubble (rata kanan). */}
+        {uploadedFiles.length > 0 && (
+          <ul
+            aria-label={`${uploadedFiles.length} attached ${uploadedFiles.length === 1 ? "file" : "files"}`}
+            className="flex max-w-full flex-wrap justify-end gap-1.5 self-end"
+          >
+            {uploadedFiles.map((p) => (
+              <li key={p.attachmentId} className="min-w-0">
+                <a
+                  href={attachmentUrl(m.sessionId, p.attachmentId)}
+                  download={p.filename}
+                  title={`Download ${p.filename}`}
+                  className="block rounded-lg outline-none transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                >
+                  <FileTile
+                    filename={p.filename}
+                    mime={p.mime ?? ""}
+                    className="h-14 w-56 max-w-full"
+                  />
+                </a>
               </li>
             ))}
           </ul>

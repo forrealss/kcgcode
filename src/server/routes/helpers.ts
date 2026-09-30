@@ -44,6 +44,7 @@ export function errorStatus(code: string): number {
     case "AUTO_LOCK_INVALID":
     case "AVATAR_PRESET_INVALID":
     case "AUTH_NOT_CONFIGURED":
+    case "INVALID_PROVIDER":
       return 400;
     // Tunnel: prasyarat belum terpenuhi.
     case "TUNNEL_LOCK_REQUIRED":
@@ -56,12 +57,15 @@ export function errorStatus(code: string): number {
       return 429;
     case "FRPC_UNSUPPORTED_PLATFORM":
     case "TUNNEL_NOT_CONFIGURED":
+    case "LHR_SSH_MISSING":
       return 501;
     case "TUNNEL_API_UNREACHABLE":
     case "FRPC_DOWNLOAD_FAILED":
     case "FRPC_CHECKSUM_MISMATCH":
     case "FRPC_NOT_FOUND":
     case "FRPC_START_FAILED":
+    case "LHR_START_FAILED":
+    case "LHR_DENIED":
       return 502;
     case "AUTH_INVALID":
     case "CURRENT_SECRET_INVALID":
@@ -98,6 +102,7 @@ export function errorStatus(code: string): number {
     case "EMPTY_UPLOAD":
       return 400;
     case "IMAGE_TOO_LARGE":
+    case "FILE_TOO_LARGE":
       return 413;
     case "ATTACHMENT_NOT_FOUND":
     case "INSTALL_JOB_NOT_FOUND":

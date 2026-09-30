@@ -1,13 +1,15 @@
 /**
- * Attachment_Store — penyimpanan gambar yang di-upload Client untuk Session.
+ * Attachment_Store — penyimpanan file yang di-upload Client untuk Session
+ * (gambar, dokumen, kode, arsip, …).
  *
- * Gambar dikirim dari browser ke KCG Code (HTTP), disimpan di disk sebagai
+ * File dikirim dari browser ke KCG Code (HTTP), disimpan di disk sebagai
  * file tak ternama (`<uuid>` di `<uploadsRoot>/<sessionId>/`), lalu dirujuk
- * oleh Session sebagai part `file` dengan `mime: image/*` + `url: file:///…`
- * saat prompt dikirim ke opencode (lihat `opencode-client.ts`).
+ * oleh Session sebagai part `file` + `url: file:///…` saat prompt dikirim ke
+ * opencode (lihat `session-manager.ts`; mime yang dikirim ke model dipilih
+ * `modelFacingMime` di `lib/attachments.ts`).
  *
- * - Hanya PNG/JPEG/GIF/WebP yang diterima (format gambar yang didukung
- *   opencode sebagai image media; SVG diperlakukan teks, bukan gambar).
+ * - Semua jenis file diterima; mime dinormalisasi (`normalizeMime`) agar
+ *   header Content-Type saat serve tidak bisa disuntik.
  * - Batas 20 MiB per file (mengikuti batas attachment opencode).
  * - File disimpan per-Session agar mudah dibersihkan saat Session dihapus
  *   (`removeSession`) dan tidak tercampur antar Session/Project.
@@ -24,31 +26,25 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { MAX_ATTACHMENT_BYTES, normalizeMime } from "../../lib/attachments";
 import type { Result } from "../result";
 
 /** Batas ukuran upload (byte) — mengikuti limit attachment opencode (20 MiB). */
-export const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
-
-/** Format gambar yang diterima sebagai image media oleh opencode. */
-const SUPPORTED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-
-export function isSupportedImageMime(mime: string): boolean {
-  return SUPPORTED_IMAGE_MIME.has(mime);
-}
+export const MAX_UPLOAD_BYTES = MAX_ATTACHMENT_BYTES;
 
 export interface AttachmentMeta {
   /** Id lampiran (UUID acak, dibangkitkan server). */
   id: string;
   /** Nama file asli dari perangkat pengguna (untuk tampilan). */
   filename: string;
-  /** MIME image (image/png, image/jpeg, dst). */
+  /** MIME ternormalisasi (`application/octet-stream` bila tidak dikenal). */
   mime: string;
   size: number;
 }
 
 export interface AttachmentManager {
   /**
-   * Simpan bytes gambar ke penyimpanan Session. Memvalidasi mime & ukuran;
+   * Simpan bytes file ke penyimpanan Session. Memvalidasi ukuran;
    * mengembalikan metadata lampiran (termasuk `id` untuk rujukan berikutnya).
    */
   save(
@@ -59,7 +55,7 @@ export interface AttachmentManager {
   ): Result<AttachmentMeta>;
   /** Baca metadata + path absolut file lampiran (untuk part `file` opencode). */
   info(sessionId: string, id: string): Result<AttachmentMeta & { absPath: string }>;
-  /** Baca bytes file lampiran (untuk route serve gambar ke browser). */
+  /** Baca bytes file lampiran (untuk route serve ke browser). */
   read(
     sessionId: string,
     id: string,
@@ -124,10 +120,20 @@ function readMeta(
 
 export function createAttachmentManager(uploadsRoot: string): AttachmentManager {
   return {
-    save(sessionId, filename, mime, bytes) {
-      if (!isSupportedImageMime(mime)) return errResult("UNSUPPORTED_IMAGE_MIME");
+    save(sessionId, rawFilename, rawMime, bytes) {
       if (bytes.byteLength === 0) return errResult("EMPTY_UPLOAD");
-      if (bytes.byteLength > MAX_UPLOAD_BYTES) return errResult("IMAGE_TOO_LARGE");
+      if (bytes.byteLength > MAX_UPLOAD_BYTES) return errResult("FILE_TOO_LARGE");
+      const mime = normalizeMime(rawMime);
+      // Nama tampilan saja (bukan path): buang direktori & karakter kontrol.
+      const base = rawFilename.split(/[\\/]/).pop() ?? "";
+      const filename =
+        [...base]
+          .filter((ch) => {
+            const code = ch.charCodeAt(0);
+            return code > 0x1f && code !== 0x7f;
+          })
+          .join("")
+          .slice(0, 255) || "file";
 
       const dir = path.join(uploadsRoot, sessionId);
       ensureDir(dir);

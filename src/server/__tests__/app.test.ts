@@ -487,15 +487,20 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(getRes.status).toBe(200);
     expect(getRes.headers.get("content-type")).toContain("image/png");
 
-    // Upload non-gambar ditolak.
-    const badForm = new FormData();
-    badForm.append("file", new Blob(["x"], { type: "text/plain" }), "a.txt");
-    const badRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}/uploads`, {
+    // File non-gambar diterima, tapi disajikan sebagai unduhan (bukan inline)
+    // agar HTML/SVG upload tidak bisa dieksekusi di origin aplikasi.
+    const htmlForm = new FormData();
+    htmlForm.append("file", new Blob(["<script>x</script>"], { type: "text/html" }), "a.html");
+    const htmlRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}/uploads`, {
       method: "POST",
-      body: badForm,
+      body: htmlForm,
     });
-    expect(badRes.status).toBe(400);
-    expect(((await badRes.json()) as { error: string }).error).toBe("UNSUPPORTED_IMAGE_MIME");
+    expect(htmlRes.status).toBe(201);
+    const htmlId = ((await htmlRes.json()) as { upload: { id: string } }).upload.id;
+    const htmlGet = await fetch(`${baseUrl()}/api/uploads/${sessionId}/${htmlId}`);
+    expect(htmlGet.headers.get("content-type")).toBe("application/octet-stream");
+    expect(htmlGet.headers.get("content-disposition")).toStartWith("attachment");
+    expect(htmlGet.headers.get("x-content-type-options")).toBe("nosniff");
 
     // Kirim pesan dengan lampiran -> echo user memuat part file image;
     // promptAsync menerima ref gambar (mime image + url file).

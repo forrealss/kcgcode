@@ -29,6 +29,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { SessionStore } from "../../db";
+import { modelFacingMime } from "../../lib/attachments";
 import type {
   AgentType,
   InteractivePrompt,
@@ -1057,10 +1058,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       userParts.push({ type: "file", mime: "text/plain", filename, url });
       promptFiles.push({ filename, mime: "text/plain", url });
     }
+    /** Lampiran biner (zip, audio, …): tidak dikirim sebagai part. */
+    const pathOnly: { filename: string; absPath: string }[] = [];
     for (const info of imageInfos) {
       // Jaring pengaman: `file://` harus menunjuk path absolut (host kosong).
       // `file://rel/path` membuat host="rel" yang ditolak opencode.
       const url = `file://${path.resolve(info.absPath)}`;
+      // Echo selalu memakai mime asli (renderer memilih thumbnail / kartu).
       userParts.push({
         type: "file",
         mime: info.mime,
@@ -1068,7 +1072,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         url,
         attachmentId: info.id,
       });
-      promptFiles.push({ filename: info.filename, mime: info.mime, url });
+      // Ke model: hanya mime yang diterima provider (gambar/PDF/teks). Mime
+      // lain merusak turn (dan riwayat) dengan "functionality not supported".
+      const modelMime = modelFacingMime(info.mime, info.filename);
+      if (modelMime) promptFiles.push({ filename: info.filename, mime: modelMime, url });
+      else pathOnly.push({ filename: info.filename, absPath: path.resolve(info.absPath) });
     }
     const userMessage: SessionMessage = {
       id: `usr_${randomUUID()}`,
@@ -1105,13 +1113,26 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const projectRes = store.getProjectById(cur.data.projectId);
     const system = projectRes.ok ? (projectRes.data.instructions ?? null) : null;
 
+    // File biner dirujuk lewat path agar model bisa memakai tool (bash/read)
+    // bila perlu; teks yang tampil di bubble tetap teks asli pengguna.
+    const promptText =
+      pathOnly.length === 0
+        ? text
+        : [
+            text,
+            "Attached files (saved on disk, not shown inline):",
+            ...pathOnly.map((f) => `- ${f.filename}: ${f.absPath}`),
+          ]
+            .filter((line) => line !== "")
+            .join("\n");
+
     enqueue(sessionId, async () => {
       try {
         // `prompt_async` balas 204 begitu prompt diterima; hasil turn tiba
         // lewat SSE dan ditutup oleh `session.idle`.
         const res = await handle.client.promptAsync(
           ocSessionId,
-          text,
+          promptText,
           cur.data.model,
           promptFiles,
           cur.data.agent,

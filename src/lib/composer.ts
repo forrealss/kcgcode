@@ -5,7 +5,7 @@
  * Isinya keputusan teks placeholder: di layar HP input jauh lebih sempit,
  * sehingga placeholder panjang terpotong di tengah kata dan justru tidak
  * memberi informasi apa pun. Versi mobile dibuat pendek; petunjuk lengkap
- * (`@` untuk file, tempel gambar) tetap tersedia di layar lebar.
+ * (`@` untuk file, drop/tempel file) tetap tersedia di layar lebar.
  */
 
 /** Kondisi composer yang menentukan teks placeholder. */
@@ -17,7 +17,7 @@ export interface ComposerPlaceholderState {
   /** Viewport sempit — pakai teks pendek. */
   compact: boolean;
   /**
-   * Ada lampiran (gambar) — tombol kirim muncul dan ruang teks menyempit,
+   * Ada lampiran (file) — tombol kirim muncul dan ruang teks menyempit,
    * jadi petunjuk panjang diganti ajakan singkat yang relevan.
    */
   hasAttachments?: boolean;
@@ -34,7 +34,7 @@ export function composerPlaceholder(state: ComposerPlaceholderState): string {
   if (state.hasAttachments) return "Add a message…";
   return state.compact
     ? "Type a message…"
-    : "Type a message… type @ for file references, or paste an image";
+    : "Type a message… type @ for file references, or drop files here";
 }
 
 /**

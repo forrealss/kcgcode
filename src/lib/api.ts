@@ -134,8 +134,12 @@ export function apiErrorMessage(code: string): string {
       return "Unsupported image format. Use PNG, JPEG, GIF, or WebP.";
     case "IMAGE_TOO_LARGE":
       return "The image exceeds the 20 MiB limit.";
+    case "FILE_TOO_LARGE":
+      return "The file exceeds the 20 MiB limit.";
+    case "EMPTY_UPLOAD":
+      return "The file is empty.";
     case "ATTACHMENT_NOT_FOUND":
-      return "The image attachment was not found (it may have been deleted).";
+      return "The attachment was not found (it may have been deleted).";
     case "TUNNEL_LOCK_REQUIRED":
       return "Set an app lock before turning on remote access.";
     case "TUNNEL_NOT_CONFIGURED":
@@ -158,6 +162,14 @@ export function apiErrorMessage(code: string): string {
       return "The tunnel server couldn't publish your address. See the log for details.";
     case "FRPC_UNSUPPORTED_PLATFORM":
       return "Remote access isn't supported on this OS or CPU yet.";
+    case "LHR_SSH_MISSING":
+      return "localhost.run needs the ssh command, which wasn't found on this computer.";
+    case "LHR_START_FAILED":
+      return "Couldn't start the connection to localhost.run.";
+    case "LHR_DENIED":
+      return "localhost.run refused the connection. Try again in a moment.";
+    case "INVALID_PROVIDER":
+      return "Unknown remote access option.";
     case "FRPC_DOWNLOAD_FAILED":
     case "FRPC_NOT_FOUND":
       return "Couldn't install the tunnel client (frpc). See the log for details.";
@@ -200,11 +212,11 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
 }
 
 /**
- * Upload satu file (gambar) ke endpoint lampiran Session.
+ * Upload satu file (jenis apa pun) ke endpoint lampiran Session.
  * `fetch` multipart mengelola boundary-nya sendiri, jadi content-type TIDAK
  * di-set manual.
  */
-export async function apiUploadImage(
+export async function apiUploadFile(
   path: string,
   file: File,
 ): Promise<{ id: string; filename: string; mime: string; size: number }> {

@@ -1,11 +1,11 @@
 /**
- * Sheet aksi mobile di composer (attach image + ganti agent mode).
+ * Sheet aksi mobile di composer (lampirkan file + ganti agent mode).
  *
  * Susunan: judul kecil "Add to message" + aksi lampiran sebagai baris
  * (ikon, label, keterangan) — lalu grup "Mode" berisi pilihan agent ala
  * radio. Mode pembantu (compaction/title/summary) dilipat di "More modes".
  */
-import { ChevronRightIcon, ImagePlusIcon } from "lucide-react";
+import { ChevronRightIcon, PaperclipIcon } from "lucide-react";
 import { AgentModeList } from "@/components/sessions/AgentModeList";
 import { SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { UseAgentPickerResult } from "@/hooks/useAgentPicker";
@@ -13,7 +13,7 @@ import type { UseAgentPickerResult } from "@/hooks/useAgentPicker";
 export interface ComposerActionSheetProps {
   /** Input tidak boleh dipakai (Session mati / sibuk) — aksi ikut terkunci. */
   disabled: boolean;
-  /** Buka file picker gambar (sheet ditutup oleh pemanggil). */
+  /** Buka file picker (sheet ditutup oleh pemanggil). */
   onPickImage: () => void;
   agentPicker: UseAgentPickerResult;
   activeAgent: string | null;
@@ -34,7 +34,7 @@ export function ComposerActionSheet({
     >
       <SheetHeader className="sr-only">
         <SheetTitle>Message options</SheetTitle>
-        <SheetDescription>Attach an image or choose how the agent works.</SheetDescription>
+        <SheetDescription>Attach files or choose how the agent works.</SheetDescription>
       </SheetHeader>
 
       <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-3 pt-1 pb-1">
@@ -53,12 +53,12 @@ export function ComposerActionSheet({
               className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400"
               aria-hidden
             >
-              <ImagePlusIcon className="size-[18px]" />
+              <PaperclipIcon className="size-[18px]" />
             </span>
             <span className="flex min-w-0 flex-1 flex-col">
-              <span className="text-[15px] leading-5">Photo or image</span>
+              <span className="text-[15px] leading-5">Photos and files</span>
               <span className="text-[13px] leading-snug text-muted-foreground">
-                From your gallery or camera
+                Images, documents, code, and more
               </span>
             </span>
             <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />

@@ -1,6 +1,12 @@
 /**
- * Composer input Session — textarea prompt, lampiran gambar, @file
- * autocomplete, mode agent, serta tombol kirim/stop.
+ * Composer input Session — textarea prompt, lampiran file (gambar maupun
+ * file lain; lewat tombol, paste, atau drag & drop), @file autocomplete,
+ * mode agent, serta tombol kirim/stop.
+ *
+ * Drag & drop: overlay "Add anything" dipasang `SessionView` (menutupi
+ * seluruh layar Session) dan memanggil `addFiles(files, fromRect)` lewat
+ * ref. Dengan `fromRect`, file baru dianimasikan dari kartu overlay ke
+ * deretan lampiran (`DropPlate`).
  *
  * Seluruh state input (teks, gambar pending, mention, agent mode) hidup di
  * komponen ini; engine (`useSessionChat`) hanya menyuplai izin input & kanal
@@ -13,12 +19,24 @@
  * - Mobile: satu tombol aksi (attach image + agent mode) lewat `Sheet`;
  *   saat input lebih dari satu baris, textarea pindah ke baris sendiri.
  */
-import { ImagePlusIcon, PlusIcon, SendHorizontalIcon, SquareIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { PaperclipIcon, PlusIcon, SendHorizontalIcon, SquareIcon } from "lucide-react";
+import {
+  type Ref,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
 import { ComposerActionSheet } from "@/components/sessions/ComposerActionSheet";
+import { DropPlate } from "@/components/sessions/DropPlate";
 import { FileMentionDropdown } from "@/components/sessions/FileMentionDropdown";
-import { type PendingImage, PendingImageThumbs } from "@/components/sessions/PendingImageThumbs";
+import {
+  type PendingAttachment,
+  PendingAttachments,
+} from "@/components/sessions/PendingAttachments";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -26,13 +44,21 @@ import { useAgentPicker } from "@/hooks/useAgentPicker";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
-import { ApiError, apiErrorMessage, apiUploadImage } from "@/lib/api";
+import { ApiError, apiErrorMessage, apiUploadFile } from "@/lib/api";
+import { isPreviewableImage, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { composerPlaceholder, extractMentionedFiles, splitComposerMentions } from "@/lib/composer";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import type { ClientMessage } from "@/ws-protocol";
 
+/** Handle imperatif composer (dipakai overlay drag & drop). */
+export interface SessionComposerHandle {
+  /** Lampirkan file; `from` = rect asal animasi (kartu overlay). */
+  addFiles: (files: File[], from?: DOMRect | null) => void;
+}
+
 export interface SessionComposerProps {
+  ref?: Ref<SessionComposerHandle>;
   session: Session;
   /** Engine: input boleh dipakai (koneksi + Session running + tidak sibuk). */
   inputAllowed: boolean;
@@ -50,6 +76,7 @@ export interface SessionComposerProps {
 }
 
 export function SessionComposer({
+  ref,
   session,
   inputAllowed,
   busy,
@@ -63,10 +90,26 @@ export function SessionComposer({
   const isMobile = useIsMobile();
   const [text, setText] = useState("");
   /**
-   * Gambar yang akan dilampirkan ke pesan berikutnya (belum di-upload).
-   * Preferensi thumbnail memakai object URL lokal; upload terjadi saat kirim.
+   * File yang akan dilampirkan ke pesan berikutnya (belum di-upload).
+   * Thumbnail gambar memakai object URL lokal; upload terjadi saat kirim.
    */
-  const [pendingImages, setPendingImages] = useState<PendingImage[]>([]);
+  const [pendingImages, setPendingImages] = useState<PendingAttachment[]>([]);
+  /**
+   * Animasi plate drop yang sedang berjalan: item-nya sudah ada di
+   * `pendingImages` (tak terlihat, jadi tujuan animasi) sampai plate
+   * mendarat. `targets` diisi setelah layout diukur.
+   */
+  const [plate, setPlate] = useState<{
+    from: DOMRect;
+    keys: string[];
+    targets: { item: PendingAttachment; rect: DOMRect }[] | null;
+    /** Kotak composer: plate menyusut menjadi kotak ini lalu larut ke dalamnya. */
+    box: DOMRect | null;
+  } | null>(null);
+  /** Kotak composer (tujuan akhir latar plate). */
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  /** Elemen tiap lampiran (untuk mengukur tujuan animasi plate). */
+  const attachmentEls = useRef(new Map<string, HTMLElement>());
   /** Upload lampiran sedang berjalan — cegah kirim ganda. */
   const [sending, setSending] = useState(false);
   /**
@@ -175,36 +218,63 @@ export function SessionComposer({
     for (const s of mention.suggestions) suggestedCacheRef.current.add(s);
   }
 
-  /** Ukuran maksimum gambar yang diterima (mengikuti limit opencode 20 MiB). */
-  const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-
   /**
-   * Terima file gambar dari file picker / paste, validasi, lalu simpan ke
-   * antrean lampiran. Format non-gambar / terlalu besar ditolak dengan pesan.
+   * Terima file dari file picker / paste / drag & drop, validasi, lalu
+   * simpan ke antrean lampiran. File kosong / folder / terlalu besar ditolak
+   * dengan pesan. `from` (rect kartu overlay) -> animasi plate.
    */
-  const addImages = useCallback(
-    (files: Iterable<File>) => {
-      const picked: PendingImage[] = [];
+  const addFiles = useCallback(
+    (files: Iterable<File>, from?: DOMRect | null) => {
+      const picked: PendingAttachment[] = [];
       for (const file of files) {
-        if (!file.type.startsWith("image/")) {
-          reportError(`"${file.name}" is not an image.`);
+        // Folder yang di-drop muncul sebagai File 0 byte tanpa tipe.
+        if (file.size === 0) {
+          reportError(`"${file.name}" is empty or is a folder.`);
           continue;
         }
-        if (file.size > MAX_IMAGE_BYTES) {
+        if (file.size > MAX_ATTACHMENT_BYTES) {
           reportError(`"${file.name}" exceeds the 20 MiB limit.`);
           continue;
         }
-        picked.push({ key: crypto.randomUUID(), file, previewUrl: URL.createObjectURL(file) });
+        picked.push({
+          key: crypto.randomUUID(),
+          file,
+          previewUrl: isPreviewableImage(file.type) ? URL.createObjectURL(file) : null,
+        });
       }
-      if (picked.length > 0) setPendingImages((prev) => [...prev, ...picked]);
+      if (picked.length === 0) return;
+      setPendingImages((prev) => [...prev, ...picked]);
+      if (from) setPlate({ from, keys: picked.map((p) => p.key), targets: null, box: null });
     },
     [reportError],
   );
+  useImperativeHandle(ref, () => ({ addFiles }), [addFiles]);
 
-  const removeImage = useCallback((key: string) => {
+  // Item plate sudah dirender (tak terlihat) -> ukur posisi akhirnya. Deretan
+  // lampiran di-scroll ke item baru dulu agar tujuan animasi terlihat.
+  useLayoutEffect(() => {
+    if (!plate || plate.targets) return;
+    const firstEl = attachmentEls.current.get(plate.keys[0] ?? "");
+    firstEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const targets = plate.keys.flatMap((key) => {
+      const item = pendingImages.find((p) => p.key === key);
+      const el = attachmentEls.current.get(key);
+      return item && el ? [{ item, rect: el.getBoundingClientRect() }] : [];
+    });
+    if (targets.length === 0) setPlate(null);
+    else setPlate({ ...plate, targets, box: boxRef.current?.getBoundingClientRect() ?? null });
+  }, [plate, pendingImages]);
+
+  const registerAttachmentEl = useCallback((key: string, el: HTMLElement | null) => {
+    if (el) attachmentEls.current.set(key, el);
+    else attachmentEls.current.delete(key);
+  }, []);
+  const endPlate = useCallback(() => setPlate(null), []);
+
+  const removeAttachment = useCallback((key: string) => {
     setPendingImages((prev) => {
       const target = prev.find((p) => p.key === key);
-      if (target) URL.revokeObjectURL(target.previewUrl);
+      if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
       return prev.filter((p) => p.key !== key);
     });
   }, []);
@@ -229,11 +299,11 @@ export function SessionComposer({
       // Upload gambar dulu; id lampiran dipakai pesan WS berikutnya.
       const images: string[] = [];
       for (const img of pendingImages) {
-        const up = await apiUploadImage(`/api/sessions/${session.id}/uploads`, img.file);
+        const up = await apiUploadFile(`/api/sessions/${session.id}/uploads`, img.file);
         images.push(up.id);
       }
       send({ type: "input", sessionId: session.id, text: text.trim(), files, images });
-      for (const img of pendingImages) URL.revokeObjectURL(img.previewUrl);
+      for (const img of pendingImages) if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
       setPendingImages([]);
       setText("");
       mention.close();
@@ -244,18 +314,18 @@ export function SessionComposer({
     }
   };
 
-  /** Lampirkan gambar yang di-paste (mis. screenshot) ke pesan berikutnya. */
+  /** Lampirkan file yang di-paste (screenshot, file dari file manager). */
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+      const files = [...e.clipboardData.files];
       if (files.length === 0) return;
       // Menyalin file dari file manager juga menaruh path/URI-nya sebagai
       // teks di clipboard — cegah paste bawaan agar path tidak ikut masuk
-      // ke input; gambarnya cukup jadi lampiran.
+      // ke input; filenya cukup jadi lampiran.
       e.preventDefault();
-      addImages(files);
+      addFiles(files);
     },
-    [addImages],
+    [addFiles],
   );
 
   return (
@@ -282,6 +352,7 @@ export function SessionComposer({
         {/* Composer compact: image picker di kiri, input prompt di tengah,
             lalu mode agent di kanan. Model tetap dipilih dari header. */}
         <div
+          ref={boxRef}
           className={cn(
             "rounded-xl border bg-card/80 p-2 shadow-sm transition-colors",
             "focus-within:border-ring focus-within:ring-[3px] focus-within:ring-ring/20",
@@ -291,7 +362,15 @@ export function SessionComposer({
           {/* Lampiran gambar: di dalam kotak composer, di atas input —
               terbaca sebagai bagian dari pesan yang akan dikirim. */}
           {pendingImages.length > 0 && (
-            <PendingImageThumbs images={pendingImages} onRemove={removeImage} />
+            <PendingAttachments
+              items={pendingImages}
+              onRemove={removeAttachment}
+              hiddenKeys={plate ? new Set(plate.keys) : undefined}
+              registerEl={registerAttachmentEl}
+            />
+          )}
+          {plate?.targets && (
+            <DropPlate from={plate.from} items={plate.targets} box={plate.box} onDone={endPlate} />
           )}
 
           {/* Dropdown saran @file (muncul di atas input saat token @ aktif). */}
@@ -439,7 +518,7 @@ export function SessionComposer({
                     size="icon"
                     disabled={!canInput}
                     aria-label="More actions"
-                    title="Attach image or change agent mode"
+                    title="Attach files or change agent mode"
                     className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
                   >
                     <PlusIcon data-icon="inline-start" />
@@ -494,11 +573,11 @@ export function SessionComposer({
                 size="icon"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={!canInput}
-                aria-label="Attach image"
-                title="Attach image (PNG/JPEG/GIF/WebP, max 20 MiB)"
+                aria-label="Attach files"
+                title="Attach files (or drop them here, max 20 MiB each)"
                 className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
               >
-                <ImagePlusIcon data-icon="inline-start" />
+                <PaperclipIcon data-icon="inline-start" />
               </Button>
             );
 
@@ -540,12 +619,13 @@ export function SessionComposer({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/gif,image/webp"
           multiple
           className="sr-only"
+          tabIndex={-1}
+          aria-hidden
           onChange={(e) => {
             const files = e.target.files ? [...e.target.files] : [];
-            addImages(files);
+            addFiles(files);
             e.target.value = ""; // izinkan memilih file yang sama lagi
           }}
         />

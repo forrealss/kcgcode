@@ -161,6 +161,20 @@ export function runMigrations(db: Database): void {
   ensureColumn(db, "sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT");
   // Custom instruction per Project (dikirim sebagai `system`), NULL = tidak ada.
   ensureColumn(db, "projects", "instructions", "ALTER TABLE projects ADD COLUMN instructions TEXT");
+  // Remote access: provider terpilih (kcg = layanan bawaan, lhr = localhost.run)
+  // + status nyala localhost.run (dinyalakan ulang otomatis saat start).
+  ensureColumn(
+    db,
+    "tunnel_account",
+    "provider",
+    "ALTER TABLE tunnel_account ADD COLUMN provider TEXT NOT NULL DEFAULT 'kcg'",
+  );
+  ensureColumn(
+    db,
+    "tunnel_account",
+    "lhr_enabled",
+    "ALTER TABLE tunnel_account ADD COLUMN lhr_enabled INTEGER NOT NULL DEFAULT 0",
+  );
   // Avatar bawaan (id preset ikon). Eksklusif dengan foto upload `avatar`.
   ensureColumn(
     db,
