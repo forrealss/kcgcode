@@ -26,6 +26,7 @@
 import {
   CheckIcon,
   CopyIcon,
+  MessagesSquareIcon,
   MoreHorizontalIcon,
   PanelRightIcon,
   PlusIcon,
@@ -163,6 +164,37 @@ function ProjectMenu({
   );
 }
 
+/**
+ * Empty state saat Project belum punya Session: kartu bergaris putus-putus
+ * (ikon, judul, penjelasan singkat, satu aksi utama).
+ */
+function EmptySessions({ projectName, onStart }: { projectName: string; onStart: () => void }) {
+  return (
+    <div className="flex flex-col items-center gap-6 rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center sm:py-16">
+      <span
+        className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"
+        aria-hidden
+      >
+        <MessagesSquareIcon className="size-7" />
+      </span>
+
+      <div className="flex max-w-sm flex-col gap-1.5">
+        <h2 className="text-lg font-semibold tracking-tight">Start your first session</h2>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          A session is a conversation with the agent inside{" "}
+          <span className="font-medium text-foreground">{projectName}</span>. It can read and edit
+          files here for you.
+        </p>
+      </div>
+
+      <Button type="button" onClick={onStart} className="rounded-full px-5">
+        <PlusIcon data-icon="inline-start" />
+        New session
+      </Button>
+    </div>
+  );
+}
+
 export function SessionList({
   project: initialProject,
   onOpenSession,
@@ -212,8 +244,9 @@ export function SessionList({
             )}
           </div>
 
-          {/* Satu baris ringkasan — cukup teks, tanpa tile. */}
-          {!list.loading && !list.loadError && (
+          {/* Satu baris ringkasan — cukup teks, tanpa tile. Disembunyikan saat
+              kosong: empty state di bawah sudah menyampaikannya. */}
+          {!list.loading && !list.loadError && list.summary.total > 0 && (
             <p className="text-sm text-muted-foreground">{describeSessionSummary(list.summary)}</p>
           )}
 
@@ -284,16 +317,7 @@ export function SessionList({
               ))}
             </ul>
           ) : (
-            // Empty state ringan: satu kalimat + tautan aksi, tanpa kotak.
-            <div className="flex flex-col items-start gap-3 border-t pt-8">
-              <p className="text-sm text-muted-foreground">
-                Start a session to run CLI_Agent in this project.
-              </p>
-              <Button type="button" variant="outline" size="sm" onClick={openForm}>
-                <PlusIcon data-icon="inline-start" />
-                New session
-              </Button>
-            </div>
+            <EmptySessions projectName={project.name} onStart={openForm} />
           )}
         </section>
       </div>

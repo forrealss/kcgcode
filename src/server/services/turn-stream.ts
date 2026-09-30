@@ -57,6 +57,17 @@ export interface TurnStreamOptions {
   onMessage?: (message: SessionMessage) => void;
   /** Part yang sedang di-stream — diteruskan ke Client. */
   onMessagePart?: (sessionId: string, messageId: string, part: MessagePart) => void;
+  /**
+   * Potongan teks baru untuk satu part (`message.part.delta`) — diteruskan ke
+   * Client sebagai delta (bukan teks penuh) agar ringan tiap token.
+   */
+  onMessagePartDelta?: (
+    sessionId: string,
+    messageId: string,
+    partId: string,
+    field: string,
+    delta: string,
+  ) => void;
   /** Error asinkron turn (mis. timeout) — banner di Client. */
   onError?: (sessionId: string, message: string) => void;
   /** Perubahan status turn — Client tahu kapan tombol stop aktif. */
@@ -187,6 +198,34 @@ export class TurnStream {
     // Part baru = tanda hidup: reset timer idle turn.
     this.armTimer(sessionId, turn);
     this.opts.onMessagePart?.(sessionId, messageId, part);
+  }
+
+  /**
+   * Terima potongan teks streaming (`message.part.delta`, opencode >= 1.x):
+   * token model tiba lewat event ini, sementara `message.part.updated` hanya
+   * dikirim di awal (teks kosong) dan di akhir (teks lengkap). Delta
+   * ditambahkan ke part yang terakumulasi (agar yang tersimpan tetap utuh
+   * walau `updated` final tidak datang) lalu diteruskan ke Client.
+   * Delta untuk part/pesan yang belum dikenal diabaikan — `updated` final
+   * tetap membawa teks lengkapnya.
+   */
+  acceptDelta(
+    sessionId: string,
+    messageId: string,
+    partId: string,
+    field: string,
+    delta: string,
+  ): void {
+    const turn = this.turns.get(sessionId);
+    if (!turn || turn.finalized || !turn.assistantMsgIds.has(messageId)) return;
+    const part = turn.parts.get(messageId)?.get(partId);
+    if (!part) return;
+    const cur = (part as Record<string, unknown>)[field];
+    if (cur !== undefined && typeof cur !== "string") return;
+    // Salinan baru: part yang sudah dikirim ke Client tidak dimutasi.
+    turn.parts.get(messageId)?.set(partId, { ...part, [field]: (cur ?? "") + delta });
+    this.armTimer(sessionId, turn);
+    this.opts.onMessagePartDelta?.(sessionId, messageId, partId, field, delta);
   }
 
   /**

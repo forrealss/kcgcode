@@ -118,6 +118,17 @@ export interface SessionManagerOptions {
    * `messageId` = id pesan assistant di opencode yang sedang dibangun.
    */
   onMessagePart?: (sessionId: string, messageId: string, part: MessagePart) => void;
+  /**
+   * Hook potongan teks streaming (SSE `message.part.delta`) — token model
+   * tiba lewat event ini; lihat `TurnStream.acceptDelta`.
+   */
+  onMessagePartDelta?: (
+    sessionId: string,
+    messageId: string,
+    partId: string,
+    field: string,
+    delta: string,
+  ) => void;
   /** Hook Interactive_Prompt baru — disambungkan ke WebSocket_Gateway. */
   onPrompt?: (prompt: InteractivePrompt) => void;
   /**
@@ -296,6 +307,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   /** Project yang sudah diproses saat server-nya keluar (hindari duplikasi). */
   const exitNotified = new Set<string>();
   const onMessagePart = opts.onMessagePart;
+  const onMessagePartDelta = opts.onMessagePartDelta;
 
   /** State turn streaming per Session (finish/discard/fail + timer idle). */
   const turns = new TurnStream({
@@ -303,6 +315,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     now,
     onMessage,
     onMessagePart,
+    onMessagePartDelta,
     onError,
     onTurnChange,
     // Turn menunggu keputusan user (kartu permission/question pending) bukan
@@ -366,6 +379,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * - `session.created` dengan `parentID` -> petakan child sub-agent ke induk.
    * - `message.updated` role=assistant -> catat id pesan assistant (turn).
    * - `message.part.updated` -> forward part ke Client (via onMessagePart).
+   * - `message.part.delta` -> potongan teks streaming (via onMessagePartDelta).
    */
   function handleEvent(_projectId: string, ev: OpenCodeEvent): void {
     if (ev.type === "session.created") {
@@ -473,6 +487,26 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       const messageId = p.messageID;
       if (typeof messageId !== "string") return;
       turns.acceptPart(sessionId, messageId, p);
+      return;
+    }
+    if (ev.type === "message.part.delta") {
+      const ocId = field(ev, "sessionID", "sessionId");
+      if (typeof ocId !== "string") return;
+      const sessionId = ocToSession.get(ocId);
+      if (!sessionId) return;
+      const messageId = field(ev, "messageID", "messageId");
+      const partId = field(ev, "partID", "partId");
+      const name = field(ev, "field");
+      const delta = field(ev, "delta");
+      if (
+        typeof messageId !== "string" ||
+        typeof partId !== "string" ||
+        typeof name !== "string" ||
+        typeof delta !== "string"
+      ) {
+        return;
+      }
+      turns.acceptDelta(sessionId, messageId, partId, name, delta);
       return;
     }
     // v1 & v2 memakai id request yang sama (`per_...`), dan `prompts.id` adalah

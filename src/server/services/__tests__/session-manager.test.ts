@@ -314,6 +314,7 @@ interface Harness {
   attachments?: AttachmentManager;
   messages: SessionMessage[];
   messageParts: [string, string, MessagePart][];
+  partDeltas: [string, string, string, string, string][];
   prompts: InteractivePrompt[];
   statuses: [string, SessionStatus][];
   errors: [string, string][];
@@ -347,6 +348,8 @@ function freshHarnessWithHooks(
   const fake = makeFakeServers();
   const messages: SessionMessage[] = [];
   const messageParts: [string, string, MessagePart][] = [];
+  /** Delta streaming (onMessagePartDelta): [sessionId, messageId, partId, field, delta]. */
+  const partDeltas: [string, string, string, string, string][] = [];
   const prompts: InteractivePrompt[] = [];
   const statuses: [string, SessionStatus][] = [];
   const errors: [string, string][] = [];
@@ -367,6 +370,8 @@ function freshHarnessWithHooks(
     ...managerOverrides,
     onMessage: (m) => messages.push(m),
     onMessagePart: (sid, mid, part) => messageParts.push([sid, mid, part]),
+    onMessagePartDelta: (sid, mid, pid, field, delta) =>
+      partDeltas.push([sid, mid, pid, field, delta]),
     onPrompt: (p) => prompts.push(p),
     onPromptResolved: (sid, pid) => promptResolved.push([sid, pid]),
     onStatusChange: (id, st) => statuses.push([id, st]),
@@ -382,6 +387,7 @@ function freshHarnessWithHooks(
     attachments,
     messages,
     messageParts,
+    partDeltas,
     prompts,
     statuses,
     errors,
@@ -1275,6 +1281,89 @@ test("streaming: part assistant di-forward via onMessagePart setelah turn aktif"
       "msg_a1",
       { type: "text", id: "prt_t1", text: "jawaban", messageID: "msg_a1" },
     ]);
+  } finally {
+    h.close();
+  }
+});
+
+test("streaming: message.part.delta di-forward & terakumulasi (alur opencode 1.x)", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "halo");
+
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    // opencode 1.x: part dibuat dengan teks KOSONG, isi datang lewat delta.
+    client.emit({
+      type: "message.part.updated",
+      sessionID: "ses_remote1",
+      part: { type: "text", id: "prt_t1", text: "", messageID: "msg_a1" },
+    });
+    for (const delta of ["Ku", "cing ", "lucu."]) {
+      client.emit({
+        type: "message.part.delta",
+        sessionID: "ses_remote1",
+        messageID: "msg_a1",
+        partID: "prt_t1",
+        field: "text",
+        delta,
+      });
+    }
+
+    // Tiap delta diteruskan ke Client apa adanya (bukan teks penuh).
+    expect(h.partDeltas).toEqual([
+      [sid, "msg_a1", "prt_t1", "text", "Ku"],
+      [sid, "msg_a1", "prt_t1", "text", "cing "],
+      [sid, "msg_a1", "prt_t1", "text", "lucu."],
+    ]);
+
+    // Tanpa `updated` final pun, teks yang tersimpan saat idle tetap utuh.
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    const assistant = h.messages.find((m) => m.role === "assistant");
+    expect(assistant?.parts).toEqual([
+      { type: "text", id: "prt_t1", text: "Kucing lucu.", messageID: "msg_a1" },
+    ]);
+  } finally {
+    h.close();
+  }
+});
+
+test("streaming: delta untuk part/pesan tak dikenal diabaikan", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "halo");
+    client.emit({
+      type: "message.updated",
+      sessionID: "ses_remote1",
+      info: { id: "msg_a1", role: "assistant" },
+    });
+    // Part belum pernah di-`updated` -> delta diabaikan.
+    client.emit({
+      type: "message.part.delta",
+      sessionID: "ses_remote1",
+      messageID: "msg_a1",
+      partID: "prt_unknown",
+      field: "text",
+      delta: "x",
+    });
+    // Pesan bukan milik turn (mis. pesan user) -> diabaikan.
+    client.emit({
+      type: "message.part.delta",
+      sessionID: "ses_remote1",
+      messageID: "msg_user",
+      partID: "prt_u",
+      field: "text",
+      delta: "y",
+    });
+    expect(h.partDeltas).toHaveLength(0);
+    expect(sid).toBeTruthy();
   } finally {
     h.close();
   }

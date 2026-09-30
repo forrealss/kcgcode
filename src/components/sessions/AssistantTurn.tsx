@@ -10,12 +10,24 @@ import { MarkdownContent } from "@/components/sessions/MarkdownContent";
 import { CopyMessageButton } from "@/components/sessions/MessageActions";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
+import { useSmoothText } from "@/hooks/useSmoothText";
 import type { CollapsibleState } from "@/lib/collapsible";
 import { formatDuration, formatTime } from "@/lib/time";
 import { partText, turnBlocks, turnSegments, turnThoughtDuration } from "@/lib/turns";
 import { cn } from "@/lib/utils";
 import type { AssistantTurnGroup } from "@/types";
 import { ThoughtProcessBlock } from "./ThoughtProcessBlock";
+
+/**
+ * Markdown jawaban yang sedang di-stream: teks dikejar halus per frame
+ * (`useSmoothText`) agar tidak melompat per potongan delta. Hanya blok
+ * terakhir dari turn yang masih berjalan yang dianimasikan; riwayat & blok
+ * yang sudah lewat langsung tampil penuh.
+ */
+function StreamingMarkdown({ text, streaming }: { text: string; streaming: boolean }) {
+  const shown = useSmoothText(text, streaming);
+  return <MarkdownContent>{shown}</MarkdownContent>;
+}
 
 /** Model kadang membalas "(empty)" saat tidak ada teks untuk ditampilkan. */
 function isEmptyReply(text: string): boolean {
@@ -97,7 +109,10 @@ export function AssistantTurn({ group, collapsible, onToggle }: AssistantTurnPro
                   <div className={cn(hasSteps && "mt-3")}>
                     <Bubble variant="ghost" className="max-w-full">
                       <BubbleContent className="w-full">
-                        <MarkdownContent>{block.content.text}</MarkdownContent>
+                        <StreamingMarkdown
+                          text={block.content.text}
+                          streaming={streaming && isLastBlock}
+                        />
                       </BubbleContent>
                     </Bubble>
                   </div>

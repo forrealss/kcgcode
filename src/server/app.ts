@@ -169,6 +169,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
     onMessagePart: (sessionId, messageId, part) =>
       gateway.notifyMessagePart(sessionId, messageId, part),
+    onMessagePartDelta: (sessionId, messageId, partId, field, delta) =>
+      gateway.notifyMessagePartDelta(sessionId, messageId, partId, field, delta),
     onPrompt: (prompt) => gateway.notifyPrompt(prompt.sessionId, prompt),
     // Kartu kembar yang ikut terjawab lewat fan-out grup: kirim notif
     // `prompt_resolved` agar hilang dari UI tanpa menunggu reattach.

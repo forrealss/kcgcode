@@ -98,7 +98,6 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               composer seperti biasa. */}
           <PromptPanel
             groups={chat.promptGroups}
-            resolving={chat.resolving}
             errorSignal={chat.promptError}
             onResolve={chat.resolvePrompt}
             onConsumeError={chat.consumePromptError}

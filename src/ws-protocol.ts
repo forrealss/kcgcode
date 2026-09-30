@@ -49,6 +49,18 @@ export type ServerMessage =
   | { type: "message"; sessionId: string; message: SessionMessage }
   /** Part pesan yang sedang di-stream (SSE `message.part.updated`). */
   | { type: "message_part"; sessionId: string; messageId: string; part: MessagePart }
+  /**
+   * Potongan teks baru untuk satu part (SSE `message.part.delta`): tambahkan
+   * `delta` ke `part[field]` (biasanya `text`). Token model tiba lewat sini.
+   */
+  | {
+      type: "message_part_delta";
+      sessionId: string;
+      messageId: string;
+      partId: string;
+      field: string;
+      delta: string;
+    }
   | { type: "prompt"; sessionId: string; prompt: InteractivePrompt }
   | { type: "prompt_resolved"; sessionId: string; promptId: string }
   | { type: "session_status"; sessionId: string; status: SessionStatus }

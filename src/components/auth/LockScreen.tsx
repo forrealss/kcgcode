@@ -34,17 +34,7 @@ import { applyPinAction, digitsFromPaste, pinKeyAction } from "@/lib/lock-screen
 import { cn } from "@/lib/utils";
 import type { AuthStatus } from "@/server/services/auth";
 
-export function LockScreen({
-  status,
-  animateIn = false,
-  onLanded,
-}: {
-  status: AuthStatus;
-  /** Turun dari atas (baru saja dikunci). False = langsung tampil. */
-  animateIn?: boolean;
-  /** Dipanggil saat animasi masuk selesai. */
-  onLanded?: () => void;
-}) {
+export function LockScreen({ status }: { status: AuthStatus }) {
   const kind = status.lockKind ?? "password";
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -54,17 +44,6 @@ export function LockScreen({
     status.retryAfterSec > 0 ? Date.now() + status.retryAfterSec * 1000 : 0,
   );
   const [now, setNow] = useState(() => Date.now());
-
-  // Cadangan bila `animationend` tidak pernah datang (reduced motion mematikan
-  // animasi, tab di latar belakang): app di bawah harus tetap dilepas dari DOM.
-  const landedRef = useRef(onLanded);
-  landedRef.current = onLanded;
-  useEffect(() => {
-    if (!animateIn) return;
-    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const t = setTimeout(() => landedRef.current?.(), reduced ? 0 : 800);
-    return () => clearTimeout(t);
-  }, [animateIn]);
 
   // Jam (dan hitung mundur rate limit).
   useEffect(() => {
@@ -135,17 +114,8 @@ export function LockScreen({
       role="dialog"
       aria-modal="true"
       aria-labelledby="lock-title"
-      className={cn(
-        "fixed inset-0 z-[100] flex flex-col items-center overflow-y-auto bg-background",
-        // Bayangan di tepi bawah agar terlihat seperti tirai yang turun.
-        animateIn &&
-          "animate-[lock-drop_0.55s_cubic-bezier(0.32,0.72,0,1)_both] shadow-[0_24px_48px_-12px_rgb(0_0_0/0.45)] motion-reduce:animate-none",
-      )}
-      onAnimationEnd={(e) => {
-        if (animateIn && e.animationName === "lock-drop" && e.target === e.currentTarget) {
-          onLanded?.();
-        }
-      }}
+      // Animasi masuk/keluar ditangani pembungkus `m.div` di AuthGate.
+      className="fixed inset-0 z-[100] flex flex-col items-center overflow-y-auto bg-background"
     >
       {/* Mobile / layar sempit: satu kolom (jam -> profil -> input).
           md+: dua kolom — identitas (jam, tanggal, profil) di kiri, input di

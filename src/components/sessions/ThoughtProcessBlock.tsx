@@ -22,6 +22,7 @@ import {
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent } from "@/components/ui/collapsible";
+import { useSmoothText } from "@/hooks/useSmoothText";
 import { type CollapsibleState, isCollapsibleExpanded } from "@/lib/collapsible";
 import { partText, toolLabel } from "@/lib/turns";
 import { cn } from "@/lib/utils";
@@ -75,8 +76,10 @@ function stepIcon(Icon: LucideIcon, className?: string) {
  * lengkap) tampil redup; setelah selesai tampil apa adanya — keduanya bisa
  * panjang, jadi tinggi dibatasi + scroll internal.
  */
-function ReasoningStep({ text }: { text: string }) {
-  const dim = text.trim() === "";
+function ReasoningStep({ text, live = false }: { text: string; live?: boolean }) {
+  // Reasoning yang masih di-stream ikut dihaluskan (sama seperti jawaban).
+  const shown = useSmoothText(text, live);
+  const dim = shown.trim() === "";
   return (
     <div
       className={cn(
@@ -84,7 +87,7 @@ function ReasoningStep({ text }: { text: string }) {
         dim && "text-muted-foreground/50",
       )}
     >
-      {dim ? "organizing thoughts…" : text}
+      {dim ? "organizing thoughts…" : shown}
     </div>
   );
 }
@@ -163,7 +166,10 @@ export function ThoughtProcessBlock({
               <div key={seg.key}>
                 {renderTimelineStep(
                   stepIcon(ClockFadingIcon, "text-muted-foreground"),
-                  <ReasoningStep text={partText(seg.part) ?? ""} />,
+                  <ReasoningStep
+                    text={partText(seg.part) ?? ""}
+                    live={blockStreaming && i === steps.length - 1}
+                  />,
                   {
                     last: blockStreaming && i === steps.length - 1,
                     streaming: blockStreaming && i === steps.length - 1,

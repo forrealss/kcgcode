@@ -29,8 +29,7 @@
  * gagal tidak lagi diam saja sehingga tombol terasa mati.
  *
  * Desain: panel floating di ATAS composer (ala dialog izin Claude/opencode)
- * dengan animasi masuk slide-up + fade + zoom kecil (`animate-in` dari
- * tw-animate-css). Logika pemetaan aksi & pengelompokan prompt dipisah ke
+ * dengan animasi masuk/keluar (Motion, di `PromptPanel`). Logika pemetaan aksi & pengelompokan prompt dipisah ke
  * `lib/prompts.ts` (fungsi murni, diuji tanpa DOM — unit test 24.6).
  */
 import {
@@ -74,11 +73,6 @@ export interface PromptCardProps {
   /** Reset `errorSignal` di pemilik state setelah kartu menampilkannya. */
   onConsumeError?: () => void;
   /**
-   * `true` = jawaban sudah diterima server — kartu memainkan animasi keluar
-   * (slide-down + fade) sebelum dihapus dari daftar oleh pemilik state.
-   */
-  exiting?: boolean;
-  /**
    * `true` = kartu docked di dasar MENGGANTIKAN composer (question pending):
    * mengisi sisa tinggi kolom dan hanya area jawaban yang scroll — header
    * pertanyaan dan footer aksi (Dismiss/Submit) selalu terlihat. `false` =
@@ -92,7 +86,6 @@ export function PromptCard({
   onResolve,
   errorSignal,
   onConsumeError,
-  exiting = false,
   docked = false,
 }: PromptCardProps) {
   const prompt = prompts[0];
@@ -363,11 +356,7 @@ export function PromptCard({
   return (
     <Card
       className={cn(
-        // Animasi masuk: naik dari bawah + fade + sedikit membesar (ala
-        // dialog izin) — tw-animate-css sudah dimuat di globals.css.
-        "animate-in fade-in-0 slide-in-from-bottom-6 zoom-in-95 duration-400",
-        // Animasi keluar: turun ke bawah + fade (jawaban diterima server).
-        exiting && "animate-out fade-out-0 slide-out-to-bottom-4 zoom-out-95 duration-200",
+        // Animasi masuk/keluar ditangani pembungkus `m.div` di PromptPanel.
         "gap-3 rounded-xl border-border/70 bg-card/95 py-3.5 shadow-lg shadow-black/20 ring-1 ring-foreground/5 backdrop-blur-md",
         // Docked (menggantikan composer): kartu mengisi sisa kolom; konten
         // dalam CardContent diatur flex agar hanya jawaban yang scroll.

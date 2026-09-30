@@ -288,15 +288,3 @@
     transform: translateY(10px);
   }
 }
-
-/* Lock screen turun dari atas menutupi app saat dikunci (bukan saat app
-   pertama dibuka dalam keadaan terkunci). Kurva ala sheet iOS: cepat di
-   awal, mendarat halus. Reduced motion dimatikan global di index.css. */
-@keyframes lock-drop {
-  from {
-    transform: translateY(-100%);
-  }
-  to {
-    transform: translateY(0);
-  }
-}

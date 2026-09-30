@@ -65,6 +65,13 @@ export interface WebSocketGateway {
   interrupt(sub: Subscriber, sessionId: string): void;
   notifyMessage(sessionId: string, message: SessionMessage): void;
   notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
+  notifyMessagePartDelta(
+    sessionId: string,
+    messageId: string,
+    partId: string,
+    field: string,
+    delta: string,
+  ): void;
   notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
   notifySessionStatus(sessionId: string, status: SessionStatus): void;
   /** Broadcast judul Session baru hasil generate opencode. */
@@ -256,6 +263,23 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     broadcast(sessionId, () => ({ type: "message_part", sessionId, messageId, part }));
   }
 
+  function notifyMessagePartDelta(
+    sessionId: string,
+    messageId: string,
+    partId: string,
+    field: string,
+    delta: string,
+  ): void {
+    broadcast(sessionId, () => ({
+      type: "message_part_delta",
+      sessionId,
+      messageId,
+      partId,
+      field,
+      delta,
+    }));
+  }
+
   function notifyPrompt(sessionId: string, prompt: InteractivePrompt): void {
     broadcast(sessionId, () => ({ type: "prompt", sessionId, prompt }));
   }
@@ -308,6 +332,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     interrupt,
     notifyMessage,
     notifyMessagePart,
+    notifyMessagePartDelta,
     notifyPrompt,
     notifySessionStatus,
     notifySessionTitle,

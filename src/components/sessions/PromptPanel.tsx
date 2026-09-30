@@ -12,15 +12,21 @@
  *   (dipakai saat question pending). Tinggi mengikuti sisa layar (`flex-1`),
  *   dan scroll dipindah ke DALAM kartu — hanya daftar jawaban yang scroll,
  *   header pertanyaan + footer aksi tetap terlihat.
+ *
+ * Animasi (Motion `AnimatePresence`): kartu masuk naik dari bawah + fade +
+ * sedikit membesar; saat dijawab (`prompt_resolved` menghapusnya dari state)
+ * kartu tetap di DOM sampai animasi keluarnya (turun + fade) selesai — tanpa
+ * `setTimeout` atau state "resolving" manual. Panel pembungkus selalu
+ * ter-mount (tanpa ruang saat kosong) agar kartu terakhir sempat beranimasi.
  */
+import { AnimatePresence } from "motion/react";
+import * as m from "motion/react-m";
 import { PromptCard } from "@/components/sessions/PromptCard";
 import type { InteractivePrompt, PromptResponse } from "@/types";
 
 export interface PromptPanelProps {
   /** Grup prompt pending (identik) yang tampil sebagai satu kartu. */
   groups: InteractivePrompt[][];
-  /** Prompt yang sedang memainkan animasi keluar sebelum dihapus. */
-  resolving: Set<string>;
   /** Error resolusi terakhir — ditampilkan di kartu yang relevan. */
   errorSignal: string | null;
   onResolve: (promptId: string, response: PromptResponse) => void;
@@ -33,41 +39,64 @@ export interface PromptPanelProps {
   docked?: boolean;
 }
 
+/** Kurva "mendarat halus" yang sama dengan animasi lain di app. */
+const EASE_OUT: [number, number, number, number] = [0.32, 0.72, 0, 1];
+
 export function PromptPanel({
   groups,
-  resolving,
   errorSignal,
   onResolve,
   onConsumeError,
   docked = false,
 }: PromptPanelProps) {
-  if (groups.length === 0) return null;
+  // Panel selalu ter-mount (kosong = tanpa padding/ruang) agar kartu
+  // terakhir tetap bisa memainkan animasi keluar sebelum hilang.
+  const empty = groups.length === 0;
   return (
     <div
+      aria-live="polite"
       className={
-        docked
-          ? // Docked: isi sisa kolom di bawah timeline — scroll ditangani kartu.
-            "pointer-events-auto relative z-30 flex min-h-0 flex-1 flex-col gap-2 px-3 pb-2 pt-2 sm:px-4"
-          : "pointer-events-auto relative z-30 mb-1.5 flex max-h-72 flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-2 sm:px-4"
+        empty
+          ? "pointer-events-none relative z-30"
+          : docked
+            ? // Docked: isi sisa kolom di bawah timeline — scroll ditangani kartu.
+              "pointer-events-auto relative z-30 flex min-h-0 flex-1 flex-col gap-2 px-3 pb-2 pt-2 sm:px-4"
+            : "pointer-events-auto relative z-30 mb-1.5 flex max-h-72 flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-2 sm:px-4"
       }
     >
-      {groups.map((group) => (
-        <div
-          key={group[0]?.id}
-          className={
-            docked ? "flex min-h-0 flex-1 flex-col" : "pointer-events-auto mx-auto w-full max-w-3xl"
-          }
-        >
-          <PromptCard
-            prompts={group}
-            onResolve={onResolve}
-            errorSignal={errorSignal}
-            onConsumeError={onConsumeError}
-            exiting={group.every((p) => resolving.has(p.id))}
-            docked={docked}
-          />
-        </div>
-      ))}
+      <AnimatePresence initial mode="popLayout">
+        {groups.map((group) => (
+          <m.div
+            key={group[0]?.id}
+            initial={{ opacity: 0, y: 24, scale: 0.96 }}
+            animate={{
+              opacity: 1,
+              y: 0,
+              scale: 1,
+              transition: { duration: 0.4, ease: EASE_OUT },
+            }}
+            exit={{
+              opacity: 0,
+              y: 16,
+              scale: 0.96,
+              transition: { duration: 0.2, ease: "easeIn" },
+            }}
+            className={
+              docked
+                ? "flex min-h-0 flex-1 flex-col"
+                : "pointer-events-auto mx-auto w-full max-w-3xl"
+            }
+          >
+            <PromptCard
+              prompts={group}
+              onResolve={onResolve}
+              errorSignal={errorSignal}
+              onConsumeError={onConsumeError}
+              docked={docked}
+            />
+          </m.div>
+        ))}
+      </AnimatePresence>
     </div>
   );
 }

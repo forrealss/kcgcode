@@ -267,6 +267,37 @@ export function upsertMessagePart(
 }
 
 /**
+ * Tambahkan potongan teks streaming (`message_part_delta`) ke part yang sudah
+ * ada: `part[field] += delta`. Delta untuk pesan/part yang belum dikenal
+ * diabaikan (daftar tidak berubah) — `message_part` final membawa teks utuh.
+ * Mengembalikan array yang sama bila tidak ada perubahan (hemat re-render).
+ */
+export function appendMessagePartDelta(
+  messages: SessionMessage[],
+  messageId: string,
+  partId: string,
+  field: string,
+  delta: string,
+): SessionMessage[] {
+  if (delta === "") return messages;
+  const idx = messages.findIndex((m) => m.id === messageId);
+  const cur = idx === -1 ? undefined : messages[idx];
+  if (!cur) return messages;
+  const partIdx = cur.parts.findIndex((p) => p.id === partId);
+  const part = partIdx === -1 ? undefined : cur.parts[partIdx];
+  if (!part) return messages;
+  const prev = (part as Record<string, unknown>)[field];
+  if (prev !== undefined && typeof prev !== "string") return messages;
+  const nextPart: MessagePart = { ...part, [field]: (prev ?? "") + delta };
+  const next: SessionMessage = {
+    ...cur,
+    parts: cur.parts.map((p, i) => (i === partIdx ? nextPart : p)),
+    streaming: true,
+  };
+  return messages.map((m, i) => (i === idx ? next : m));
+}
+
+/**
  * Ganti pesan final (hasil POST, non-streaming) — replace bila id sama
  * (menutup versi streaming), selainnya tambahkan.
  */

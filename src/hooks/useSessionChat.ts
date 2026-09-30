@@ -18,6 +18,7 @@ import { peekPendingPrompt, setPendingPrompt, takePendingPrompt } from "@/lib/pe
 import { groupPrompts } from "@/lib/prompts";
 import { wsStatusLabel } from "@/lib/session-status";
 import {
+  appendMessagePartDelta,
   groupTurns,
   turnBlocks,
   turnSegments,
@@ -32,9 +33,6 @@ import type {
   SessionStatus,
 } from "@/types";
 import type { ClientMessage, ServerMessage } from "@/ws-protocol";
-
-/** Durasi animasi keluar kartu prompt (slide-down + fade) dalam ms. */
-const PROMPT_EXIT_MS = 220;
 
 export interface UseSessionChatOptions {
   session: Session;
@@ -74,7 +72,6 @@ export interface SessionChat {
   promptError: string | null;
   consumePromptError: () => void;
   /** Prompt yang sedang memainkan animasi keluar sebelum dihapus. */
-  resolving: Set<string>;
   resolvePrompt: (promptId: string, response: PromptResponse) => void;
 
   // Aksi Session
@@ -130,8 +127,6 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
   const [error, setError] = useState<string | null>(null);
   /** Error resolusi prompt — tampil di kartunya (bukan banner global). */
   const [promptError, setPromptError] = useState<string | null>(null);
-  /** Prompt yang dijawab & sedang memainkan animasi keluar. */
-  const [resolving, setResolving] = useState<Set<string>>(new Set());
   /** Turn aktif dari server (`turn_active`): model sedang merespon. */
   const [turnActive, setTurnActive] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -168,11 +163,17 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
         break;
       case "message_part":
         setError(null);
-        // Upsert part streaming: teks yang tiba bertahap langsung tampil di layar
-        // (provider yang men-stream token); yang tiba sekaligus di pesan final
-        // (provider non-streaming) muncul penuh saat versi final menggantikan
-        // placeholder streaming ini — tanpa efek mengetik.
+        // Upsert part streaming (snapshot utuh): opencode mengirimnya saat part
+        // dibuat (teks kosong) dan saat selesai (teks lengkap). Isi di
+        // antaranya datang lewat `message_part_delta` di bawah.
         setMessages((prev) => upsertMessagePart(prev, msg.sessionId, msg.messageId, msg.part));
+        break;
+      case "message_part_delta":
+        // Token model (opencode `message.part.delta`): teks bertambah per
+        // potongan -> efek mengetik seperti TUI opencode.
+        setMessages((prev) =>
+          appendMessagePartDelta(prev, msg.messageId, msg.partId, msg.field, msg.delta),
+        );
         break;
       case "prompt":
         setError(null);
@@ -181,17 +182,9 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
         );
         break;
       case "prompt_resolved":
-        // Kartu diberi jeda EXIT_MS untuk animasi keluar (slide-down + fade)
-        // sebelum benar-benar dihapus dari daftar.
-        setResolving((prev) => new Set(prev).add(msg.promptId));
-        setTimeout(() => {
-          setPrompts((prev) => prev.filter((p) => p.id !== msg.promptId));
-          setResolving((prev) => {
-            const next = new Set(prev);
-            next.delete(msg.promptId);
-            return next;
-          });
-        }, PROMPT_EXIT_MS);
+        // Langsung dihapus; animasi keluar kartu ditangani `AnimatePresence`
+        // di `PromptPanel` (kartu tetap di DOM sampai animasinya selesai).
+        setPrompts((prev) => prev.filter((p) => p.id !== msg.promptId));
         break;
       case "session_status":
         setStatus(msg.status);
@@ -395,7 +388,6 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     hasPendingQuestion,
     promptError,
     consumePromptError,
-    resolving,
     resolvePrompt,
     interrupt,
     starting,

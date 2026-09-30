@@ -3,15 +3,20 @@
  * dirender sama sekali — tidak ada request API / WebSocket yang berjalan dan
  * tidak ada data yang tersisa di DOM. Yang tampil hanya `LockScreen`.
  *
- * Saat dikunci dari keadaan terbuka, lock screen turun dari atas; app lama
- * dibiarkan (inert) hanya selama animasi, lalu dilepas dari DOM.
+ * Animasi (Motion `AnimatePresence`, `initial={false}` -> tidak beranimasi
+ * saat app pertama dibuka dalam keadaan terkunci):
+ * - Dikunci: lock screen turun dari atas. App lama ditahan di DOM (inert)
+ *   hanya sampai lock screen mendarat, lalu dilepas.
+ * - Dibuka: lock screen naik keluar layar, app sudah ada di bawahnya.
  *
  * Kunci otomatis: server menegakkan batas idle; klien menirunya dengan timer
  * aktivitas lokal (agar layar terkunci tepat waktu walau tidak ada request)
  * dan heartbeat status berkala (mendeteksi kunci dari perangkat lain /
  * sesi dicabut).
  */
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AnimatePresence, useIsPresent, useReducedMotion } from "motion/react";
+import * as m from "motion/react-m";
+import { type ReactNode, useEffect, useRef } from "react";
 import { LockScreen } from "@/components/auth/LockScreen";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -33,16 +38,6 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const unlocked = status !== null && (!status.protected || status.authenticated);
   const autoLockMs =
     status?.protected && status.autoLockMinutes > 0 ? status.autoLockMinutes * 60_000 : 0;
-
-  // Transisi terbuka -> terkunci: lock screen dianimasikan turun dari atas.
-  // Dihitung saat render (bukan effect) agar frame pertama sudah benar dan
-  // app lama tidak sempat hilang sebelum lock screen menutupinya.
-  const [wasUnlocked, setWasUnlocked] = useState(unlocked);
-  const [dropping, setDropping] = useState(false);
-  if (wasUnlocked !== unlocked) {
-    setWasUnlocked(unlocked);
-    setDropping(wasUnlocked && !unlocked);
-  }
 
   // Kunci otomatis sisi klien + heartbeat.
   const lastActivity = useRef(Date.now());
@@ -97,21 +92,51 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!unlocked && status) {
-    // Baru saja dikunci: app lama tetap di bawah selama lock screen turun,
-    // lalu dilepas dari DOM begitu animasi selesai (`onLanded`). Interaksi &
-    // pembaca layar ke app lama diblok (`inert`) sejak detik pertama.
-    if (dropping) {
-      return (
-        <>
-          <div inert className="contents">
-            {children}
-          </div>
-          <LockScreen status={status} animateIn onLanded={() => setDropping(false)} />
-        </>
-      );
-    }
-    return <LockScreen status={status} />;
-  }
-  return <>{children}</>;
+  const locked = !unlocked && status !== null;
+  return (
+    <AnimatePresence initial={false}>
+      {locked ? (
+        <m.div
+          key="lock"
+          // Tirai: turun dari atas saat dikunci, naik keluar saat dibuka.
+          // Bayangan di tepi bawah hanya terlihat selama bergerak.
+          className="fixed inset-0 z-[100] shadow-[0_24px_48px_-12px_rgb(0_0_0/0.45)]"
+          initial={{ y: "-100%" }}
+          animate={{ y: 0, transition: { duration: 0.55, ease: LOCK_EASE } }}
+          exit={{ y: "-100%", transition: { duration: 0.45, ease: LOCK_EASE } }}
+        >
+          <LockScreen status={status} />
+        </m.div>
+      ) : (
+        <AppLayer key="app">{children}</AppLayer>
+      )}
+    </AnimatePresence>
+  );
+}
+
+/** Kurva ala sheet iOS: cepat di awal, mendarat halus. */
+const LOCK_EASE: [number, number, number, number] = [0.32, 0.72, 0, 1];
+/** Selama app lama ditahan di bawah lock screen yang sedang turun (detik). */
+const LOCK_COVER_S = 0.55;
+
+/**
+ * App yang sedang terbuka. Saat dikunci, `AnimatePresence` menahannya di DOM
+ * sampai lock screen selesai menutupi layar (`exit` tertunda
+ * `LOCK_COVER_S`), lalu melepasnya — tidak ada data yang tersisa. Selama
+ * ditahan: `inert` (tak bisa diklik, difokus, atau dibaca pembaca layar).
+ * `display: contents` agar pembungkus tidak mengubah layout shell.
+ */
+function AppLayer({ children }: { children: ReactNode }) {
+  const present = useIsPresent();
+  // Reduced motion: lock screen tampil seketika, jadi app tak perlu ditahan.
+  const reduced = useReducedMotion();
+  return (
+    <m.div
+      className="contents"
+      inert={!present}
+      exit={{ opacity: 0, transition: { delay: reduced ? 0 : LOCK_COVER_S, duration: 0 } }}
+    >
+      {children}
+    </m.div>
+  );
 }
