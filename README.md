@@ -100,8 +100,8 @@ kcgcode can publish itself at your own subdomain through a kcgcode tunnel server
 Google sign-in happens entirely on the tunnel service, so kcgcode never holds Google
 credentials. What it stores is a device token (revocable, per machine) and the tunnel secret, in
 SQLite plus `frpc.toml` (mode 0600) next to it. Neither is ever sent to the browser.
-**Disconnect this machine** revokes the device token on the server. **Rotate tunnel secret**
-issues a new frp secret if you think it leaked.
+Under **Advanced**, **Unlink this computer** revokes the device token on the server and
+**Reset security key** issues a new frp secret if you think it leaked.
 
 The tunnel server URL is baked into the published npm package, so users don't configure
 anything. `KCG_TUNNEL_API_URL` overrides it, for example to point at your own server.

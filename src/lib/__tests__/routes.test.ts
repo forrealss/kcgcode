@@ -107,8 +107,17 @@ describe("rute skills", () => {
 describe("rute settings", () => {
   test("settingsPath & parseRoute", () => {
     expect(settingsPath()).toBe("/settings");
-    expect(parseRoute("/settings")).toEqual({ name: "settings" });
-    expect(parseRoute("/settings/")).toEqual({ name: "settings" });
+    expect(parseRoute("/settings")).toEqual({ name: "settings", section: "profile" });
+    expect(parseRoute("/settings/")).toEqual({ name: "settings", section: "profile" });
     expect(parseRoute("/settings/x")).toEqual({ name: "not-found" });
+    expect(parseRoute("/settings/security/x")).toEqual({ name: "not-found" });
+  });
+
+  test("sub-halaman settings", () => {
+    for (const section of ["profile", "security", "remote", "devices"] as const) {
+      expect(settingsPath(section)).toBe(`/settings/${section}`);
+      expect(parseRoute(`/settings/${section}`)).toEqual({ name: "settings", section });
+      expect(parseRoute(`/settings/${section}/`)).toEqual({ name: "settings", section });
+    }
   });
 });

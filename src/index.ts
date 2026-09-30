@@ -27,7 +27,7 @@ if (import.meta.main) {
     spa: index,
     // Rute halaman SPA: `/`, `/projects/:projectId`, dan Session view
     // (`/projects/:projectId/sessions/:sessionId` — tercakup wildcard).
-    spaPaths: ["/", "/projects", "/projects/*", "/skills", "/settings"],
+    spaPaths: ["/", "/projects", "/projects/*", "/skills", "/settings", "/settings/*"],
   });
   console.log(`🚀 KCG Code berjalan di ${app.server.url}`);
 

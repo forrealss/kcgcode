@@ -36,16 +36,18 @@ export function PrefsGroup({
       className="flex scroll-mt-6 flex-col gap-2.5"
     >
       {(title || suffix) && (
-        <div className="flex items-end justify-between gap-3 px-1">
-          <div className="flex min-w-0 flex-col gap-0.5">
+        // Suffix sebaris dengan judul (bukan deskripsi) agar deskripsi tetap
+        // selebar kolom di layar sempit, tidak terjepit tombol di kanannya.
+        <div className="flex flex-col gap-0.5 px-1">
+          <div className="flex min-h-8 items-center justify-between gap-3">
             {title && (
-              <h2 id={headingId} className="text-[15px] font-semibold tracking-tight">
+              <h2 id={headingId} className="min-w-0 text-[15px] font-semibold tracking-tight">
                 {title}
               </h2>
             )}
-            {description && <p className="text-[13px] text-muted-foreground">{description}</p>}
+            {suffix && <div className="-mr-2 ml-auto shrink-0">{suffix}</div>}
           </div>
-          {suffix && <div className="shrink-0">{suffix}</div>}
+          {description && <p className="text-[13px] text-muted-foreground">{description}</p>}
         </div>
       )}
       <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
@@ -69,6 +71,12 @@ interface ActionRowProps {
   disabled?: boolean;
   /** Tautkan `<label>` ke kontrol di suffix. */
   htmlFor?: string;
+  /**
+   * Di layar sempit (< sm) suffix selalu turun ke bawah teks. Cocok untuk
+   * baris dengan subjudul panjang + tombol, agar subjudul tidak terjepit.
+   * Tanpa ini suffix tetap turun otomatis bila ruang teks < 10rem.
+   */
+  stack?: boolean;
   className?: string;
 }
 
@@ -81,29 +89,36 @@ export function ActionRow({
   destructive,
   disabled,
   htmlFor,
+  stack,
   className,
 }: ActionRowProps) {
+  const titleClass = cn("text-[15px] leading-5", destructive && "text-destructive");
   const body = (
     <>
       {prefix && <span className="flex shrink-0 items-center">{prefix}</span>}
-      <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
-        {htmlFor ? (
-          <label
-            htmlFor={htmlFor}
-            className={cn("text-[15px] leading-5", destructive && "text-destructive")}
-          >
-            {title}
-          </label>
-        ) : (
-          <span className={cn("text-[15px] leading-5", destructive && "text-destructive")}>
-            {title}
-          </span>
-        )}
-        {subtitle && (
-          <span className="text-[13px] leading-snug text-muted-foreground">{subtitle}</span>
-        )}
+      {/* Teks + suffix dalam flex-wrap: suffix pindah ke baris berikutnya
+          (rata kiri dengan teks) saat lebar tidak cukup, alih-alih memeras
+          subjudul jadi kolom sempit. */}
+      <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2">
+        <span
+          className={cn(
+            "flex min-w-[min(100%,10rem)] flex-1 flex-col gap-0.5 py-0.5",
+            stack && "basis-full sm:basis-0",
+          )}
+        >
+          {htmlFor ? (
+            <label htmlFor={htmlFor} className={titleClass}>
+              {title}
+            </label>
+          ) : (
+            <span className={titleClass}>{title}</span>
+          )}
+          {subtitle && (
+            <span className="text-[13px] leading-snug text-muted-foreground">{subtitle}</span>
+          )}
+        </span>
+        {suffix && <span className="flex shrink-0 items-center gap-2">{suffix}</span>}
       </span>
-      {suffix && <span className="flex shrink-0 items-center gap-2">{suffix}</span>}
       {onActivate && (
         <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       )}
@@ -203,7 +218,8 @@ export function EntryRow({
                 setError(null);
               }
             }}
-            className="h-7 w-full min-w-0 bg-transparent text-[15px] outline-none placeholder:text-muted-foreground/70"
+            // 16px di mobile: iOS Safari men-zoom halaman saat fokus ke input < 16px.
+            className="h-7 w-full min-w-0 bg-transparent text-base outline-none placeholder:text-muted-foreground/70 sm:text-[15px]"
           />
           {error && (
             <span id={`${id}-err`} role="alert" className="text-[12px] text-destructive">

@@ -1,7 +1,7 @@
 /**
  * Footer sidebar: profil pemilik (avatar + nickname) dengan tombol Settings
  * dan Lock. Bila kunci belum diatur, tombol Lock diganti peringatan
- * "Not protected" yang membuka Settings -> Security.
+ * "Not protected" yang membuka `/settings/security`.
  */
 import { LockIcon, SettingsIcon, ShieldAlertIcon } from "lucide-react";
 import { ProfileAvatar } from "@/components/auth/ProfileAvatar";
@@ -32,7 +32,7 @@ export function SidebarAccount({ active, onNavigate }: SidebarAccountProps) {
       {status && !protectedApp && (
         <button
           type="button"
-          onClick={() => onNavigate(`${settingsPath()}#security`)}
+          onClick={() => onNavigate(settingsPath("security"))}
           className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-left text-xs text-amber-800 transition-colors hover:bg-amber-500/15 dark:text-amber-300"
         >
           <ShieldAlertIcon className="size-4 shrink-0" aria-hidden />

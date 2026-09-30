@@ -22,7 +22,7 @@ import type { CliArgs } from "./args";
 import { openBrowser, startDashboard } from "./dashboard";
 import { c, panel, row, symbols } from "./theme";
 
-const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings"];
+const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings", "/settings/*"];
 
 function applyEnvOverrides(args: CliArgs): void {
   if (args.port !== undefined) process.env.KCG_PORT = String(args.port);
