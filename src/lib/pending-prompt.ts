@@ -30,6 +30,16 @@ export function setPendingPrompt(
   store.setItem(KEY_PREFIX + sessionId, trimmed);
 }
 
+/** Baca prompt tertunda tanpa menghapusnya (untuk pesan optimistis di UI). */
+export function peekPendingPrompt(
+  sessionId: string,
+  store: PendingStore | null = defaultStore(),
+): string | null {
+  if (store === null) return null;
+  const value = store.getItem(KEY_PREFIX + sessionId);
+  return value !== null && value.trim() !== "" ? value : null;
+}
+
 /** Ambil sekaligus hapus prompt tertunda; null bila tidak ada. */
 export function takePendingPrompt(
   sessionId: string,

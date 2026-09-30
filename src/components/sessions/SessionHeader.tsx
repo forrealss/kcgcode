@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -29,7 +28,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Spinner } from "@/components/ui/spinner";
 import { useTheme } from "@/hooks/useTheme";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
-import { SESSION_STATUS_DOT, sessionStatusVariant, wsStatusLabel } from "@/lib/session-status";
+import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL, wsStatusLabel } from "@/lib/session-status";
 import { cn } from "@/lib/utils";
 import type { Session, SessionModel, SessionStatus } from "@/types";
 
@@ -87,50 +86,64 @@ export function SessionHeader({
           </span>
         </div>
 
-        {/* Play/stop Session — aksi paling sering dipakai, jadi tetap di luar
-          menu. Stop hanya untuk Session yang berjalan; saat model sedang
-          merespon, penghentian balasan ada di composer (tombol Stop). */}
+        {/* Status = teks biasa + titik (bukan pil yang terlihat seperti
+          tombol). Di HP cukup titiknya; label teks mulai dari sm. */}
+        <span
+          role="status"
+          className="flex shrink-0 items-center gap-1.5 px-1 text-xs font-medium text-muted-foreground"
+          title={`Session ${SESSION_STATUS_LABEL[status].toLowerCase()}`}
+        >
+          <span className="relative flex size-2" aria-hidden>
+            {status === "running" && (
+              <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500/60 motion-reduce:hidden" />
+            )}
+            <span
+              className={cn("relative inline-flex size-2 rounded-full", SESSION_STATUS_DOT[status])}
+            />
+          </span>
+          <span className="sr-only sm:not-sr-only">{SESSION_STATUS_LABEL[status]}</span>
+        </span>
+
+        {/* Stop/Start berlabel teks agar jelas fungsinya (bukan ikon kotak
+          tanpa arti). Di HP label disembunyikan, tapi tombol tetap punya
+          aria-label & ukuran sentuh 40px. Saat model sedang merespon,
+          penghentian balasan ada di composer. */}
         {status === "running" ? (
           <Button
             type="button"
-            variant="ghost"
-            size="icon"
+            variant="outline"
+            size="sm"
             onClick={onStop}
             disabled={stopping}
             aria-label="Stop session"
-            title="Stop session"
-            className="size-10 shrink-0 sm:size-9"
+            className="relative size-8 shrink-0 rounded-full px-0 after:absolute after:-inset-1 hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive sm:h-8 sm:w-auto sm:px-3 sm:after:hidden dark:hover:bg-destructive/15"
           >
-            {stopping ? <Spinner className="size-4" /> : <SquareIcon />}
+            {stopping ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <SquareIcon data-icon="inline-start" className="size-3.5 fill-current" />
+            )}
+            <span className="hidden sm:inline">{stopping ? "Stopping…" : "Stop"}</span>
           </Button>
         ) : (
           <Button
             type="button"
-            variant="ghost"
-            size="icon"
+            size="sm"
             onClick={onStart}
             disabled={starting}
-            aria-label="Start session"
-            title="Start session"
-            className="size-10 shrink-0 sm:size-9"
+            aria-label={status === "crashed" ? "Restart session" : "Start session"}
+            className="relative size-8 shrink-0 rounded-full px-0 after:absolute after:-inset-1 sm:h-8 sm:w-auto sm:px-3 sm:after:hidden"
           >
-            {starting ? <Spinner className="size-4" /> : <PlayIcon />}
+            {starting ? (
+              <Spinner data-icon="inline-start" />
+            ) : (
+              <PlayIcon data-icon="inline-start" className="size-3.5 fill-current" />
+            )}
+            <span className="hidden sm:inline">
+              {starting ? "Starting…" : status === "crashed" ? "Restart" : "Start"}
+            </span>
           </Button>
         )}
-
-        {/* Status Session sebagai titik berwarna di HP (badge teks memakan
-          lebar); badge penuh muncul dari breakpoint sm. */}
-        <span
-          role="status"
-          className="flex shrink-0 items-center sm:hidden"
-          title={`Session ${status}`}
-        >
-          <span className={cn("size-2 rounded-full", SESSION_STATUS_DOT[status])} aria-hidden />
-          <span className="sr-only">Session {status}</span>
-        </span>
-        <Badge variant={sessionStatusVariant(status)} className="hidden shrink-0 sm:inline-flex">
-          {status}
-        </Badge>
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

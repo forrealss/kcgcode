@@ -34,7 +34,17 @@ import { applyPinAction, digitsFromPaste, pinKeyAction } from "@/lib/lock-screen
 import { cn } from "@/lib/utils";
 import type { AuthStatus } from "@/server/services/auth";
 
-export function LockScreen({ status }: { status: AuthStatus }) {
+export function LockScreen({
+  status,
+  animateIn = false,
+  onLanded,
+}: {
+  status: AuthStatus;
+  /** Turun dari atas (baru saja dikunci). False = langsung tampil. */
+  animateIn?: boolean;
+  /** Dipanggil saat animasi masuk selesai. */
+  onLanded?: () => void;
+}) {
   const kind = status.lockKind ?? "password";
   const [secret, setSecret] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,6 +54,17 @@ export function LockScreen({ status }: { status: AuthStatus }) {
     status.retryAfterSec > 0 ? Date.now() + status.retryAfterSec * 1000 : 0,
   );
   const [now, setNow] = useState(() => Date.now());
+
+  // Cadangan bila `animationend` tidak pernah datang (reduced motion mematikan
+  // animasi, tab di latar belakang): app di bawah harus tetap dilepas dari DOM.
+  const landedRef = useRef(onLanded);
+  landedRef.current = onLanded;
+  useEffect(() => {
+    if (!animateIn) return;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const t = setTimeout(() => landedRef.current?.(), reduced ? 0 : 800);
+    return () => clearTimeout(t);
+  }, [animateIn]);
 
   // Jam (dan hitung mundur rate limit).
   useEffect(() => {
@@ -114,32 +135,68 @@ export function LockScreen({ status }: { status: AuthStatus }) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="lock-title"
-      className="fixed inset-0 z-[100] flex flex-col items-center overflow-y-auto bg-background"
+      className={cn(
+        "fixed inset-0 z-[100] flex flex-col items-center overflow-y-auto bg-background",
+        // Bayangan di tepi bawah agar terlihat seperti tirai yang turun.
+        animateIn &&
+          "animate-[lock-drop_0.55s_cubic-bezier(0.32,0.72,0,1)_both] shadow-[0_24px_48px_-12px_rgb(0_0_0/0.45)] motion-reduce:animate-none",
+      )}
+      onAnimationEnd={(e) => {
+        if (animateIn && e.animationName === "lock-drop" && e.target === e.currentTarget) {
+          onLanded?.();
+        }
+      }}
     >
-      <div className="relative flex w-full max-w-sm flex-1 flex-col items-center px-6 pt-[max(3rem,env(safe-area-inset-top))] pb-[max(2rem,env(safe-area-inset-bottom))]">
-        <div className="flex flex-col items-center gap-1 text-center">
-          <p className="text-5xl font-light tabular-nums tracking-tight sm:text-6xl">{time}</p>
-          <p className="text-sm text-muted-foreground">{date}</p>
+      {/* Mobile / layar sempit: satu kolom (jam -> profil -> input).
+          md+: dua kolom — identitas (jam, tanggal, profil) di kiri, input di
+          kanan — sehingga semuanya muat tanpa scroll di layar lebar. */}
+      <div
+        className={cn(
+          "relative flex w-full max-w-sm flex-1 flex-col items-center px-6",
+          "pt-[max(2.5rem,env(safe-area-inset-top))] pb-[max(1.5rem,env(safe-area-inset-bottom))]",
+          "md:my-auto md:max-w-4xl md:flex-none md:grid md:grid-cols-2 md:items-center md:gap-16 md:px-10 md:py-10",
+        )}
+      >
+        {/* ---- Kiri: identitas ---- */}
+        {/* Mobile: `mt-auto` di sini + `mt-auto` di petunjuk bawah membagi
+            ruang kosong atas & bawah -> blok utama berada di tengah vertikal.
+            Bila isi lebih tinggi dari layar, margin jadi 0 dan halaman scroll. */}
+        <div className="mt-auto flex flex-col items-center text-center md:mt-0 md:items-start md:text-left">
+          <div className="flex flex-col items-center gap-1 md:items-start">
+            <p className="text-5xl font-light tabular-nums tracking-tight md:text-7xl">{time}</p>
+            <p className="text-sm text-muted-foreground md:text-base">{date}</p>
+          </div>
+
+          <div className="mt-8 flex flex-col items-center gap-3 md:mt-12 md:flex-row md:gap-4">
+            <ProfileAvatar
+              nickname={name}
+              avatarUrl={status.profile.avatarUrl}
+              avatarPreset={status.profile.avatarPreset}
+              className="size-20 shadow-lg ring-4 ring-background md:size-16"
+              textClassName="text-2xl md:text-xl"
+            />
+            <div className="flex flex-col items-center gap-0.5 md:items-start">
+              <h1 id="lock-title" className="text-xl font-semibold tracking-tight">
+                {name ? `Welcome back, ${name}` : "KCG Code is locked"}
+              </h1>
+              <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                <LockIcon className="size-3.5" aria-hidden />
+                {kind === "pin" ? "Enter your PIN to unlock" : "Enter your password to unlock"}
+              </p>
+            </div>
+          </div>
+
+          <ForgotHint className="mt-12 hidden md:block" />
         </div>
 
-        <div className="mt-10 flex flex-col items-center gap-3 text-center">
-          <ProfileAvatar
-            nickname={name}
-            avatarUrl={status.profile.avatarUrl}
-            avatarPreset={status.profile.avatarPreset}
-            className="size-24 shadow-lg ring-4 ring-background"
-            textClassName="text-3xl"
-          />
-          <h1 id="lock-title" className="text-xl font-semibold tracking-tight">
-            {name ? `Welcome back, ${name}` : "KCG Code is locked"}
-          </h1>
-          <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-            <LockIcon className="size-3.5" aria-hidden />
-            {kind === "pin" ? "Enter your PIN to unlock" : "Enter your password to unlock"}
-          </p>
-        </div>
-
-        <div className={cn("mt-8 w-full", shake && "animate-[lock-shake_0.45s]")}>
+        {/* ---- Kanan: input ---- */}
+        <div
+          className={cn(
+            "mt-7 w-full md:mt-0 md:rounded-3xl md:border md:bg-card/50 md:px-8 md:py-9 md:shadow-sm",
+            kind === "password" && "md:py-10",
+            shake && "animate-[lock-shake_0.45s]",
+          )}
+        >
           {kind === "pin" ? (
             <PinEntry
               value={secret}
@@ -169,11 +226,18 @@ export function LockScreen({ status }: { status: AuthStatus }) {
           )}
         </div>
 
-        <p className="mt-auto pt-8 text-center text-xs text-muted-foreground/80">
-          Forgot it? Run <code className="font-mono">kcgcode reset-lock</code> on the host machine.
-        </p>
+        {/* Mobile: petunjuk lupa kunci di dasar layar; md+: di kolom kiri. */}
+        <ForgotHint className="mt-auto pt-8 text-center md:hidden" />
       </div>
     </div>
+  );
+}
+
+function ForgotHint({ className }: { className?: string }) {
+  return (
+    <p className={cn("text-xs text-muted-foreground/80", className)}>
+      Forgot it? Run <code className="font-mono">kcgcode reset-lock</code> on the host machine.
+    </p>
   );
 }
 
@@ -244,7 +308,7 @@ function PinEntry({
   };
 
   return (
-    <div className="flex flex-col items-center gap-5">
+    <div className="flex flex-col items-center gap-4">
       {/* Ringkasan untuk pembaca layar (titik bersifat visual) */}
       <p className="sr-only" aria-live="polite">
         {value.length === 0 ? "No digits entered" : `${value.length} digits entered`}
@@ -321,10 +385,13 @@ function PinPad({
   onSubmit: () => void;
 }) {
   const key =
-    "flex size-[4.5rem] items-center justify-center rounded-full text-2xl font-medium tabular-nums transition-[background-color,transform] duration-100 select-none outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40";
+    "flex size-16 items-center justify-center rounded-full text-2xl [@media(min-height:760px)]:size-[4.5rem] font-medium tabular-nums transition-[background-color,transform] duration-100 select-none outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40";
   const digitKey = "bg-muted/70 hover:bg-muted active:scale-95 active:bg-accent";
   return (
-    <fieldset className="grid grid-cols-3 gap-x-6 gap-y-4 border-0 p-0" aria-label="PIN keypad">
+    <fieldset
+      className="grid grid-cols-3 gap-x-6 gap-y-3 border-0 p-0 [@media(min-height:760px)]:gap-y-4"
+      aria-label="PIN keypad"
+    >
       {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((d) => (
         <button
           key={d}

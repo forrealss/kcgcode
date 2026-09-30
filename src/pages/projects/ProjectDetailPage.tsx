@@ -74,15 +74,24 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
           </div>
           <SessionListSkeleton />
         </div>
-        <div className="mb-6 hidden flex-col gap-8 self-start rounded-2xl border bg-muted/30 px-5 py-5 lg:flex">
-          {[3, 2, 4].map((rows, i) => (
+        {/* Sama dengan ProjectSidePanel: tumpukan kartu seksi. */}
+        <div className="hidden flex-col gap-3 self-start lg:flex">
+          {[2, 1, 3].map((rows, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
-            <div key={i} className="flex flex-col gap-2.5">
-              <Skeleton className="h-4 w-24" />
-              {Array.from({ length: rows }, (_, j) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
-                <Skeleton key={j} className="h-3.5" style={{ width: `${80 - j * 15}%` }} />
-              ))}
+            <div key={i} className="overflow-hidden rounded-xl border bg-card">
+              <div className="flex items-center gap-3 px-3.5 py-3">
+                <Skeleton className="size-8 rounded-lg" />
+                <div className="flex flex-1 flex-col gap-1.5">
+                  <Skeleton className="h-3.5 w-24" />
+                  <Skeleton className="h-3 w-16" />
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 border-t px-3.5 py-3">
+                {Array.from({ length: rows }, (_, j) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
+                  <Skeleton key={j} className="h-3.5" style={{ width: `${80 - j * 15}%` }} />
+                ))}
+              </div>
             </div>
           ))}
         </div>

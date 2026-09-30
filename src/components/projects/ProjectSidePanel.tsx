@@ -21,7 +21,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { PanelHint, PanelList, PanelSection } from "@/components/projects/PanelSection";
+import { PanelBody, PanelHint, PanelList, PanelSection } from "@/components/projects/PanelSection";
 import { ProjectInstructions } from "@/components/projects/ProjectInstructions";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -87,7 +87,7 @@ export function ProjectSidePanel({ project, onProjectChange }: ProjectSidePanelP
   );
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-3">
       <ProjectInstructions project={project} onSaved={onProjectChange} />
       <McpSection state={mcp} onReload={reload} />
       <SkillsSection state={skills} />
@@ -114,7 +114,7 @@ function ListSkeleton({ rows = 3 }: { rows?: number }) {
 
 function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-xl border border-destructive/30 bg-destructive/5 px-3.5 py-3">
+    <div className="flex items-center justify-between gap-3 bg-destructive/5 px-3.5 py-3">
       <p className="min-w-0 text-xs leading-relaxed text-destructive">{message}</p>
       {onRetry && (
         <Button type="button" variant="outline" size="xs" onClick={onRetry} className="shrink-0">
@@ -176,6 +176,7 @@ function McpSection({ state, onReload }: { state: Load<McpServerInfo[]>; onReloa
     <PanelSection
       id="mcp"
       title="MCP servers"
+      icon={<PlugIcon />}
       meta={state.phase === "ready" ? describeMcpSummary(state.data) : undefined}
       action={
         <Button
@@ -186,7 +187,7 @@ function McpSection({ state, onReload }: { state: Load<McpServerInfo[]>; onReloa
           disabled={state.phase === "loading"}
           aria-label="Reload MCP servers and skills"
           title="Reload"
-          className="text-muted-foreground"
+          className="size-8 text-muted-foreground"
         >
           <RefreshCwIcon className={cn(state.phase === "loading" && "animate-spin")} />
         </Button>
@@ -270,7 +271,14 @@ function SkillsSection({ state }: { state: Load<SkillInfo[]> }) {
     <PanelSection
       id="skills"
       title="Skills"
-      meta={state.phase === "ready" && all.length > 0 ? all.length : undefined}
+      icon={<SparklesIcon />}
+      meta={
+        state.phase === "ready"
+          ? all.length === 0
+            ? "None found"
+            : `${all.length} available`
+          : undefined
+      }
     >
       {state.phase === "loading" ? (
         <ListSkeleton rows={3} />
@@ -282,67 +290,72 @@ function SkillsSection({ state }: { state: Load<SkillInfo[]> }) {
           <code className="font-mono">.opencode/skills/</code>.
         </PanelHint>
       ) : (
-        <div className="flex flex-col gap-2.5">
-          {all.length >= SKILL_SEARCH_THRESHOLD && (
-            <div className="relative">
-              <SearchIcon
-                className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-                placeholder={`Search ${all.length} skills`}
-                aria-label="Search skills"
-                className="h-9 w-full rounded-xl border bg-card pr-8 pl-8.5 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-search-cancel-button]:hidden"
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => setQuery("")}
-                  aria-label="Clear search"
-                  className="absolute top-1/2 right-2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                >
-                  <XIcon className="size-3.5" />
-                </button>
+        <div className="flex flex-col">
+          {(all.length >= SKILL_SEARCH_THRESHOLD || sources.length > 1) && (
+            <PanelBody className="flex flex-col gap-2.5 border-b">
+              {all.length >= SKILL_SEARCH_THRESHOLD && (
+                <div className="relative">
+                  <SearchIcon
+                    className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
+                    aria-hidden
+                  />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Escape" && setQuery("")}
+                    placeholder={`Search ${all.length} skills`}
+                    aria-label="Search skills"
+                    className="h-9 w-full rounded-lg border bg-background pr-8 pl-8.5 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-search-cancel-button]:hidden"
+                  />
+                  {query && (
+                    <button
+                      type="button"
+                      onClick={() => setQuery("")}
+                      aria-label="Clear search"
+                      className="absolute top-1/2 right-2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
+                    >
+                      <XIcon className="size-3.5" />
+                    </button>
+                  )}
+                </div>
               )}
-            </div>
-          )}
 
-          {sources.length > 1 && (
-            <fieldset
-              aria-label="Filter skills by source"
-              className="m-0 flex flex-wrap gap-1 border-0 p-0"
-            >
-              {(["all", ...sources] as SkillFilter[]).map((f) => {
-                const count = f === "all" ? all.length : all.filter((s) => s.source === f).length;
-                const active = filter === f;
-                return (
-                  <button
-                    key={f}
-                    type="button"
-                    aria-pressed={active}
-                    onClick={() => {
-                      setFilter(f);
-                      setExpanded(false);
-                    }}
-                    className={cn(
-                      "inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-                      active
-                        ? "bg-foreground text-background"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    {f === "all" ? "All" : SKILL_SOURCE_LABEL[f]}
-                    <span className={cn("tabular-nums", active ? "opacity-70" : "opacity-60")}>
-                      {count}
-                    </span>
-                  </button>
-                );
-              })}
-            </fieldset>
+              {sources.length > 1 && (
+                <fieldset
+                  aria-label="Filter skills by source"
+                  className="m-0 flex flex-wrap gap-1 border-0 p-0"
+                >
+                  {(["all", ...sources] as SkillFilter[]).map((f) => {
+                    const count =
+                      f === "all" ? all.length : all.filter((s) => s.source === f).length;
+                    const active = filter === f;
+                    return (
+                      <button
+                        key={f}
+                        type="button"
+                        aria-pressed={active}
+                        onClick={() => {
+                          setFilter(f);
+                          setExpanded(false);
+                        }}
+                        className={cn(
+                          "inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+                          active
+                            ? "bg-foreground text-background"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        )}
+                      >
+                        {f === "all" ? "All" : SKILL_SOURCE_LABEL[f]}
+                        <span className={cn("tabular-nums", active ? "opacity-70" : "opacity-60")}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </fieldset>
+              )}
+            </PanelBody>
           )}
 
           {visible.length === 0 ? (

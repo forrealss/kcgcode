@@ -12,9 +12,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { SessionView } from "@/components/sessions/SessionView";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
 import { projectPath } from "@/lib/routes";
+import { clearSeededSession, peekSeededSession } from "@/lib/session-handoff";
 import type { Session } from "@/types";
 
 export interface SessionPageProps {
@@ -29,9 +31,20 @@ type LoadState =
 
 export function SessionPage({ projectId, sessionId }: SessionPageProps) {
   const { navigate } = useRouter();
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
+  // Baru dibuat dari homepage? Render langsung dari data titipan (tanpa
+  // "Loading…") agar View Transition punya halaman tujuan yang utuh.
+  const [state, setState] = useState<LoadState>(() => {
+    const seeded = peekSeededSession(sessionId);
+    return seeded && seeded.projectId === projectId
+      ? { phase: "ready", session: seeded }
+      : { phase: "loading" };
+  });
 
   const load = useCallback(async () => {
+    if (peekSeededSession(sessionId)?.projectId === projectId) {
+      clearSeededSession(sessionId);
+      return;
+    }
     setState({ phase: "loading" });
     try {
       const res = await apiFetch("/api/sessions");
@@ -55,9 +68,22 @@ export function SessionPage({ projectId, sessionId }: SessionPageProps) {
   }, [load]);
 
   if (state.phase === "loading") {
+    // Kerangka setara SessionView (header + area chat + composer) agar tidak
+    // ada lompatan layout saat data tiba.
     return (
-      <div className="flex items-center justify-center gap-2 py-10 text-sm text-muted-foreground">
-        Loading…
+      <div className="flex h-full min-h-0 flex-col" role="status" aria-label="Loading session">
+        <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
+          <Skeleton className="size-9 rounded-md" />
+          <Skeleton className="h-5 w-40" />
+        </div>
+        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-3 py-4 sm:px-4">
+          <Skeleton className="ml-auto h-10 w-1/2 rounded-2xl" />
+          <Skeleton className="h-4 w-3/4" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+        <div className="px-3 pb-3 sm:px-4">
+          <Skeleton className="mx-auto h-[3.25rem] w-full max-w-2xl rounded-xl" />
+        </div>
       </div>
     );
   }

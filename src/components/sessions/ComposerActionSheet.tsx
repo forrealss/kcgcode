@@ -1,10 +1,11 @@
 /**
  * Sheet aksi mobile di composer (attach image + ganti agent mode).
  *
- * Tampilan ala Gemini: tanpa header teks (judul disembunyikan untuk a11y
- * saja) — langsung baris kartu aksi cepat + daftar mode agent.
+ * Susunan: judul kecil "Add to message" + aksi lampiran sebagai baris
+ * (ikon, label, keterangan) — lalu grup "Mode" berisi pilihan agent ala
+ * radio. Mode pembantu (compaction/title/summary) dilipat di "More modes".
  */
-import { ImagePlusIcon } from "lucide-react";
+import { ChevronRightIcon, ImagePlusIcon } from "lucide-react";
 import { AgentModeList } from "@/components/sessions/AgentModeList";
 import { SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { UseAgentPickerResult } from "@/hooks/useAgentPicker";
@@ -27,47 +28,68 @@ export function ComposerActionSheet({
   onPickAgent,
 }: ComposerActionSheetProps) {
   return (
-    <SheetContent side="bottom" className="gap-3 pb-[max(1rem,env(safe-area-inset-bottom))]">
-      {/* Judul disembunyikan secara visual (a11y saja) — tampilan ala Gemini:
-          langsung kartu aksi + daftar mode, tanpa header teks. */}
+    <SheetContent
+      side="bottom"
+      className="max-h-[80dvh] gap-0 pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+    >
       <SheetHeader className="sr-only">
-        <SheetTitle>Composer actions</SheetTitle>
-        <SheetDescription>
-          Attach an image or switch the agent mode for this Session.
-        </SheetDescription>
+        <SheetTitle>Message options</SheetTitle>
+        <SheetDescription>Attach an image or choose how the agent works.</SheetDescription>
       </SheetHeader>
 
-      {/* Baris kartu aksi cepat (ikon di atas, label di bawah) — saat ini baru
-          "Image", tapi baris scroll-x ini siap menampung aksi lain (mis.
-          attach file) nanti. */}
-      <div className="flex gap-3 overflow-x-auto px-4">
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={onPickImage}
-          className="flex shrink-0 flex-col items-center gap-1.5 rounded-2xl bg-muted px-5 py-3 text-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50"
-        >
-          <ImagePlusIcon className="size-5" />
-          Image
-        </button>
-      </div>
+      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-3 pt-1 pb-1">
+        {/* Lampiran */}
+        <section aria-labelledby="sheet-attach" className="flex flex-col gap-1">
+          <h3 id="sheet-attach" className="px-3 pb-1 text-xs font-medium text-muted-foreground">
+            Add to message
+          </h3>
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={onPickImage}
+            className="flex min-h-14 w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-muted disabled:opacity-50"
+          >
+            <span
+              className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600 dark:text-sky-400"
+              aria-hidden
+            >
+              <ImagePlusIcon className="size-[18px]" />
+            </span>
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="text-[15px] leading-5">Photo or image</span>
+              <span className="text-[13px] leading-snug text-muted-foreground">
+                From your gallery or camera
+              </span>
+            </span>
+            <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          </button>
+        </section>
 
-      {/* Daftar mode agent — diberi label + keterangan singkat supaya jelas
-          ini adalah SWITCH mode, bukan cuma nama agent aktif yang
-          membingungkan (mis. "Default" polos). */}
-      <div className="flex flex-col gap-0.5 overflow-y-auto px-2 pb-2">
-        <p className="px-3 pb-1 pt-2 text-xs font-medium text-muted-foreground">
-          Agent mode — choose how the agent handles your next message
-        </p>
-        <AgentModeList
-          agents={agentPicker.agents}
-          loading={agentPicker.loading}
-          error={agentPicker.error}
-          activeAgent={activeAgent}
-          saving={agentPicker.saving}
-          disabled={disabled}
-          onPick={onPickAgent}
-        />
+        <div className="mx-3 border-t" />
+
+        {/* Mode agent */}
+        <section aria-labelledby="sheet-mode" className="flex flex-col gap-1">
+          <div className="flex flex-col px-3 pb-1">
+            <h3 id="sheet-mode" className="text-xs font-medium text-muted-foreground">
+              Mode
+            </h3>
+            <p className="text-[12px] text-muted-foreground/80">
+              How the agent handles your next message
+            </p>
+          </div>
+          <div>
+            <AgentModeList
+              variant="sheet"
+              agents={agentPicker.agents}
+              loading={agentPicker.loading}
+              error={agentPicker.error}
+              activeAgent={activeAgent}
+              saving={agentPicker.saving}
+              disabled={disabled}
+              onPick={onPickAgent}
+            />
+          </div>
+        </section>
       </div>
     </SheetContent>
   );

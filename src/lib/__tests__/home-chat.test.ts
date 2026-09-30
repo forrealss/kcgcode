@@ -4,7 +4,12 @@
  */
 import { describe, expect, test } from "bun:test";
 import { HOME_HEADLINES, pickHeadline } from "../headlines";
-import { type PendingStore, setPendingPrompt, takePendingPrompt } from "../pending-prompt";
+import {
+  type PendingStore,
+  peekPendingPrompt,
+  setPendingPrompt,
+  takePendingPrompt,
+} from "../pending-prompt";
 
 describe("pickHeadline", () => {
   test("memilih sesuai nilai random (batas bawah & atas)", () => {
@@ -38,6 +43,16 @@ describe("pending prompt", () => {
     expect(takePendingPrompt("s2", store)).toBeNull();
     expect(takePendingPrompt("s1", store)).toBe("hello");
     expect(takePendingPrompt("s1", store)).toBeNull();
+  });
+
+  test("peek membaca tanpa menghapus", () => {
+    const store = memoryStore();
+    setPendingPrompt("s1", "hi", store);
+    expect(peekPendingPrompt("s1", store)).toBe("hi");
+    expect(peekPendingPrompt("s1", store)).toBe("hi");
+    expect(takePendingPrompt("s1", store)).toBe("hi");
+    expect(peekPendingPrompt("s1", store)).toBeNull();
+    expect(peekPendingPrompt("s1", null)).toBeNull();
   });
 
   test("teks kosong tidak disimpan; tanpa storage aman", () => {

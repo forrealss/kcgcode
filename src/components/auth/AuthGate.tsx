@@ -3,12 +3,15 @@
  * dirender sama sekali — tidak ada request API / WebSocket yang berjalan dan
  * tidak ada data yang tersisa di DOM. Yang tampil hanya `LockScreen`.
  *
+ * Saat dikunci dari keadaan terbuka, lock screen turun dari atas; app lama
+ * dibiarkan (inert) hanya selama animasi, lalu dilepas dari DOM.
+ *
  * Kunci otomatis: server menegakkan batas idle; klien menirunya dengan timer
  * aktivitas lokal (agar layar terkunci tepat waktu walau tidak ada request)
  * dan heartbeat status berkala (mendeteksi kunci dari perangkat lain /
  * sesi dicabut).
  */
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { LockScreen } from "@/components/auth/LockScreen";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -30,6 +33,16 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const unlocked = status !== null && (!status.protected || status.authenticated);
   const autoLockMs =
     status?.protected && status.autoLockMinutes > 0 ? status.autoLockMinutes * 60_000 : 0;
+
+  // Transisi terbuka -> terkunci: lock screen dianimasikan turun dari atas.
+  // Dihitung saat render (bukan effect) agar frame pertama sudah benar dan
+  // app lama tidak sempat hilang sebelum lock screen menutupinya.
+  const [wasUnlocked, setWasUnlocked] = useState(unlocked);
+  const [dropping, setDropping] = useState(false);
+  if (wasUnlocked !== unlocked) {
+    setWasUnlocked(unlocked);
+    setDropping(wasUnlocked && !unlocked);
+  }
 
   // Kunci otomatis sisi klien + heartbeat.
   const lastActivity = useRef(Date.now());
@@ -84,6 +97,21 @@ export function AuthGate({ children }: { children: ReactNode }) {
     );
   }
 
-  if (!unlocked && status) return <LockScreen status={status} />;
+  if (!unlocked && status) {
+    // Baru saja dikunci: app lama tetap di bawah selama lock screen turun,
+    // lalu dilepas dari DOM begitu animasi selesai (`onLanded`). Interaksi &
+    // pembaca layar ke app lama diblok (`inert`) sejak detik pertama.
+    if (dropping) {
+      return (
+        <>
+          <div inert className="contents">
+            {children}
+          </div>
+          <LockScreen status={status} animateIn onLanded={() => setDropping(false)} />
+        </>
+      );
+    }
+    return <LockScreen status={status} />;
+  }
   return <>{children}</>;
 }

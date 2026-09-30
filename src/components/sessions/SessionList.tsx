@@ -4,8 +4,8 @@
  * Halaman detail Project — sengaja minimal: tipografi & ruang kosong yang
  * bekerja, bukan kartu/tile.
  * - Header: nama Project besar, path (salin saat hover), satu baris ringkasan
- *   ("3 sessions · 1 running"). Aksi: "New session" + grup pil Reload/Delete
- *   (`SecondaryActions`; hapus tetap lewat dialog konfirmasi). Desktop: di
+ *   ("3 sessions · 1 running"). Aksi: "New session" + menu "..." Reload/Delete
+ *   (`ProjectMenu`; hapus tetap lewat dialog konfirmasi). Desktop: di
  *   kanan judul. Layar sempit: "New session" jadi tombol melayang kanan-bawah
  *   (area jempol); toolbar di bawah judul berisi "Details" (panel samping)
  *   dan grup Reload/Delete.
@@ -26,6 +26,7 @@
 import {
   CheckIcon,
   CopyIcon,
+  MoreHorizontalIcon,
   PanelRightIcon,
   PlusIcon,
   RefreshCwIcon,
@@ -40,6 +41,13 @@ import { NewSessionDialog } from "@/components/sessions/NewSessionDialog";
 import { SessionListSkeleton, SessionRow } from "@/components/sessions/SessionRow";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Sheet,
   SheetContent,
@@ -107,59 +115,51 @@ function CopyablePath({ path }: { path: string }) {
 }
 
 /**
- * Aksi sekunder Project (Reload, Delete) dalam satu grup pil berdivider —
- * dua ikon terbaca sebagai satu kontrol, bukan deretan tombol lepas.
+ * Aksi sekunder Project (Reload, Delete) di satu menu "..." — Delete jarang
+ * dipakai & berbahaya, jadi tidak perlu tombol sendiri yang selalu terlihat.
  * Delete tetap lewat dialog konfirmasi.
  */
-function SecondaryActions({
+function ProjectMenu({
   loading,
   onReload,
   onDelete,
-  size = "sm",
+  className,
 }: {
   loading: boolean;
   onReload: () => void;
   onDelete: () => void;
-  /** `lg` = target sentuh 40px (toolbar mobile). */
-  size?: "sm" | "lg";
+  className?: string;
 }) {
-  const btn = cn(
-    "flex items-center justify-center text-muted-foreground transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4",
-    size === "lg" ? "size-10" : "size-8",
-  );
   return (
-    <fieldset
-      aria-label="Project actions"
-      className="m-0 flex shrink-0 items-center divide-x overflow-hidden rounded-full border bg-background p-0"
-    >
+    <DropdownMenu>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={onReload}
-            disabled={loading}
-            aria-label="Reload sessions"
-            className={cn(btn, "hover:bg-muted hover:text-foreground")}
-          >
-            <RefreshCwIcon className={cn(loading && "animate-spin")} />
-          </button>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              aria-label="More project actions"
+              className={cn("rounded-full text-muted-foreground", className)}
+            >
+              <MoreHorizontalIcon />
+            </Button>
+          </DropdownMenuTrigger>
         </TooltipTrigger>
-        <TooltipContent>Reload</TooltipContent>
+        <TooltipContent>More</TooltipContent>
       </Tooltip>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={onDelete}
-            aria-label="Delete project"
-            className={cn(btn, "hover:bg-destructive/10 hover:text-destructive")}
-          >
-            <Trash2Icon />
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>Delete project</TooltipContent>
-      </Tooltip>
-    </fieldset>
+      <DropdownMenuContent align="end" className="min-w-44">
+        <DropdownMenuItem onSelect={onReload} disabled={loading}>
+          <RefreshCwIcon className={cn(loading && "animate-spin")} />
+          Reload sessions
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem variant="destructive" onSelect={onDelete}>
+          <Trash2Icon />
+          Delete project
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -199,12 +199,12 @@ export function SessionList({
             {/* Desktop: aksi di kanan judul (panel detail sudah inline). */}
             {wide && (
               <div className="flex shrink-0 items-center gap-2">
-                <SecondaryActions
+                <ProjectMenu
                   loading={list.loading}
                   onReload={() => void list.refresh()}
                   onDelete={list.openProjectDelete}
                 />
-                <Button type="button" size="sm" onClick={openForm} className="rounded-full px-3.5">
+                <Button type="button" onClick={openForm} className="rounded-full px-4">
                   <PlusIcon data-icon="inline-start" />
                   New session
                 </Button>
@@ -231,8 +231,8 @@ export function SessionList({
                 <PanelRightIcon data-icon="inline-start" />
                 Details
               </Button>
-              <SecondaryActions
-                size="lg"
+              <ProjectMenu
+                className="size-10"
                 loading={list.loading}
                 onReload={() => void list.refresh()}
                 onDelete={list.openProjectDelete}
@@ -304,7 +304,9 @@ export function SessionList({
           aria-label="Project details"
           // Panel mandiri: padding sama di keempat sisi; scrollbar-gutter
           // stable di kedua tepi agar scrollbar tidak menggeser isi ke kiri.
-          className="mb-6 min-h-0 overflow-y-auto overscroll-contain rounded-2xl border bg-muted/30 px-4 py-5 [scrollbar-gutter:stable_both-edges] [scrollbar-width:thin]"
+          // Tanpa kotak pembungkus: tiap seksi sudah berupa kartu sendiri.
+          // Scroll mandiri; pr kecil agar scrollbar tidak menempel ke kartu.
+          className="-mr-2 min-h-0 overflow-y-auto overscroll-contain pr-2 pb-6 [scrollbar-width:thin]"
         >
           {sidePanel}
         </aside>

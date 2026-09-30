@@ -187,3 +187,116 @@
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   View Transition homepage -> Session (`navigate(..., { transition: "to-session" })`)
+   — pola "container transform": kotak composer homepage MELUAS menjadi
+   seluruh area Session view, lalu isi Session muncul di dalamnya.
+
+   - Nama view-transition hanya dipasang selama transisi berjalan
+     (`data-vt` di <html>), jadi tidak pernah bentrok di halaman lain.
+   - Grup `session-surface`: bentuk kartu (latar card + border + sudut
+     membulat) yang tumbuh dari ukuran composer ke ukuran area Session;
+     sudutnya ikut mengecil agar mendarat rapi di tepi layar.
+   - Isi lama (teks composer) memudar cepat di awal; isi baru (header +
+     pesan + composer Session) muncul setelah kartu hampir penuh.
+   - Logo + headline homepage memudar & menjauh sedikit; sisa halaman
+     (sidebar) diganti tanpa animasi karena identik di kedua sisi.
+   Reduced motion / browser tanpa dukungan: `navigate` tanpa animasi.
+   --------------------------------------------------------------------------- */
+:root[data-vt="to-session"] [data-vt-name="session-surface"] {
+  view-transition-name: session-surface;
+}
+
+:root[data-vt="to-session"] [data-vt-name="home-headline"] {
+  view-transition-name: home-headline;
+}
+
+/* Grup: animasi posisi/ukuran bawaan browser, hanya durasi & kurva diatur. */
+:root[data-vt="to-session"]::view-transition-group(session-surface) {
+  animation-duration: 560ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* Image pair = selalu seukuran grup: dipakai sebagai "kartu" yang tumbuh
+   (latar, border, bayangan, sudut membulat -> 0) dan memotong isinya. */
+:root[data-vt="to-session"]::view-transition-image-pair(session-surface) {
+  overflow: clip;
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: 0 24px 60px -24px rgb(0 0 0 / 0.45);
+  animation: vt-surface-shape 560ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* Snapshot diisi penuh ke ukuran grup (bukan diregangkan ala default). */
+:root[data-vt="to-session"]::view-transition-old(session-surface),
+:root[data-vt="to-session"]::view-transition-new(session-surface) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: top center;
+}
+
+:root[data-vt="to-session"]::view-transition-old(session-surface) {
+  animation: vt-fade-out 160ms ease-out both;
+}
+
+:root[data-vt="to-session"]::view-transition-new(session-surface) {
+  animation: vt-rise-in 320ms cubic-bezier(0.32, 0.72, 0, 1) 240ms both;
+}
+
+/* Logo + headline homepage memudar sambil sedikit mengecil & naik. */
+:root[data-vt="to-session"]::view-transition-old(home-headline) {
+  animation: vt-recede 280ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+/* Sisa halaman (sidebar, latar) identik di kedua sisi: ganti tanpa animasi
+   agar sidebar tidak berkedip. */
+:root[data-vt="to-session"]::view-transition-old(root),
+:root[data-vt="to-session"]::view-transition-new(root) {
+  animation: none;
+}
+
+@keyframes vt-surface-shape {
+  from {
+    border-radius: 1rem;
+  }
+  to {
+    border-radius: 0;
+    border-color: transparent;
+    background: var(--background);
+    box-shadow: none;
+  }
+}
+
+@keyframes vt-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes vt-recede {
+  to {
+    opacity: 0;
+    transform: translateY(-12px) scale(0.97);
+  }
+}
+
+@keyframes vt-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
+/* Lock screen turun dari atas menutupi app saat dikunci (bukan saat app
+   pertama dibuka dalam keadaan terkunci). Kurva ala sheet iOS: cepat di
+   awal, mendarat halus. Reduced motion dimatikan global di index.css. */
+@keyframes lock-drop {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}

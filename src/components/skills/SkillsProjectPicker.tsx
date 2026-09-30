@@ -1,5 +1,5 @@
 /**
- * Pemilih Project di halaman Skills — tombol besar (ikon folder, nama, path)
+ * Pemilih Project di halaman Skills — pil ringkas "Install to <project>"
  * yang membuka popover berisi daftar Project dengan kotak cari.
  *
  * Kotak cari hanya muncul bila Project cukup banyak. Navigasi keyboard:
@@ -79,38 +79,30 @@ export function SkillsProjectPicker({ projects, selected, onSelect }: SkillsProj
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {/* Pemilih konteks yang ringkas (pil), terpisah dari kolom cari:
+            menjawab "skill dipasang ke mana", bukan bagian dari pencarian. */}
         <button
           type="button"
           aria-haspopup="listbox"
-          aria-label={selected ? `Project: ${selected.name}. Change project` : "Select a project"}
-          className={cn(
-            "group flex w-full min-w-0 items-center gap-3 rounded-xl border bg-card px-3 py-2.5 text-left shadow-xs transition-colors outline-none hover:bg-accent/50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:border-ring sm:w-80",
-          )}
+          aria-label={
+            selected ? `Install to project ${selected.name}. Change project` : "Select a project"
+          }
+          className="group inline-flex h-9 max-w-full min-w-0 items-center gap-2 rounded-full border bg-card pr-2.5 pl-3 text-sm shadow-xs transition-colors outline-none hover:bg-accent/50 focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[state=open]:border-ring"
         >
-          <span
-            className={cn(
-              "flex size-9 shrink-0 items-center justify-center rounded-lg",
-              selected ? "bg-primary/10 text-primary" : "bg-muted text-muted-foreground",
-            )}
-          >
-            <FolderIcon className="size-4" aria-hidden />
+          <FolderIcon
+            className={cn("size-4 shrink-0", selected ? "text-primary" : "text-muted-foreground")}
+            aria-hidden
+          />
+          <span className="shrink-0 text-muted-foreground">Install to</span>
+          <span className={cn("truncate font-medium", !selected && "text-muted-foreground")}>
+            {selected?.name ?? "Select a project"}
           </span>
-          <span className="flex min-w-0 flex-1 flex-col">
-            <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-              Install to
-            </span>
-            <span
-              className={cn("truncate text-sm font-medium", !selected && "text-muted-foreground")}
-            >
-              {selected?.name ?? "Select a project"}
-            </span>
-          </span>
-          <ChevronsUpDownIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <ChevronsUpDownIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
       <PopoverContent
-        align="start"
-        className="w-(--radix-popover-trigger-width) min-w-72 p-0"
+        align="end"
+        className="w-80 max-w-[calc(100vw-2rem)] p-0"
         onOpenAutoFocus={(e) => {
           // Fokus ke kotak cari (bila ada), selain itu ke daftar agar ↑/↓ jalan.
           e.preventDefault();

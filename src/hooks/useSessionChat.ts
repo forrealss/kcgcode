@@ -14,7 +14,7 @@ import { toast } from "sonner";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
-import { setPendingPrompt, takePendingPrompt } from "@/lib/pending-prompt";
+import { peekPendingPrompt, setPendingPrompt, takePendingPrompt } from "@/lib/pending-prompt";
 import { groupPrompts } from "@/lib/prompts";
 import { wsStatusLabel } from "@/lib/session-status";
 import {
@@ -91,8 +91,39 @@ export interface SessionChat {
   confirmDelete: () => Promise<void>;
 }
 
+/** Id pesan user optimistis (prompt pertama dari homepage). */
+const OPTIMISTIC_ID = "optimistic:first-prompt";
+
 export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOptions): SessionChat {
-  const [messages, setMessages] = useState<SessionMessage[]>([]);
+  /**
+   * Prompt pertama dari homepage langsung tampil sebagai pesan user sejak
+   * frame pertama — layout Session view sudah dalam bentuk percakapan
+   * (composer di dasar) saat View Transition memotret halaman tujuan, dan
+   * user tidak melihat kilatan "No conversation yet". Dilepas begitu echo
+   * pesan user asli (id server) tiba.
+   */
+  const [optimistic, setOptimistic] = useState<SessionMessage | null>(() => {
+    const text = peekPendingPrompt(session.id);
+    return text === null
+      ? null
+      : {
+          id: OPTIMISTIC_ID,
+          sessionId: session.id,
+          role: "user",
+          parts: [{ type: "text", text }],
+          createdAt: Date.now(),
+        };
+  });
+  const [serverMessages, setMessages] = useState<SessionMessage[]>([]);
+  const hasRealUser = serverMessages.some((m) => m.role === "user");
+  const messages = useMemo(
+    () => (optimistic && !hasRealUser ? [optimistic, ...serverMessages] : serverMessages),
+    [optimistic, hasRealUser, serverMessages],
+  );
+  // Echo asli tiba -> buang pesan optimistis.
+  useEffect(() => {
+    if (optimistic && hasRealUser) setOptimistic(null);
+  }, [optimistic, hasRealUser]);
   const [collapsible, setCollapsible] = useState<CollapsibleState>({});
   const [prompts, setPrompts] = useState<InteractivePrompt[]>([]);
   const [status, setStatus] = useState<SessionStatus>(session.status);

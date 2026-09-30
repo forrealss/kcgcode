@@ -46,6 +46,7 @@ import { pickHeadline } from "@/lib/headlines";
 import { setPendingPrompt } from "@/lib/pending-prompt";
 import type { ProjectOverview } from "@/lib/project-overview";
 import { sessionPath } from "@/lib/routes";
+import { seedSession } from "@/lib/session-handoff";
 import logo from "@/logo.svg";
 import type { Session, SessionModel } from "@/types";
 
@@ -108,7 +109,10 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       });
       const { session } = (await res.json()) as { session: Session };
       setPendingPrompt(session.id, text);
-      navigate(sessionPath(selected.id, session.id));
+      // Session view dirender langsung dari data ini (tanpa fetch ulang),
+      // lalu composer "berpindah" ke dasar layar lewat View Transition.
+      seedSession(session);
+      navigate(sessionPath(selected.id, session.id), { transition: "to-session" });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to start a new session");
       setSending(false);
@@ -117,7 +121,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 pb-[10dvh]">
-      <div className="flex items-center justify-center gap-3 px-2">
+      <div data-vt-name="home-headline" className="flex items-center justify-center gap-3 px-2">
         <img src={logo} alt="" aria-hidden className="size-10 shrink-0 sm:size-12" />
         <h1 className="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
           {headline}
@@ -127,7 +131,10 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       <form onSubmit={submit} className="flex flex-col gap-3">
         {/* Container luar: hanya border (tanpa latar), membungkus dua section —
             kotak input berlatar di atas, baris Project/model polos di bawah. */}
-        <div className="flex flex-col rounded-2xl border">
+        {/* `data-vt-name`: selama transisi "to-session" kotak ini dan area
+            Session view berbagi nama view-transition -> kotak composer
+            MELUAS menjadi halaman Session (container transform). */}
+        <div data-vt-name="session-surface" className="flex flex-col rounded-2xl border">
           {/* Section 1 — kotak input: textarea + baris aksi (mode agent kiri,
             kirim kanan), tata letak sama dengan composer Session. `-m-px`
             menumpuk border kotak ini di atas border container luar. */}

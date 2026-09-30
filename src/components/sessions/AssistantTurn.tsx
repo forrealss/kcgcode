@@ -7,6 +7,7 @@
  */
 import { CircleAlertIcon } from "lucide-react";
 import { MarkdownContent } from "@/components/sessions/MarkdownContent";
+import { CopyMessageButton } from "@/components/sessions/MessageActions";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
 import type { CollapsibleState } from "@/lib/collapsible";
@@ -15,6 +16,11 @@ import { partText, turnBlocks, turnSegments, turnThoughtDuration } from "@/lib/t
 import { cn } from "@/lib/utils";
 import type { AssistantTurnGroup } from "@/types";
 import { ThoughtProcessBlock } from "./ThoughtProcessBlock";
+
+/** Model kadang membalas "(empty)" saat tidak ada teks untuk ditampilkan. */
+function isEmptyReply(text: string): boolean {
+  return text.trim().toLowerCase() === "(empty)";
+}
 
 export interface AssistantTurnProps {
   /** Pesan assistant berurutan dari satu turn balasan model. */
@@ -33,6 +39,13 @@ export function AssistantTurn({ group, collapsible, onToggle }: AssistantTurnPro
   const blocks = turnBlocks(segments);
   // Durasi thinking untuk footer — hanya dihitung setelah turn selesai.
   const thoughtMs = !streaming ? turnThoughtDuration(group.messages) : null;
+  // Teks jawaban (tanpa thinking/tool) untuk tombol Copy, dipisah paragraf.
+  const answerText = blocks
+    .map((b) =>
+      b.content?.kind === "text" && !isEmptyReply(b.content.text) ? b.content.text.trim() : "",
+    )
+    .filter((t) => t !== "")
+    .join("\n\n");
 
   return (
     <Message align="start">
@@ -71,15 +84,24 @@ export function AssistantTurn({ group, collapsible, onToggle }: AssistantTurnPro
                   </Bubble>
                 </div>
               )}
-              {block.content?.kind === "text" && block.content.text !== "" && (
-                <div className={cn(hasSteps && "mt-3")}>
-                  <Bubble variant="ghost" className="max-w-full">
-                    <BubbleContent className="w-full">
-                      <MarkdownContent>{block.content.text}</MarkdownContent>
-                    </BubbleContent>
-                  </Bubble>
-                </div>
+              {/* Balasan kosong dari model ("(empty)") — tetap tampil sebagai
+                  penanda, tapi kecil & redup agar tidak terbaca sebagai jawaban. */}
+              {block.content?.kind === "text" && isEmptyReply(block.content.text) && (
+                <p className={cn("text-xs text-muted-foreground/70 italic", hasSteps && "mt-2")}>
+                  {block.content.text.trim()}
+                </p>
               )}
+              {block.content?.kind === "text" &&
+                block.content.text !== "" &&
+                !isEmptyReply(block.content.text) && (
+                  <div className={cn(hasSteps && "mt-3")}>
+                    <Bubble variant="ghost" className="max-w-full">
+                      <BubbleContent className="w-full">
+                        <MarkdownContent>{block.content.text}</MarkdownContent>
+                      </BubbleContent>
+                    </Bubble>
+                  </div>
+                )}
             </div>
           );
         })}
@@ -87,16 +109,19 @@ export function AssistantTurn({ group, collapsible, onToggle }: AssistantTurnPro
             slide dari kanan setelah turn selesai. Format:
             HH:MM:SS · ● · thoughts Xs */}
         {!streaming && (
-          <MessageFooter className="animate-in fade-in-0 slide-in-from-right-4 duration-500">
-            {formatTime(m.createdAt)}
-            {thoughtMs !== null && (
-              <>
-                <span className="mx-1.5 text-muted-foreground/40" aria-hidden>
-                  ●
-                </span>
-                <span>thoughts {formatDuration(thoughtMs)}</span>
-              </>
-            )}
+          <MessageFooter className="gap-1 animate-in fade-in-0 slide-in-from-right-4 duration-500">
+            <span className="text-muted-foreground/80">
+              {formatTime(m.createdAt)}
+              {thoughtMs !== null && (
+                <>
+                  <span className="mx-1.5 text-muted-foreground/40" aria-hidden>
+                    ●
+                  </span>
+                  <span>thoughts {formatDuration(thoughtMs)}</span>
+                </>
+              )}
+            </span>
+            <CopyMessageButton text={answerText} className="ml-1" />
           </MessageFooter>
         )}
       </MessageContent>

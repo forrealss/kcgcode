@@ -41,7 +41,9 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const empty = chat.messages.length === 0;
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // `data-vt-name`: tujuan transisi "to-session" — composer homepage meluas
+    // menjadi seluruh area ini (lihat styles/globals.css).
+    <div data-vt-name="session-surface" className="flex h-full min-h-0 flex-col">
       <SessionHeader
         session={session}
         status={chat.status}

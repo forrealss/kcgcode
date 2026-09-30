@@ -1,7 +1,7 @@
 /**
  * Halaman Skills (`/skills`) — jelajah & pasang skill dari skills.sh.
  *
- * - Toolbar: pemilih Project ("Install to") + kolom cari. Project terpilih =
+ * - Header: judul + pemilih Project (pil "Install to"). Project terpilih =
  *   `?project=` (dari sidebar) > pilihan terakhir (localStorage) > satu-
  *   satunya Project. Pilihan memperbarui URL (`replaceState`).
  * - Dua tab memakai kolom cari yang sama, tapi query disimpan per tab:
@@ -144,27 +144,40 @@ export function SkillsPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight">Skills</h1>
-        <p className="text-sm text-muted-foreground">
-          Discover skills on{" "}
-          <a
-            href="https://skills.sh"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium text-foreground underline underline-offset-4"
-          >
-            skills.sh
-            <span className="sr-only"> (opens in a new tab)</span>
-          </a>{" "}
-          and add them to your project's agent.
-        </p>
+      {/* Header: judul di kiri, tujuan instalasi (pil) di kanan — konteks
+          halaman, terpisah jelas dari kolom cari di bawah tab. */}
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight">Skills</h1>
+          <p className="text-sm text-muted-foreground">
+            Discover skills on{" "}
+            <a
+              href="https://skills.sh"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-foreground underline underline-offset-4"
+            >
+              skills.sh
+              <span className="sr-only"> (opens in a new tab)</span>
+            </a>{" "}
+            and add them to your project's agent.
+          </p>
+        </div>
+        {projects === null ? (
+          <Skeleton className="h-9 w-48 shrink-0 rounded-full" />
+        ) : (
+          projects.length > 0 && (
+            <div className="min-w-0 shrink-0">
+              <SkillsProjectPicker projects={projects} selected={selected} onSelect={choose} />
+            </div>
+          )
+        )}
       </header>
 
       {projects === null ? (
-        <div className="flex flex-col gap-3 sm:flex-row">
-          <Skeleton className="h-15 w-full rounded-xl sm:w-80" />
-          <Skeleton className="h-15 flex-1 rounded-xl" />
+        <div className="flex flex-col gap-4">
+          <Skeleton className="h-10 w-48" />
+          <Skeleton className="h-11 w-full rounded-xl" />
         </div>
       ) : projects.length === 0 ? (
         <Empty className="border">
@@ -185,12 +198,7 @@ export function SkillsPage() {
         </Empty>
       ) : (
         // Remount per Project: pencarian & daftar terpasang tidak bocor.
-        <SkillsWorkspace
-          key={selected?.id ?? "none"}
-          projects={projects}
-          project={selected}
-          onSelectProject={choose}
-        />
+        <SkillsWorkspace key={selected?.id ?? "none"} project={selected} />
       )}
     </div>
   );
@@ -199,12 +207,10 @@ export function SkillsPage() {
 // ---------------------------------------------------------------------------
 
 interface SkillsWorkspaceProps {
-  projects: Project[];
   project: Project | null;
-  onSelectProject: (id: string) => void;
 }
 
-function SkillsWorkspace({ projects, project, onSelectProject }: SkillsWorkspaceProps) {
+function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
   const [tab, setTab] = useState<Tab>("browse");
   /**
    * Query per tab: Browse mencari skills.sh (remote), Installed memfilter
@@ -339,63 +345,6 @@ function SkillsWorkspace({ projects, project, onSelectProject }: SkillsWorkspace
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Toolbar: tujuan instalasi + pencarian */}
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-stretch">
-        <SkillsProjectPicker projects={projects} selected={project} onSelect={onSelectProject} />
-
-        <div className="relative flex min-w-0 flex-1 items-center">
-          <SearchIcon
-            className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground"
-            aria-hidden
-          />
-          <input
-            ref={searchRef}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Escape" && query !== "") {
-                e.preventDefault();
-                setQuery("");
-              }
-            }}
-            disabled={!project}
-            placeholder={project ? placeholder : "Select a project to search"}
-            aria-label={tab === "browse" ? "Search skills on skills.sh" : "Filter installed skills"}
-            aria-describedby="skills-search-hint"
-            className="h-full min-h-11 w-full rounded-xl border bg-card pr-20 pl-10 text-sm shadow-xs outline-none transition-shadow placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 [&::-webkit-search-cancel-button]:hidden"
-          />
-          <div className="absolute right-2 flex items-center gap-1">
-            {searchBusy && tab === "browse" && <Spinner className="size-4 text-muted-foreground" />}
-            {query !== "" ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setQuery("");
-                  searchRef.current?.focus();
-                }}
-                aria-label="Clear search"
-                className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              >
-                <XIcon className="size-4" />
-              </button>
-            ) : (
-              project && (
-                <kbd
-                  className="hidden rounded border bg-muted px-1.5 font-mono text-[11px] text-muted-foreground sm:inline"
-                  aria-hidden
-                >
-                  /
-                </kbd>
-              )
-            )}
-          </div>
-          <span id="skills-search-hint" className="sr-only">
-            Press slash to focus search, Escape to clear.
-          </span>
-        </div>
-      </div>
-
       {!project ? (
         <Empty className="border">
           <EmptyHeader>
@@ -404,25 +353,85 @@ function SkillsWorkspace({ projects, project, onSelectProject }: SkillsWorkspace
             </EmptyMedia>
             <EmptyTitle>Choose where to install</EmptyTitle>
             <EmptyDescription>
-              Skills are added per project. Pick a project above to browse and install skills.
+              Skills are added per project. Pick a project in the top right to browse and install
+              skills.
             </EmptyDescription>
           </EmptyHeader>
         </Empty>
       ) : (
         <>
-          {/* Tabs */}
-          <div role="tablist" aria-label="Skill views" className="flex items-center gap-1 border-b">
-            <TabButton id="browse" current={tab} onSelect={setTab}>
-              Browse
-            </TabButton>
-            <TabButton id="installed" current={tab} onSelect={setTab}>
-              Installed
-              {installed.phase === "ready" && (
-                <span className="rounded-full bg-muted px-1.5 text-[11px] leading-4 tabular-nums text-muted-foreground">
-                  {installedAll.length}
-                </span>
-              )}
-            </TabButton>
+          {/* Tabs, lalu kolom cari untuk tab aktif (Browse = skills.sh,
+              Installed = filter lokal). */}
+          <div className="flex flex-col gap-4">
+            <div
+              role="tablist"
+              aria-label="Skill views"
+              className="flex items-center gap-1 border-b"
+            >
+              <TabButton id="browse" current={tab} onSelect={setTab}>
+                Browse
+              </TabButton>
+              <TabButton id="installed" current={tab} onSelect={setTab}>
+                Installed
+                {installed.phase === "ready" && (
+                  <span className="rounded-full bg-muted px-1.5 text-[11px] leading-4 tabular-nums text-muted-foreground">
+                    {installedAll.length}
+                  </span>
+                )}
+              </TabButton>
+            </div>
+            <div className="relative flex min-w-0 items-center">
+              <SearchIcon
+                className="pointer-events-none absolute left-3.5 size-4 text-muted-foreground"
+                aria-hidden
+              />
+              <input
+                ref={searchRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && query !== "") {
+                    e.preventDefault();
+                    setQuery("");
+                  }
+                }}
+                placeholder={placeholder}
+                aria-label={
+                  tab === "browse" ? "Search skills on skills.sh" : "Filter installed skills"
+                }
+                aria-describedby="skills-search-hint"
+                className="h-11 w-full rounded-xl border bg-card pr-20 pl-10 text-sm shadow-xs outline-none transition-shadow placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60 [&::-webkit-search-cancel-button]:hidden"
+              />
+              <div className="absolute right-2 flex items-center gap-1">
+                {searchBusy && tab === "browse" && (
+                  <Spinner className="size-4 text-muted-foreground" />
+                )}
+                {query !== "" ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery("");
+                      searchRef.current?.focus();
+                    }}
+                    aria-label="Clear search"
+                    className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <XIcon className="size-4" />
+                  </button>
+                ) : (
+                  <kbd
+                    className="hidden rounded border bg-muted px-1.5 font-mono text-[11px] text-muted-foreground sm:inline"
+                    aria-hidden
+                  >
+                    /
+                  </kbd>
+                )}
+              </div>
+              <span id="skills-search-hint" className="sr-only">
+                Press slash to focus search, Escape to clear.
+              </span>
+            </div>
           </div>
 
           <div role="tabpanel" id={`skills-panel-${tab}`} aria-labelledby={`skills-tab-${tab}`}>

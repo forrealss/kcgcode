@@ -272,6 +272,12 @@ export function SessionComposer({
             !canInput && "opacity-70",
           )}
         >
+          {/* Lampiran gambar: di dalam kotak composer, di atas input —
+              terbaca sebagai bagian dari pesan yang akan dikirim. */}
+          {pendingImages.length > 0 && (
+            <PendingImageThumbs images={pendingImages} onRemove={removeImage} />
+          )}
+
           {/* Dropdown saran @file (muncul di atas input saat token @ aktif). */}
           {mention.mention !== null && (mention.suggestions.length > 0 || mention.loading) && (
             <FileMentionDropdown
@@ -342,8 +348,8 @@ export function SessionComposer({
                 <SquareIcon className="size-3.5" />
               </Button>
             ) : (
-              // Tombol kirim baru muncul setelah user mengisi prompt.
-              text.trim() !== "" && (
+              // Tombol kirim muncul setelah ada prompt atau lampiran gambar.
+              (text.trim() !== "" || pendingImages.length > 0) && (
                 <Button
                   key="composer-send"
                   type="submit"
@@ -479,10 +485,6 @@ export function SessionComposer({
           }}
         />
       </form>
-      {/* Pratinjau gambar yang akan dilampirkan (bisa dihapus sebelum kirim). */}
-      {pendingImages.length > 0 && (
-        <PendingImageThumbs images={pendingImages} onRemove={removeImage} />
-      )}
     </footer>
   );
 }

@@ -14,7 +14,7 @@
  * `AgentModeList` — keduanya dipakai ulang langsung (tanpa popover) di Sheet
  * aksi mobile (`SessionView`).
  */
-import { CompassIcon, ListTreeIcon } from "lucide-react";
+import { ChevronDownIcon, CompassIcon, HammerIcon, ListTreeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AgentModeList } from "@/components/sessions/AgentModeList";
 import { Button } from "@/components/ui/button";
@@ -56,8 +56,12 @@ export function AgentPicker({
   );
 
   const isPlan = agent?.toLowerCase() === "plan";
-  const label = agent ?? "Default";
-  const ActiveIcon = isPlan ? ListTreeIcon : CompassIcon;
+  const label = agent ? agent.charAt(0).toUpperCase() + agent.slice(1) : "Default";
+  const ActiveIcon = isPlan
+    ? ListTreeIcon
+    : agent?.toLowerCase() === "build"
+      ? HammerIcon
+      : CompassIcon;
 
   // Daftar dimuat saat popover pertama dibuka (lazy, ala ModelPicker).
   useEffect(() => {
@@ -73,25 +77,36 @@ export function AgentPicker({
           size="sm"
           disabled={disabled}
           aria-label={`Agent mode: ${label}`}
-          title={`Agent mode: ${label} — click to switch`}
+          title="Change mode"
           className={cn(
-            "h-9 shrink-0 gap-1.5 rounded-md px-2.5 text-sm font-medium text-muted-foreground",
-            "hover:bg-muted hover:text-foreground sm:h-9",
-            isPlan && "text-amber-500 hover:text-amber-500",
+            "group h-8 shrink-0 gap-1.5 rounded-full border border-transparent px-2.5 text-[13px] font-medium text-muted-foreground",
+            "hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground",
+            isPlan &&
+              "border-amber-500/30 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 hover:text-amber-700 data-[state=open]:bg-amber-500/15 data-[state=open]:text-amber-700 dark:text-amber-400 dark:hover:text-amber-400 dark:data-[state=open]:text-amber-400",
             className,
           )}
         >
-          {saving ? (
-            <Spinner className="size-4" />
-          ) : (
-            <ActiveIcon className={cn("size-4", isPlan && "text-amber-500")} />
-          )}
+          {saving ? <Spinner className="size-4" /> : <ActiveIcon className="size-3.5" />}
           <span className="inline max-w-24 truncate sm:max-w-32">{label}</span>
+          <ChevronDownIcon
+            className="size-3.5 opacity-60 transition-transform group-data-[state=open]:rotate-180"
+            aria-hidden
+          />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-72 p-1.5">
-        <p className="px-2 pb-1 pt-1.5 text-xs font-medium text-muted-foreground">Agent mode</p>
-        <div className="max-h-64 overflow-y-auto">
+      <PopoverContent
+        align="end"
+        side="top"
+        sideOffset={8}
+        collisionPadding={12}
+        className="w-80 p-0"
+      >
+        <div className="border-b px-3 pt-2.5 pb-2">
+          <p className="text-sm font-medium">Mode</p>
+          <p className="text-xs text-muted-foreground">How the agent handles your next message</p>
+        </div>
+        {/* Tinggi menyesuaikan ruang di atas trigger (Radix), dibatasi 22rem. */}
+        <div className="max-h-[min(22rem,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain p-1.5 [scrollbar-width:thin]">
           <AgentModeList
             agents={agents}
             loading={loading}

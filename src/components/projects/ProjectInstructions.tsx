@@ -6,10 +6,10 @@
  * di atas AGENTS.md / instruksi bawaan opencode). Perubahan langsung berlaku
  * untuk prompt berikutnya, termasuk di Session yang sudah berjalan.
  */
-import { PencilIcon, PlusIcon } from "lucide-react";
+import { PencilIcon, PlusIcon, ScrollTextIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
-import { PanelSection } from "@/components/projects/PanelSection";
+import { PanelBody, PanelSection } from "@/components/projects/PanelSection";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,48 +44,34 @@ export function ProjectInstructions({ project, onSaved }: ProjectInstructionsPro
     <PanelSection
       id="instructions"
       title="Instructions"
-      action={
-        hasInstructions ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            onClick={() => setOpen(true)}
-            aria-label="Edit instructions"
-            title="Edit"
-            className="text-muted-foreground"
-          >
-            <PencilIcon />
-          </Button>
-        ) : undefined
-      }
+      icon={<ScrollTextIcon />}
+      meta={hasInstructions ? `${instructions.length.toLocaleString()} characters` : "Not set"}
     >
       {hasInstructions ? (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="w-full rounded-xl border bg-card px-3.5 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
+          className="group flex w-full flex-col gap-2 px-3.5 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none"
         >
-          <span className="line-clamp-5 text-[13px] leading-relaxed whitespace-pre-line text-foreground/85">
+          <span className="line-clamp-4 text-[13px] leading-relaxed whitespace-pre-line text-foreground/85">
             {instructions}
+          </span>
+          <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground">
+            <PencilIcon className="size-3.5" aria-hidden />
+            Edit
           </span>
         </button>
       ) : (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="flex w-full items-start gap-3 rounded-xl border border-dashed px-3.5 py-3 text-left transition-colors hover:border-solid hover:bg-muted/40 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
-        >
-          <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-            <PlusIcon className="size-3.5" aria-hidden />
-          </span>
-          <span className="flex flex-col gap-0.5 pt-0.5">
-            <span className="text-sm font-medium leading-5">Add instructions</span>
-            <span className="text-xs leading-relaxed text-muted-foreground">
-              Tell the agent how to work in this project.
-            </span>
-          </span>
-        </button>
+        <PanelBody className="flex flex-col items-start gap-2.5">
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            Tell the agent how to work in this project, like the language to reply in or tools to
+            prefer.
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
+            <PlusIcon data-icon="inline-start" />
+            Add instructions
+          </Button>
+        </PanelBody>
       )}
 
       <InstructionsDialog
