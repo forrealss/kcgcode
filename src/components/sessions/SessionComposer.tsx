@@ -27,7 +27,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiErrorMessage, apiUploadImage } from "@/lib/api";
-import { composerPlaceholder, extractMentionedFiles } from "@/lib/composer";
+import { composerPlaceholder, extractMentionedFiles, splitComposerMentions } from "@/lib/composer";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import type { ClientMessage } from "@/ws-protocol";
@@ -104,6 +104,8 @@ export function SessionComposer({
   useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** Lapisan sorot @file di belakang textarea (scroll disinkronkan). */
+  const highlightRef = useRef<HTMLDivElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   /** Pengukur lebar teks satu baris — font identik dengan textarea. */
   const measureRef = useRef<HTMLSpanElement | null>(null);
@@ -135,19 +137,28 @@ export function SessionComposer({
       INLINE_CONTROLS_RESERVE_PX;
     setMultiline(span.scrollWidth > inlineTextWidth);
   }, [INLINE_CONTROLS_RESERVE_PX]);
-  /** Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h). */
+  /**
+   * Tumbuhkan tinggi textarea mengikuti isi (maks lewat CSS max-h). Textarea
+   * KOSONG dikembalikan ke tinggi CSS-nya (satu baris): di beberapa browser
+   * `scrollHeight` ikut menghitung placeholder yang wrap, sehingga textarea
+   * kosong tumbuh dua baris & jadi scrollable (mis. saat lampiran gambar
+   * mempersempit ruang teks).
+   */
   const autoResize = useCallback((el: HTMLTextAreaElement) => {
     el.style.height = "auto";
+    if (el.value === "") return;
     el.style.height = `${el.scrollHeight}px`;
   }, []);
   // Sinkronkan pengukur lebar + keputusan stacked + tinggi textarea untuk
   // perubahan `text` apa pun (ketik, autocomplete @file, reset kirim).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: jumlah lampiran jadi pemicu (tombol kirim muncul -> lebar textarea berubah)
   useLayoutEffect(() => {
     const span = measureRef.current;
     if (span !== null) span.textContent = text;
     updateMultiline();
     if (textareaRef.current) autoResize(textareaRef.current);
-  }, [text, updateMultiline, autoResize]);
+    // Lampiran menambah/menghapus tombol kirim -> lebar textarea berubah.
+  }, [text, pendingImages.length, updateMultiline, autoResize]);
   // Lebar form berubah (resize window / orientasi HP) → keputusan stacked
   // dihitung ulang terhadap lebar terbaru.
   useEffect(() => {
@@ -237,7 +248,12 @@ export function SessionComposer({
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const files = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
-      if (files.length > 0) addImages(files);
+      if (files.length === 0) return;
+      // Menyalin file dari file manager juga menaruh path/URI-nya sebagai
+      // teks di clipboard — cegah paste bawaan agar path tidak ikut masuk
+      // ke input; gambarnya cukup jadi lampiran.
+      e.preventDefault();
+      addImages(files);
     },
     [addImages],
   );
@@ -298,37 +314,86 @@ export function SessionComposer({
             // di desktop maupun mobile. Satu baris: semuanya dalam satu baris.
             const stacked = multiline;
 
+            // Mention @file yang dikenali -> latar tipis transparan (tanpa
+            // bingkai / garis bawah — garis bawah mirip penanda autocorrect
+            // keyboard HP) lewat lapisan di BELAKANG textarea (teks & metrik
+            // identik, warna teks transparan; hanya latarnya yang terlihat).
+            // Sengaja bukan warna teks: textarea harus tetap menggambar
+            // teksnya sendiri agar teks komposisi IME tetap terlihat. Textarea tetap input aslinya: kursor, seleksi,
+            // undo, IME, dan autocomplete tidak berubah. Scroll disinkronkan.
+            const segments = splitComposerMentions(text, suggestedCacheRef.current);
+            const hasMention = segments.some((seg) => seg.kind === "mention");
             const textareaEl = (
-              <textarea
+              <div
                 key="composer-textarea"
-                ref={textareaRef}
-                value={text}
-                onChange={(e) => {
-                  setText(e.target.value);
-                  mention.onInputChange(
-                    e.target.value,
-                    e.target.selectionStart ?? e.target.value.length,
-                  );
-                }}
-                onKeyDown={(e) => {
-                  // Dropdown aktif: panah/enter/tab/escape dikelola autocomplete.
-                  if (mention.handleKeyDown(e)) return;
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    e.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                onPaste={handlePaste}
-                onBlur={() => mention.close()}
-                placeholder={composerPlaceholder({ busy, canInput, compact: isMobile })}
-                aria-label="Free-form input"
-                disabled={!canInput}
-                rows={1}
-                className={cn(
-                  "max-h-40 min-h-9 min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 text-base leading-6 shadow-none outline-none placeholder:text-muted-foreground focus-visible:ring-0 disabled:cursor-not-allowed",
-                  stacked ? "w-full" : "flex-1 self-center",
+                className={cn("relative min-w-0", stacked ? "w-full" : "flex-1 self-center")}
+              >
+                {hasMention && (
+                  <div
+                    ref={highlightRef}
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 overflow-hidden px-2 py-1.5 text-base leading-6 break-words whitespace-pre-wrap text-transparent"
+                  >
+                    {segments.map((seg, i) =>
+                      seg.kind === "mention" ? (
+                        <mark
+                          // biome-ignore lint/suspicious/noArrayIndexKey: urutan potongan = urutan teks
+                          key={i}
+                          className="rounded-[3px] bg-primary/10 text-transparent dark:bg-primary/15"
+                        >
+                          {seg.text}
+                        </mark>
+                      ) : (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: urutan potongan = urutan teks
+                        <span key={i}>{seg.text}</span>
+                      ),
+                    )}
+                    {/* Baris kosong di akhir tetap punya tinggi (sama seperti textarea). */}
+                    {"\u200b"}
+                  </div>
                 )}
-              />
+                <textarea
+                  ref={textareaRef}
+                  value={text}
+                  onChange={(e) => {
+                    setText(e.target.value);
+                    mention.onInputChange(
+                      e.target.value,
+                      e.target.selectionStart ?? e.target.value.length,
+                    );
+                  }}
+                  onKeyDown={(e) => {
+                    // Dropdown aktif: panah/enter/tab/escape dikelola autocomplete.
+                    if (mention.handleKeyDown(e)) return;
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      e.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  onPaste={handlePaste}
+                  onScroll={(e) => {
+                    if (highlightRef.current) {
+                      highlightRef.current.scrollTop = e.currentTarget.scrollTop;
+                    }
+                  }}
+                  onBlur={() => mention.close()}
+                  placeholder={composerPlaceholder({
+                    busy,
+                    canInput,
+                    compact: isMobile,
+                    hasAttachments: pendingImages.length > 0,
+                  })}
+                  aria-label="Free-form input"
+                  disabled={!canInput}
+                  rows={1}
+                  // `relative` = di atas lapisan sorot; latar transparan agar
+                  // sorotan di belakangnya terlihat.
+                  // Placeholder selalu satu baris (dipotong "…"), tidak pernah wrap:
+                  // textarea kosong tidak boleh tumbuh / jadi scrollable hanya
+                  // karena teks petunjuk (mis. saat lampiran mempersempit ruang).
+                  className="relative block max-h-40 min-h-9 w-full min-w-0 resize-none border-0 bg-transparent px-2 py-1.5 text-base leading-6 break-words shadow-none outline-none placeholder:truncate placeholder:text-muted-foreground focus-visible:ring-0 disabled:cursor-not-allowed placeholder-shown:overflow-hidden"
+                />
+              </div>
             );
 
             const sendOrStopEl = generating ? (

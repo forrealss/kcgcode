@@ -59,6 +59,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionList } from "@/hooks/useSessionList";
+import { notifyDataChanged } from "@/lib/data-events";
 import { describeSessionSummary } from "@/lib/session-summary";
 import { cn } from "@/lib/utils";
 import type { Project, Session } from "@/types";
@@ -365,7 +366,10 @@ export function SessionList({
         open={formOpen}
         onOpenChange={setFormOpen}
         projectId={project.id}
-        onCreated={() => void list.refresh()}
+        onCreated={() => {
+          void list.refresh();
+          notifyDataChanged();
+        }}
       />
 
       {/* Konfirmasi hapus Session permanen */}

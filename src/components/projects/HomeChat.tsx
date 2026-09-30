@@ -42,6 +42,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiFetch } from "@/lib/api";
+import { notifyDataChanged } from "@/lib/data-events";
 import { pickHeadline } from "@/lib/headlines";
 import { setPendingPrompt } from "@/lib/pending-prompt";
 import type { ProjectOverview } from "@/lib/project-overview";
@@ -112,6 +113,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       // Session view dirender langsung dari data ini (tanpa fetch ulang),
       // lalu composer "berpindah" ke dasar layar lewat View Transition.
       seedSession(session);
+      notifyDataChanged();
       navigate(sessionPath(selected.id, session.id), { transition: "to-session" });
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "Failed to start a new session");

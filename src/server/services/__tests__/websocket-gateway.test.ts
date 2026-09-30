@@ -533,14 +533,55 @@ test('attach "" -> tanpa history; session_title di-broadcast ke semua koneksi', 
   }
 });
 
-test("broadcast biasa (message) tidak sampai ke koneksi mode daftar", () => {
+test("isi percakapan (message) tidak sampai ke koneksi mode daftar", () => {
   const h = freshHarness();
   try {
     const listSub = makeSub("list");
     h.gw.attach(listSub, "");
     h.gw.notifyMessage("s1", makeMessage("s1", "m1", "assistant"));
-    h.gw.notifySessionStatus("s1", "stopped");
     expect(listSub.sent).toHaveLength(0);
+  } finally {
+    h.close();
+  }
+});
+
+test("data_changed sampai ke semua koneksi (buat/hapus di perangkat lain)", () => {
+  const h = freshHarness();
+  try {
+    const listSub = makeSub("list");
+    h.gw.attach(listSub, "");
+    const other = makeSub("other");
+    h.gw.attach(other, "s1");
+    other.sent.length = 0;
+
+    h.gw.notifyDataChanged();
+
+    expect(listSub.sent).toEqual([{ type: "data_changed" }]);
+    expect(other.sent).toEqual([{ type: "data_changed" }]);
+  } finally {
+    h.close();
+  }
+});
+
+test("session_status & session_deleted sampai ke semua koneksi (sidebar realtime)", () => {
+  const h = freshHarness();
+  try {
+    const listSub = makeSub("list");
+    h.gw.attach(listSub, "");
+    const other = makeSub("other");
+    h.gw.attach(other, "s1");
+    other.sent.length = 0;
+
+    h.gw.notifySessionStatus("s1", "stopped");
+    h.gw.notifySessionDeleted("s1");
+
+    // Koneksi mode daftar (sidebar / daftar Session) ikut menerima.
+    expect(listSub.sent).toEqual([
+      { type: "session_status", sessionId: "s1", status: "stopped" },
+      { type: "session_deleted", sessionId: "s1" },
+    ]);
+    // Koneksi yang attach Session itu tetap menerima seperti biasa.
+    expect(other.sent.map((m) => m.type)).toEqual(["session_status", "session_deleted"]);
   } finally {
     h.close();
   }

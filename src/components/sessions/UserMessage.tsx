@@ -12,6 +12,7 @@ import { CopyMessageButton } from "@/components/sessions/MessageActions";
 import { Bubble, BubbleContent } from "@/components/ui/bubble";
 import { Message, MessageContent, MessageFooter } from "@/components/ui/message";
 import { attachmentUrl } from "@/lib/api";
+import { splitComposerMentions } from "@/lib/composer";
 import { formatTime } from "@/lib/time";
 import { textOf } from "@/lib/turns";
 import { cn } from "@/lib/utils";
@@ -41,6 +42,12 @@ export function UserMessage({ message: m }: UserMessageProps) {
     src: attachmentUrl(m.sessionId, p.attachmentId),
     alt: p.filename ?? "Attached image",
   }));
+  /** Path file yang benar-benar dilampirkan (part `file` non-gambar). */
+  const mentionedPaths = new Set(
+    m.parts
+      .filter((p) => p.type === "file" && !isImageAttachment(p) && typeof p.filename === "string")
+      .map((p) => p.filename as string),
+  );
   const attachedFiles = m.parts
     .map((p) => ({ part: p, filename: p.filename }))
     .filter(
@@ -88,7 +95,25 @@ export function UserMessage({ message: m }: UserMessageProps) {
 
         {(text !== "" || attachedFiles.length > 0) && (
           <Bubble>
-            {text !== "" && <BubbleContent className="whitespace-pre-wrap">{text}</BubbleContent>}
+            {text !== "" && (
+              <BubbleContent className="whitespace-pre-wrap">
+                {/* Mention @file disorot sama seperti di composer. */}
+                {splitComposerMentions(text, mentionedPaths).map((seg, i) =>
+                  seg.kind === "mention" ? (
+                    <mark
+                      // biome-ignore lint/suspicious/noArrayIndexKey: urutan potongan = urutan teks
+                      key={i}
+                      className="rounded-[3px] bg-current/10 text-inherit"
+                    >
+                      {seg.text}
+                    </mark>
+                  ) : (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: urutan potongan = urutan teks
+                    <span key={i}>{seg.text}</span>
+                  ),
+                )}
+              </BubbleContent>
+            )}
             {attachedFiles.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
                 {attachedFiles.map(({ filename }) => (

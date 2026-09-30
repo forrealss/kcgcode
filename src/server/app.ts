@@ -224,6 +224,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     skillsRegistry,
     skillInstalls,
     tunnel,
+    notifyDataChanged: () => gateway.notifyDataChanged(),
   };
   // Sesi dicabut / terkunci / kedaluwarsa -> tutup WebSocket miliknya agar
   // perangkat itu tidak terus menerima data percakapan.

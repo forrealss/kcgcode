@@ -13,7 +13,7 @@ import { errorStatus, json, readJson, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 export function projectsRoutes(ctx: ApiRouteContext) {
-  const { projectManager, sessionManager } = ctx;
+  const { projectManager, sessionManager, notifyDataChanged } = ctx;
   return {
     // ---- Project & Folder_Browser (Requirement 10) ----
     "/api/projects": {
@@ -34,6 +34,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
             typeof path === "string" ? path : "",
           );
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          notifyDataChanged();
           return json({ project: res.data }, 201);
         } catch (e) {
           return serverError(e);
@@ -81,6 +82,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
           if (!res.ok) {
             return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
           }
+          notifyDataChanged();
           return json({ ok: true });
         } catch (e) {
           return serverError(e);

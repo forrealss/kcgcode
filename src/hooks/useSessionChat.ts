@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
+import { notifyDataChanged } from "@/lib/data-events";
 import { peekPendingPrompt, setPendingPrompt, takePendingPrompt } from "@/lib/pending-prompt";
 import { groupPrompts } from "@/lib/prompts";
 import { wsStatusLabel } from "@/lib/session-status";
@@ -143,77 +144,85 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
 
-  const onMessage = useCallback((msg: ServerMessage) => {
-    switch (msg.type) {
-      case "history":
-        setError(null);
-        setMessages(msg.messages);
-        setPrompts(msg.prompts);
-        // Pesan lama tampil penuh; turn tidak mungkin aktif saat reattach.
-        setTurnActive(false);
-        // Blok "Thought process" di-reset: state collapsible diisi ulang oleh
-        // effect sinkronisasi di bawah (default collapsed per turn).
-        setCollapsible({});
-        setHistoryLoaded(true);
-        break;
-      case "message":
-        setError(null);
-        // Replace versi streaming (id sama) atau tambahkan pesan baru.
-        setMessages((prev) => upsertMessage(prev, msg.message));
-        break;
-      case "message_part":
-        setError(null);
-        // Upsert part streaming (snapshot utuh): opencode mengirimnya saat part
-        // dibuat (teks kosong) dan saat selesai (teks lengkap). Isi di
-        // antaranya datang lewat `message_part_delta` di bawah.
-        setMessages((prev) => upsertMessagePart(prev, msg.sessionId, msg.messageId, msg.part));
-        break;
-      case "message_part_delta":
-        // Token model (opencode `message.part.delta`): teks bertambah per
-        // potongan -> efek mengetik seperti TUI opencode.
-        setMessages((prev) =>
-          appendMessagePartDelta(prev, msg.messageId, msg.partId, msg.field, msg.delta),
-        );
-        break;
-      case "prompt":
-        setError(null);
-        setPrompts((prev) =>
-          prev.some((p) => p.id === msg.prompt.id) ? prev : [...prev, msg.prompt],
-        );
-        break;
-      case "prompt_resolved":
-        // Langsung dihapus; animasi keluar kartu ditangani `AnimatePresence`
-        // di `PromptPanel` (kartu tetap di DOM sampai animasinya selesai).
-        setPrompts((prev) => prev.filter((p) => p.id !== msg.promptId));
-        break;
-      case "session_status":
-        setStatus(msg.status);
-        // Session non-running -> tidak mungkin ada model yang merespon.
-        if (msg.status !== "running") setTurnActive(false);
-        break;
-      case "turn_active":
-        setTurnActive(msg.active);
-        break;
-      case "session_deleted":
-        // Session dihapus dari tempat lain — kembali ke daftar Session.
-        onBackRef.current();
-        break;
-      case "error":
-        // Error terkait prompt ditampilkan di kartunya masing-masing —
-        // banner global di atas chat tidak terlihat oleh user yang sedang
-        // fokus ke kartu (tombol terasa "mati" tanpa feedback).
-        if (
-          msg.code === "PROMPT_NOT_FOUND" ||
-          msg.code === "PROMPT_ALREADY_RESOLVED" ||
-          msg.code === "PROMPT_FAILED"
-        ) {
-          setPromptError(msg.message);
+  const onMessage = useCallback(
+    (msg: ServerMessage) => {
+      switch (msg.type) {
+        case "history":
+          setError(null);
+          setMessages(msg.messages);
+          setPrompts(msg.prompts);
+          // Pesan lama tampil penuh; turn tidak mungkin aktif saat reattach.
+          setTurnActive(false);
+          // Blok "Thought process" di-reset: state collapsible diisi ulang oleh
+          // effect sinkronisasi di bawah (default collapsed per turn).
+          setCollapsible({});
+          setHistoryLoaded(true);
           break;
-        }
-        setError(msg.message);
-        break;
-    }
-  }, []);
+        case "message":
+          setError(null);
+          // Replace versi streaming (id sama) atau tambahkan pesan baru.
+          setMessages((prev) => upsertMessage(prev, msg.message));
+          break;
+        case "message_part":
+          setError(null);
+          // Upsert part streaming (snapshot utuh): opencode mengirimnya saat part
+          // dibuat (teks kosong) dan saat selesai (teks lengkap). Isi di
+          // antaranya datang lewat `message_part_delta` di bawah.
+          setMessages((prev) => upsertMessagePart(prev, msg.sessionId, msg.messageId, msg.part));
+          break;
+        case "message_part_delta":
+          // Token model (opencode `message.part.delta`): teks bertambah per
+          // potongan -> efek mengetik seperti TUI opencode.
+          setMessages((prev) =>
+            appendMessagePartDelta(prev, msg.messageId, msg.partId, msg.field, msg.delta),
+          );
+          break;
+        case "prompt":
+          setError(null);
+          setPrompts((prev) =>
+            prev.some((p) => p.id === msg.prompt.id) ? prev : [...prev, msg.prompt],
+          );
+          break;
+        case "prompt_resolved":
+          // Langsung dihapus; animasi keluar kartu ditangani `AnimatePresence`
+          // di `PromptPanel` (kartu tetap di DOM sampai animasinya selesai).
+          setPrompts((prev) => prev.filter((p) => p.id !== msg.promptId));
+          break;
+        case "session_status":
+          // Kini dikirim ke semua koneksi — abaikan milik Session lain.
+          if (msg.sessionId !== session.id) break;
+          setStatus(msg.status);
+          // Session non-running -> tidak mungkin ada model yang merespon.
+          if (msg.status !== "running") setTurnActive(false);
+          break;
+        case "turn_active":
+          setTurnActive(msg.active);
+          break;
+        case "session_deleted":
+          // Kini dikirim ke semua koneksi — hanya Session ini yang ditinggalkan.
+          if (msg.sessionId !== session.id) break;
+          // Session dihapus dari tempat lain — kembali ke daftar Session.
+          onBackRef.current();
+          break;
+        case "error":
+          // Error terkait prompt ditampilkan di kartunya masing-masing —
+          // banner global di atas chat tidak terlihat oleh user yang sedang
+          // fokus ke kartu (tombol terasa "mati" tanpa feedback).
+          if (
+            msg.code === "PROMPT_NOT_FOUND" ||
+            msg.code === "PROMPT_ALREADY_RESOLVED" ||
+            msg.code === "PROMPT_FAILED"
+          ) {
+            setPromptError(msg.message);
+            break;
+          }
+          setError(msg.message);
+          break;
+      }
+      // `session.id` stabil per mount (SessionView di-key per id).
+    },
+    [session.id],
+  );
 
   const {
     status: wsStatus,
@@ -340,6 +349,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
       await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
       setDeleteOpen(false);
       toast.success("Session deleted.");
+      notifyDataChanged();
       (onDeleted ?? onBack)();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");

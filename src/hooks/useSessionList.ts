@@ -8,8 +8,10 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
+import { notifyDataChanged } from "@/lib/data-events";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
 import type { Session } from "@/types";
 
@@ -26,7 +28,7 @@ export interface SessionListEngine {
   /** Session terurut: running -> crashed -> stopped, terbaru di atas. */
   ordered: Session[];
   summary: SessionSummary;
-  refresh: () => Promise<void>;
+  refresh: (opts?: { silent?: boolean }) => Promise<void>;
 
   // Aksi per-Session
   stopping: string | null;
@@ -61,19 +63,23 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const [projectDeleteOpen, setProjectDeleteOpen] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const res = await apiFetch("/api/sessions");
-      const body = (await res.json()) as { sessions: Session[] };
-      setSessions(body.sessions.filter((s) => s.projectId === projectId));
-    } catch (e) {
-      setLoadError(e instanceof ApiError ? e.message : "Failed to load sessions");
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId]);
+  /** `silent`: muat ulang di latar (tanpa skeleton) — sinkron dari server. */
+  const refresh = useCallback(
+    async ({ silent = false }: { silent?: boolean } = {}) => {
+      if (!silent) setLoading(true);
+      setLoadError(null);
+      try {
+        const res = await apiFetch("/api/sessions");
+        const body = (await res.json()) as { sessions: Session[] };
+        setSessions(body.sessions.filter((s) => s.projectId === projectId));
+      } catch (e) {
+        setLoadError(e instanceof ApiError ? e.message : "Failed to load sessions");
+      } finally {
+        setLoading(false);
+      }
+    },
+    [projectId],
+  );
 
   useEffect(() => {
     void refresh();
@@ -83,7 +89,8 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
    * Judul Session dibuat otomatis oleh opencode SETELAH prompt pertama —
    * daftar yang dimuat saat halaman dibuka belum memuatnya. Satu koneksi WS
    * mode daftar (`attach("")`, tanpa history) menerima broadcast
-   * `session_title` agar baris terkait terbarui live tanpa refresh manual.
+   * `session_title`, `session_status`, dan `session_deleted` agar baris
+   * terkait terbarui live tanpa refresh manual.
    */
   const ws = useWebSocket({
     onMessage: (msg) => {
@@ -92,6 +99,18 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
         setSessions((prev) =>
           prev.map((s) => (s.id === msg.sessionId ? { ...s, title: msg.title } : s)),
         );
+      } else if (msg.type === "session_status") {
+        // Status berubah di tempat lain (Session view, crash, perangkat lain).
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === msg.sessionId && s.status !== msg.status ? { ...s, status: msg.status } : s,
+          ),
+        );
+      } else if (msg.type === "session_deleted") {
+        setSessions((prev) => prev.filter((s) => s.id !== msg.sessionId));
+      } else if (msg.type === "data_changed") {
+        // Session baru dibuat di perangkat/tab lain -> muat ulang tanpa skeleton.
+        void refresh({ silent: true });
       }
     },
   });
@@ -99,6 +118,8 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     ws.attach("");
     return () => ws.disconnect();
   }, [ws.attach, ws.disconnect]);
+  const resync = useCallback(() => refresh({ silent: true }), [refresh]);
+  useResyncOnReconnect(ws.status, resync);
 
   // Running -> crashed -> stopped, terbaru di atas (lib/session-summary.ts).
   const ordered = useMemo(() => sortSessions(sessions), [sessions]);
@@ -113,6 +134,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
         await apiFetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
         toast.success("Session stopped.");
         await refresh();
+        notifyDataChanged();
       } catch (e) {
         toast.error(e instanceof ApiError ? e.message : "Couldn't stop the session.");
       } finally {
@@ -130,6 +152,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
         await apiFetch(`/api/sessions/${sessionId}`, { method: "POST" });
         toast.success("Session resumed.");
         await refresh();
+        notifyDataChanged();
       } catch (e) {
         toast.error(e instanceof ApiError ? e.message : "Couldn't resume the session.");
       } finally {
@@ -156,6 +179,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
       setPendingDelete(null);
       toast.success("Session deleted.");
       await refresh();
+      notifyDataChanged();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");
     } finally {
@@ -176,6 +200,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
       await apiFetch(`/api/projects/${projectId}`, { method: "DELETE" });
       setProjectDeleteOpen(false);
       toast.success("Project removed.");
+      notifyDataChanged();
       onDeleted?.();
     } catch (e) {
       toast.error(e instanceof ApiError ? e.message : "Couldn't remove the project.");

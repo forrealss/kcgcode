@@ -12,6 +12,8 @@
  * - Navigasi utama di atas daftar: "New session" (homepage/composer chat),
  *   "Search" (command palette `SearchDialog`, juga Ctrl/⌘+K), dan "Skills"
  *   (`/skills`).
+ * - Desktop: hover baris Session memunculkan menu "..." (Start/Stop/
+ *   Restart, Delete) — `SidebarSessionMenu`. HP tidak (tanpa hover).
  * - Footer: pemilih tema (Light / Dark / System), lalu profil pemilik +
  *   tombol Settings & Lock (`SidebarAccount`).
  */
@@ -28,6 +30,7 @@ import type * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { SearchDialog } from "@/components/layout/SearchDialog";
 import { SidebarAccount } from "@/components/layout/SidebarAccount";
+import { SidebarSessionMenu } from "@/components/layout/SidebarSessionMenu";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -371,6 +374,17 @@ function ProjectGroup({ group, active, activeSessionId, go, navigate }: ProjectG
                     <span className="sr-only">{SESSION_STATUS_LABEL[session.status]}:</span>
                     <span>{title}</span>
                   </SidebarMenuSubButton>
+                  {/* Aksi cepat khusus desktop (hover); HP pakai halaman Session. */}
+                  {!isMobile && (
+                    <SidebarSessionMenu
+                      session={session}
+                      title={title}
+                      onDeleted={() => {
+                        // Session yang sedang dibuka dihapus -> keluar ke Project.
+                        if (isActive) navigate(detailPath);
+                      }}
+                    />
+                  )}
                 </SidebarMenuSubItem>
               );
             })}

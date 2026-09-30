@@ -19,4 +19,9 @@ export interface ApiRouteContext {
   skillsRegistry: SkillsRegistry;
   skillInstalls: SkillInstallJobs;
   tunnel: TunnelManager;
+  /**
+   * Beri tahu semua klien bahwa daftar Project/Session berubah (buat/hapus)
+   * agar sidebar & daftar di perangkat lain ikut terbarui.
+   */
+  notifyDataChanged: () => void;
 }

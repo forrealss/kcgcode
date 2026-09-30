@@ -70,6 +70,11 @@ export type ServerMessage =
   | { type: "turn_active"; sessionId: string; active: boolean }
   /** Session dihapus permanen — subscriber harus meninggalkan halamannya. */
   | { type: "session_deleted"; sessionId: string }
+  /**
+   * Daftar Project/Session berubah (dibuat / dihapus) dari perangkat mana
+   * pun — dikirim ke semua koneksi; sidebar & daftar memuat ulang datanya.
+   */
+  | { type: "data_changed" }
   | { type: "error"; code: string; message: string };
 
 /** Kode error umum pada pesan `error`. */

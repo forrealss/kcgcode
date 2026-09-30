@@ -79,6 +79,8 @@ export interface WebSocketGateway {
   /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
   notifyTurnActive(sessionId: string, active: boolean): void;
   notifySessionDeleted(sessionId: string): void;
+  /** Daftar Project/Session berubah — broadcast ke semua koneksi. */
+  notifyDataChanged(): void;
   notifyPromptResolved(sessionId: string, promptId: string): void;
   notifyError(sessionId: string, code: string, message: string): void;
   detach(sub: Subscriber): void;
@@ -140,7 +142,8 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
 
   function attach(sub: Subscriber, sessionId: string): void {
     // Mode daftar (sessionId kosong): tanpa `history`, cukup daftar sebagai
-    // penerima broadcast global (`session_title`).
+    // penerima broadcast global (`session_title`, `session_status`,
+    // `session_deleted`).
     if (sessionId === "") {
       subs.set(sub, { sessionId: null });
       return;
@@ -285,7 +288,9 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
   }
 
   function notifySessionStatus(sessionId: string, status: SessionStatus): void {
-    broadcast(sessionId, () => ({ type: "session_status", sessionId, status }));
+    // Relevan lintas halaman: titik status di sidebar / daftar Session harus
+    // ikut berubah walau koneksi itu tidak sedang attach Session ini.
+    broadcastAll(() => ({ type: "session_status", sessionId, status }));
   }
 
   function notifySessionTitle(sessionId: string, title: string): void {
@@ -299,9 +304,16 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     broadcast(sessionId, () => ({ type: "turn_active", sessionId, active }));
   }
 
-  /** Beri tahu subscriber bahwa Session sudah dihapus permanen. */
+  /**
+   * Session dihapus permanen — dikirim ke SEMUA koneksi: yang sedang membuka
+   * Session ini meninggalkan halamannya, sidebar/daftar menghapus barisnya.
+   */
   function notifySessionDeleted(sessionId: string): void {
-    broadcast(sessionId, () => ({ type: "session_deleted", sessionId }));
+    broadcastAll(() => ({ type: "session_deleted", sessionId }));
+  }
+
+  function notifyDataChanged(): void {
+    broadcastAll(() => ({ type: "data_changed" }));
   }
 
   function notifyPromptResolved(sessionId: string, promptId: string): void {
@@ -338,6 +350,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifySessionTitle,
     notifyTurnActive,
     notifySessionDeleted,
+    notifyDataChanged,
     notifyPromptResolved,
     notifyError,
     detach,

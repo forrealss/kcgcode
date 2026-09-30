@@ -5,10 +5,15 @@
  *   dikelompokkan `lib/sidebar-groups.ts` (murni, teruji).
  * - Dimuat ulang setiap `pathname` berubah, sehingga Session/Project yang
  *   baru dibuat atau dihapus ikut terlihat setelah navigasi.
- * - Judul Session diperbarui live lewat WS mode daftar (`attach("")`) yang
- *   menerima broadcast global `session_title`.
+ * - Diperbarui live lewat WS mode daftar (`attach("")`) yang menerima
+ *   broadcast global: `session_title` (judul), `session_status` (titik
+ *   running/stopped/crashed), dan `session_deleted` (baris hilang).
+ * - Muat ulang penuh saat: `data_changed` dari server (Project/Session
+ *   dibuat/dihapus di perangkat mana pun), `notifyDataChanged()` lokal, dan
+ *   koneksi WS tersambung ulang (kabar yang terlewat selama putus).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
 import { onDataChanged } from "@/lib/data-events";
@@ -71,6 +76,17 @@ export function useSidebarData(pathname: string): UseSidebarDataResult {
         setSessions((prev) =>
           prev.map((s) => (s.id === msg.sessionId ? { ...s, title: msg.title } : s)),
         );
+      } else if (msg.type === "session_status") {
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === msg.sessionId && s.status !== msg.status ? { ...s, status: msg.status } : s,
+          ),
+        );
+      } else if (msg.type === "session_deleted") {
+        setSessions((prev) => prev.filter((s) => s.id !== msg.sessionId));
+      } else if (msg.type === "data_changed") {
+        // Project/Session dibuat atau dihapus (bisa dari perangkat lain).
+        void refresh();
       }
     },
   });
@@ -78,6 +94,7 @@ export function useSidebarData(pathname: string): UseSidebarDataResult {
     ws.attach("");
     return () => ws.disconnect();
   }, [ws.attach, ws.disconnect]);
+  useResyncOnReconnect(ws.status, refresh);
 
   const groups = useMemo(() => groupSessionsByProject(projects, sessions), [projects, sessions]);
 

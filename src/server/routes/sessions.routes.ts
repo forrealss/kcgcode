@@ -9,7 +9,7 @@ import { errorStatus, json, parseModelBody, readJson, serverError } from "./help
 import type { ApiRouteContext } from "./types";
 
 export function sessionsRoutes(ctx: ApiRouteContext) {
-  const { sessionManager, attachments } = ctx;
+  const { sessionManager, attachments, notifyDataChanged } = ctx;
   return {
     // ---- Session (Requirement 1, 4) ----
     "/api/sessions": {
@@ -37,6 +37,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
             agent: typeof agent === "string" && agent.trim() !== "" ? agent.trim() : null,
           });
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          notifyDataChanged();
           return json({ session: res.session }, 201);
         } catch (e) {
           return serverError(e);
@@ -57,6 +58,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
           if (!res.ok) {
             return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
           }
+          notifyDataChanged();
           return json({ ok: true });
         } catch (e) {
           return serverError(e);
