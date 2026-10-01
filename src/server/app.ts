@@ -25,6 +25,7 @@ import { PUBLIC_DIR, resolveEffectiveUploadsDir, resolveFrpcConfigPath } from ".
 import { resolveHostname } from "./host";
 import { authRoutes } from "./routes/auth.routes";
 import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
+import { metaRoutes } from "./routes/meta.routes";
 import { projectsRoutes } from "./routes/projects.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
 import { skillsRoutes } from "./routes/skills.routes";
@@ -277,6 +278,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
 
   const apiRoutes = guardRoutes(auth, {
     ...authRoutes(auth),
+    ...metaRoutes(),
     ...projectsRoutes(routeCtx),
     ...sessionsRoutes(routeCtx),
     ...uploadsRoutes(routeCtx),

@@ -18,7 +18,7 @@ export type AppRoute =
   | { name: "not-found" };
 
 /** Sub-halaman Settings (`/settings/:section`). */
-export const SETTINGS_SECTIONS = ["profile", "security", "remote", "devices"] as const;
+export const SETTINGS_SECTIONS = ["profile", "security", "remote", "devices", "about"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 function isSettingsSection(value: string): value is SettingsSection {

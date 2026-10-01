@@ -8,11 +8,13 @@
  * - Security (`/settings/security`): kunci aplikasi, jenis kunci, auto-lock.
  * - Remote access (`/settings/remote`): tunnel publik lewat Google sign-in.
  * - Devices  (`/settings/devices`): sesi login per perangkat.
+ * - About    (`/settings/about`): logo, versi, dan kredit tim.
  */
-import { GlobeIcon, MonitorSmartphoneIcon, ShieldIcon, UserIcon } from "lucide-react";
+import { GlobeIcon, InfoIcon, MonitorSmartphoneIcon, ShieldIcon, UserIcon } from "lucide-react";
 import { type ComponentType, useCallback } from "react";
 import { toast } from "sonner";
 import { AvatarEditor } from "@/components/auth/AvatarEditor";
+import { AboutGroup } from "@/components/settings/AboutGroup";
 import { AccountGroup } from "@/components/settings/AccountGroup";
 import { DevicesGroup } from "@/components/settings/DevicesGroup";
 import { EntryRow, PrefsGroup } from "@/components/settings/prefs";
@@ -29,7 +31,7 @@ import type { AuthStatus } from "@/server/services/auth";
 const SECTIONS: {
   id: SettingsSection;
   label: string;
-  /** Label ringkas untuk segmented control mobile (4 kolom sempit). */
+  /** Label ringkas untuk bottom nav mobile (5 kolom sempit). */
   short?: string;
   icon: ComponentType<{ className?: string }>;
 }[] = [
@@ -37,6 +39,7 @@ const SECTIONS: {
   { id: "security", label: "Security", icon: ShieldIcon },
   { id: "remote", label: "Remote access", short: "Remote", icon: GlobeIcon },
   { id: "devices", label: "Devices", icon: MonitorSmartphoneIcon },
+  { id: "about", label: "About", icon: InfoIcon },
 ];
 
 function errorText(e: unknown, fallback: string): string {
@@ -65,6 +68,7 @@ export function SettingsPage({ section }: { section: SettingsSection }) {
           {section === "security" && <SecurityGroup status={status} onOk={ok} />}
           {section === "remote" && <RemoteAccessGroup protectedApp={status.protected} />}
           {section === "devices" && <DevicesSection status={status} onError={error} />}
+          {section === "about" && <AboutGroup />}
         </div>
       )}
     </div>
@@ -124,7 +128,7 @@ function SettingsNav({ current }: { current: SettingsSection }) {
         aria-label="Settings sections"
         className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:hidden"
       >
-        <ul className="mx-auto grid max-w-md grid-cols-4">
+        <ul className="mx-auto grid max-w-md grid-cols-5">
           {SECTIONS.map(({ id, label, short, icon: Icon }) => {
             const active = id === current;
             const href = settingsPath(id);

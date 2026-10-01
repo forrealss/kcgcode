@@ -111,7 +111,9 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
           <SidebarMenuItem>
             <SidebarMenuButton size="lg" asChild>
               <a href={projectsPath()} onClick={go(projectsPath())}>
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary p-1.5">
+                {/* Tint warna logo (sama dengan Settings -> About) agar logo
+                    ungu tetap kontras di light & dark mode. */}
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#EEEBFF] p-1.5 ring-1 ring-[#6D5CFB]/20 dark:bg-[#6D5CFB]/15 dark:ring-[#6D5CFB]/30">
                   <img src={logo} alt="" className="size-full" />
                 </span>
                 <span className="truncate font-semibold">KCG Code</span>

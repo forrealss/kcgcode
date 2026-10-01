@@ -129,6 +129,7 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/tunnel/lhr/logs",
       "/api/tunnel/lhr/start",
       "/api/tunnel/lhr/stop",
+      "/api/meta",
     ];
     // Setiap pola rute /api terdaftar (kecuali publik) harus tercakup daftar
     // di atas — rute baru yang belum diuji membuat test ini gagal.
