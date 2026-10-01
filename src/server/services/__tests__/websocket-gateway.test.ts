@@ -141,6 +141,9 @@ function makeFakeSessionManager(): FakeSessionManager {
     async findFiles() {
       return { ok: false, error: "not-used" };
     },
+    async sessionContext() {
+      return { ok: false, error: "not-used" };
+    },
     async listModels() {
       return { ok: false, error: "not-used" };
     },
@@ -333,6 +336,33 @@ test("prompt_response sukses -> notify prompt_resolved; gagal -> error", async (
       expect(err.message).toContain("no longer waiting");
     }
     expect(sub.sent.filter((m) => m.type === "prompt_resolved")).toHaveLength(1);
+  } finally {
+    h.close();
+  }
+});
+
+test("prompt_response kedaluwarsa (PROMPT_EXPIRED) -> kartu dihapus + error PROMPT_EXPIRED", async () => {
+  const h = freshHarness();
+  try {
+    h.store.insertPrompt(makePrompt("s1", "pr_gone", "question"));
+    const sub = makeSub("c1");
+    h.gw.attach(sub, "s1");
+    sub.sent.length = 0;
+
+    h.sm.resolveResult = { ok: false, error: "PROMPT_EXPIRED" };
+    h.gw.promptResponse(sub, "s1", "pr_gone", { option: "A" });
+    await Bun.sleep(0);
+
+    // Kartu dihapus di klien (prompt_resolved) supaya session tidak terkunci.
+    const resolved = sub.sent.filter(
+      (m): m is Extract<ServerMessage, { type: "prompt_resolved" }> => m.type === "prompt_resolved",
+    );
+    expect(resolved.map((m) => m.promptId)).toEqual(["pr_gone"]);
+    const err = sub.sent.find(
+      (m): m is Extract<ServerMessage, { type: "error" }> => m.type === "error",
+    );
+    expect(err?.code).toBe(ErrorCodes.PROMPT_EXPIRED);
+    expect(err?.message).toContain("stopped waiting");
   } finally {
     h.close();
   }

@@ -18,14 +18,27 @@
  *   `SessionComposer` di folder yang sama.
  * - Drag & drop file: `FileDropOverlay` (portal, menutupi seluruh viewport)
  *   meneruskan file ke composer (`SessionComposerHandle.addFiles`).
+ * - Kartu konteks kanan (`ContextPanel`): Environment / MCP / Task list /
+ *   Reference, MENGAPUNG di margin kanan — percakapan & input tidak bergeser
+ *   saat kartu dibuka/ditutup. Di mobile tampil sebagai bottom sheet.
  */
-import { useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
+import {
+  ContextPanel,
+  ContextPanelTrigger,
+  ContextSheet,
+} from "@/components/sessions/ContextPanel";
 import { FileDropOverlay } from "@/components/sessions/FileDropOverlay";
 import { SessionComposer, type SessionComposerHandle } from "@/components/sessions/SessionComposer";
 import { SessionHeader } from "@/components/sessions/SessionHeader";
 import { SessionTimeline } from "@/components/sessions/SessionTimeline";
+import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
+import { useSessionContext } from "@/hooks/useSessionContext";
+import { CONVERSATION_MAX_W } from "@/lib/layout";
+import { collectReferences } from "@/lib/references";
+import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import { PromptPanel } from "./PromptPanel";
 
@@ -44,6 +57,20 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const chat = useSessionChat({ session, onBack, onDeleted });
   const empty = chat.messages.length === 0;
   const composerRef = useRef<SessionComposerHandle>(null);
+  /** Panel konteks kanan; default tertutup agar area chat tetap lega. */
+  const [contextOpen, setContextOpen] = useState(false);
+  /** Layar sempit: konteks tampil sebagai bottom sheet, bukan kartu. */
+  const isMobile = useIsMobile();
+  const sessionCtx = useSessionContext(session.id, contextOpen, chat.generating);
+  /**
+   * Reference diturunkan dari parts pesan yang sudah ada di timeline
+   * (tanpa request tambahan). `session.cwd` dipakai untuk mengubah path
+   * absolut dari tool call menjadi path relatif project.
+   */
+  const references = useMemo(
+    () => (contextOpen ? collectReferences(chat.messages, session.cwd) : []),
+    [contextOpen, chat.messages, session.cwd],
+  );
   // Composer tidak dirender saat pertanyaan menunggu jawaban (panel docked).
   const composerShown = empty || !chat.hasPendingQuestion;
   const acceptingFiles = composerShown && chat.canInput;
@@ -68,71 +95,108 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         starting={chat.starting}
       />
 
-      {empty ? (
-        /* Empty-state ala Gemini: sapaan + composer dipusatkan vertikal.
+      {/* Percakapan + kartu konteks berdampingan. `relative` jadi acuan tombol
+          hamburger (kanan bawah header) dan kartu saat mengapung di layar
+          sempit. */}
+      <div className="relative flex min-h-0 flex-1">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          {empty ? (
+            /* Empty-state ala Gemini: sapaan + composer dipusatkan vertikal.
             Timeline & prompt panel belum dirender (tidak ada isinya); spacer
             flex-1 di atas & bawah menjaga blok ini tepat di tengah kolom di
             bawah header. Begitu pesan pertama masuk (echo WS), layout pindah
             ke varian percakapan di bawah — composer turun ke dasar. */
-        <div className="flex min-h-0 flex-1 flex-col px-3 sm:px-4">
-          <div className="min-h-0 flex-[2]" />
-          <div className="mx-auto w-full max-w-3xl">
-            <h1 className="mb-6 text-center text-2xl font-medium tracking-tight sm:text-3xl">
-              No conversation yet
-            </h1>
-            <SessionComposer
-              ref={composerRef}
-              session={session}
-              inputAllowed={chat.canInput}
-              busy={chat.busy}
-              generating={chat.generating}
-              wsStatus={chat.wsStatus}
-              send={chat.send}
-              reportError={chat.reportError}
-              onInterrupt={chat.interrupt}
-            />
-          </div>
-          <div className="min-h-0 flex-[3]" />
-        </div>
-      ) : (
-        <>
-          <SessionTimeline
-            error={chat.error}
-            status={chat.status}
-            messages={chat.messages}
-            collapsible={chat.collapsible}
-            onToggle={chat.toggleBlock}
-            generating={chat.generating}
-          />
+            <div className="flex min-h-0 flex-1 flex-col px-3 sm:px-4">
+              <div className="min-h-0 flex-[2]" />
+              <div className={cn("mx-auto w-full", CONVERSATION_MAX_W)}>
+                <h1 className="mb-6 text-center text-2xl font-medium tracking-tight sm:text-3xl">
+                  No conversation yet
+                </h1>
+                <SessionComposer
+                  ref={composerRef}
+                  session={session}
+                  inputAllowed={chat.canInput}
+                  busy={chat.busy}
+                  generating={chat.generating}
+                  wsStatus={chat.wsStatus}
+                  send={chat.send}
+                  reportError={chat.reportError}
+                  onInterrupt={chat.interrupt}
+                />
+              </div>
+              <div className="min-h-0 flex-[3]" />
+            </div>
+          ) : (
+            <>
+              <SessionTimeline
+                error={chat.error}
+                status={chat.status}
+                messages={chat.messages}
+                collapsible={chat.collapsible}
+                onToggle={chat.toggleBlock}
+                generating={chat.generating}
+              />
 
-          {/* Question pending: panel DOCKED menggantikan composer — jawaban
+              {/* Question pending: panel DOCKED menggantikan composer — jawaban
               pertanyaan adalah satu-satunya input saat ini (ala TUI opencode).
               Hanya area jawaban kartu yang scroll; footer aksi tetap terlihat.
               Permission (bukan question): panel tetap mengambang DI ATAS
               composer seperti biasa. */}
-          <PromptPanel
-            groups={chat.promptGroups}
-            errorSignal={chat.promptError}
-            onResolve={chat.resolvePrompt}
-            onConsumeError={chat.consumePromptError}
-            docked={chat.hasPendingQuestion}
-          />
+              <PromptPanel
+                groups={chat.promptGroups}
+                errorSignal={chat.promptError}
+                onResolve={chat.resolvePrompt}
+                onConsumeError={chat.consumePromptError}
+                docked={chat.hasPendingQuestion}
+              />
 
-          {!chat.hasPendingQuestion && (
-            <SessionComposer
-              ref={composerRef}
-              session={session}
-              inputAllowed={chat.canInput}
-              busy={chat.busy}
-              generating={chat.generating}
-              wsStatus={chat.wsStatus}
-              send={chat.send}
-              reportError={chat.reportError}
-              onInterrupt={chat.interrupt}
-            />
+              {!chat.hasPendingQuestion && (
+                <SessionComposer
+                  ref={composerRef}
+                  session={session}
+                  inputAllowed={chat.canInput}
+                  busy={chat.busy}
+                  generating={chat.generating}
+                  wsStatus={chat.wsStatus}
+                  send={chat.send}
+                  reportError={chat.reportError}
+                  onInterrupt={chat.interrupt}
+                />
+              )}
+            </>
           )}
-        </>
-      )}
+        </div>
+
+        {/* Tertutup: hanya tombol hamburger. Terbuka: tombol hilang & kartu
+            mengapung di kanan. `absolute` = tidak mengambil ruang layout, jadi
+            percakapan & input tetap di posisinya. Wadah `pointer-events-none`
+            (setinggi area) agar klik di sekitar kartu tetap sampai ke chat. */}
+        {isMobile ? (
+          // Mobile: bottom sheet. Tombol hamburger tetap terlihat — sheet
+          // menutupi layar & punya penutupnya sendiri (tap luar / geser / Esc).
+          <>
+            <ContextPanelTrigger onOpen={() => setContextOpen(true)} />
+            <ContextSheet
+              open={contextOpen}
+              onOpenChange={setContextOpen}
+              context={sessionCtx.context}
+              references={references}
+              loading={sessionCtx.loading}
+            />
+          </>
+        ) : contextOpen ? (
+          <div className="pointer-events-none absolute end-3 top-2 bottom-3 z-20 flex w-[min(15rem,calc(100%-1.5rem))] flex-col sm:end-4">
+            <ContextPanel
+              context={sessionCtx.context}
+              references={references}
+              loading={sessionCtx.loading}
+              onClose={() => setContextOpen(false)}
+            />
+          </div>
+        ) : (
+          <ContextPanelTrigger onOpen={() => setContextOpen(true)} />
+        )}
+      </div>
 
       <FileDropOverlay
         accepting={acceptingFiles}

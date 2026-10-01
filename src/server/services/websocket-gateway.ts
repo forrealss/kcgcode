@@ -109,6 +109,9 @@ function toErrorCode(error: string): string {
  * `OC_QUESTION_REPLY_FAILED(400)` — kurang berguna bagi user.
  */
 function friendlyPromptError(raw: string): string {
+  if (raw === "PROMPT_EXPIRED") {
+    return "The agent stopped waiting for that answer, so it was dismissed. Send a new message to continue.";
+  }
   if (
     raw === ErrorCodes.PROMPT_NOT_FOUND ||
     raw.startsWith("OC_QUESTION") ||
@@ -203,6 +206,18 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     void sessionManager
       .resolvePrompt(sessionId, promptId, response)
       .then((res) => {
+        if (!res.ok && res.error === "PROMPT_EXPIRED") {
+          // Prompt sudah ditutup secara lokal (agent tidak lagi menunggu):
+          // hapus kartu di semua klien lalu beri tahu pengirim kenapa —
+          // session kembali bisa dipakai (composer muncul lagi).
+          notifyPromptResolved(sessionId, promptId);
+          sendSafe(sub, {
+            type: "error",
+            code: ErrorCodes.PROMPT_EXPIRED,
+            message: friendlyPromptError("PROMPT_EXPIRED"),
+          });
+          return;
+        }
         if (!res.ok) {
           // Kode PROMPT_FAILED: client menampilkan error ini DI kartu prompt
           // (bukan banner global) agar klik yang gagal tidak terasa mati.

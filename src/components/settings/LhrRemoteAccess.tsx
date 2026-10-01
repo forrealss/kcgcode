@@ -1,26 +1,19 @@
 /**
  * Panel Remote access via localhost.run — tanpa akun, lewat `ssh` bawaan OS.
  *
- * Satu kartu: status + tombol Turn on/off, lalu QR + link (sama dengan
- * penyedia bawaan) saat online. Alamat gratis berubah tiap beberapa jam /
- * tiap sambung ulang — dijelaskan singkat di kartu agar pengguna tidak kaget.
- * Log koneksi di bagian lipat untuk pemecahan masalah.
+ * Satu grup ala AdwPreferencesGroup:
+ * - AdwSwitchRow "Remote access" (status satu frasa di subjudul),
+ * - QR + link saat online (komponen bersama penyedia bawaan),
+ * - baris expander "Connection log".
+ * Catatan alamat yang berubah + tautan ke KCG Code link jadi footer grup.
  */
-import {
-  ChevronDownIcon,
-  CircleAlertIcon,
-  GlobeIcon,
-  InfoIcon,
-  LockIcon,
-  PowerIcon,
-  TerminalSquareIcon,
-} from "lucide-react";
+import { ChevronDownIcon, GlobeIcon, LockIcon, TerminalSquareIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
-import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
@@ -112,132 +105,131 @@ export function LhrRemoteAccess({
   const running = s.enabled && s.phase !== "stopped";
   const online = s.phase === "online" && s.url !== null;
   const viaThisLink = s.url !== null && sameOrigin(s.url);
+  const connecting = running && !online && s.phase !== "error";
 
-  let tone: "success" | "busy" | "warning" | "muted" = "muted";
-  let title = "Remote access is off";
-  let body =
-    "Turn it on to get a temporary link for opening KCG Code on your phone. No account needed.";
+  // Subjudul: satu kalimat pendek yang menjelaskan keadaan + apa artinya.
+  let tone: RowTone = "muted";
+  let subtitle: ReactNode = "Get a temporary link to open KCG Code on your phone";
   if (!protectedApp) {
     tone = "warning";
-    title = "Set a PIN or password first";
-    body = "For your safety, remote access only works when KCG Code is locked.";
+    subtitle = "Set a PIN or password first to keep others out";
   } else if (s.phase === "error") {
     tone = "warning";
-    title = "Couldn't connect";
-    body = s.error ? apiErrorMessage(s.error) : "Check your internet connection and try again.";
+    subtitle = (
+      <span className="text-destructive">
+        {s.error
+          ? apiErrorMessage(s.error)
+          : "Couldn't connect. Check your internet and try again."}
+      </span>
+    );
   } else if (online) {
     tone = "success";
-    title = "Remote access is on";
-    body = "Anyone opening your link still needs your PIN or password.";
-  } else if (running) {
+    subtitle = "On · anyone with the link still needs your PIN or password";
+  } else if (connecting) {
     tone = "busy";
-    title = s.phase === "reconnecting" ? "Reconnecting…" : "Turning on…";
-    body = "Getting a link from localhost.run. This usually takes a few seconds.";
+    subtitle =
+      s.phase === "reconnecting"
+        ? "Reconnecting to localhost.run…"
+        : "Getting a link from localhost.run…";
   }
 
-  let action: ReactNode;
-  if (!protectedApp) {
-    action = (
-      <Button type="button" size="sm" onClick={() => navigate(settingsPath("security"))}>
-        <LockIcon data-icon="inline-start" />
-        Set up lock
-      </Button>
-    );
-  } else if (running) {
-    action = (
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={busy !== null}
-        onClick={() => onRequestStop(stop, viaThisLink)}
-        className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/15"
-      >
-        {busy === "stop" ? (
-          <Spinner data-icon="inline-start" />
-        ) : (
-          <PowerIcon data-icon="inline-start" />
-        )}
-        Turn off
-      </Button>
-    );
-  } else {
-    action = (
-      <Button type="button" size="sm" disabled={busy !== null} onClick={() => void start()}>
-        {busy === "start" ? (
-          <Spinner data-icon="inline-start" />
-        ) : (
-          <PowerIcon data-icon="inline-start" />
-        )}
-        {s.phase === "error" ? "Try again" : "Turn on"}
-      </Button>
-    );
-  }
+  const toggle = (next: boolean) => {
+    if (next) void start();
+    else onRequestStop(stop, viaThisLink);
+  };
 
   return (
-    <>
+    <section aria-label="localhost.run" className="flex flex-col gap-2">
       <PrefsGroup id="remote">
-        <ActionRow
-          prefix={<StatusDot tone={tone} />}
-          title={<span className="font-medium">{title}</span>}
-          subtitle={<span role="status">{body}</span>}
-          suffix={action}
-        />
-        {online && s.url && <LiveAddress url={s.url} />}
-      </PrefsGroup>
-
-      {/* Catatan ala AdwActionRow biasa: tanpa latar khusus, satu tombol datar. */}
-      <PrefsGroup>
-        <ActionRow
-          prefix={
-            <span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <InfoIcon className="size-[18px]" aria-hidden />
-            </span>
-          }
-          title="The link changes often"
-          subtitle="It changes every few hours and whenever the connection restarts. KCG Code link keeps the same address."
-          stack
-          suffix={
-            <Button type="button" variant="outline" size="sm" onClick={onUseRecommended}>
-              Use KCG Code link
-            </Button>
-          }
-        />
-      </PrefsGroup>
-
-      <Collapsible
-        open={showLog}
-        onOpenChange={setShowLog}
-        className="overflow-hidden rounded-xl border bg-card shadow-xs"
-      >
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:ring-inset data-[state=open]:bg-muted/50"
+        {/* AdwSwitchRow: judul + status singkat, switch di kanan. */}
+        <li>
+          <label
+            htmlFor="lhr-switch"
+            className={cn(
+              "flex min-h-14 items-center gap-3 px-4 py-2.5",
+              protectedApp && "cursor-pointer",
+            )}
           >
-            <span className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              <TerminalSquareIcon className="size-[18px]" aria-hidden />
-            </span>
-            <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <span className="text-[15px] leading-5">Connection log</span>
-              <span className="text-[13px] leading-snug text-muted-foreground">
-                Technical details that can help when troubleshooting
+            <RowIcon tone={tone}>
+              <GlobeIcon />
+            </RowIcon>
+            <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+              <span className="text-[15px] leading-5">Remote access</span>
+              <span role="status" className="text-[13px] leading-snug text-muted-foreground">
+                {subtitle}
               </span>
             </span>
-            <ChevronDownIcon
-              className={cn(
-                "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
-                showLog && "rotate-180",
-              )}
-              aria-hidden
+            {busy !== null && <Spinner className="size-4 text-muted-foreground" aria-hidden />}
+            <Switch
+              id="lhr-switch"
+              checked={running || busy === "start"}
+              disabled={!protectedApp || busy !== null}
+              onCheckedChange={toggle}
             />
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="border-t">
-          <ul>{showLog && <LogPanel endpoint="/api/tunnel/lhr/logs" />}</ul>
-        </CollapsibleContent>
-      </Collapsible>
-    </>
+          </label>
+        </li>
+
+        {!protectedApp && (
+          <ActionRow
+            prefix={
+              <RowIcon tone="muted">
+                <LockIcon />
+              </RowIcon>
+            }
+            title="Set up app lock"
+            subtitle="Add a PIN or password in Security"
+            onActivate={() => navigate(settingsPath("security"))}
+          />
+        )}
+
+        {online && s.url && <LiveAddress url={s.url} />}
+
+        {/* Log teknis dilipat di baris expander (AdwExpanderRow). */}
+        <Collapsible asChild open={showLog} onOpenChange={setShowLog}>
+          <li>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left text-[15px] leading-5 transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:ring-inset"
+              >
+                <RowIcon tone="muted">
+                  <TerminalSquareIcon />
+                </RowIcon>
+                <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span>Connection log</span>
+                  <span className="text-[13px] leading-snug text-muted-foreground">
+                    Technical details for troubleshooting
+                  </span>
+                </span>
+                <ChevronDownIcon
+                  className={cn(
+                    "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                    showLog && "rotate-180",
+                  )}
+                  aria-hidden
+                />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="border-t">
+              <ul>{showLog && <LogPanel endpoint="/api/tunnel/lhr/logs" />}</ul>
+            </CollapsibleContent>
+          </li>
+        </Collapsible>
+      </PrefsGroup>
+
+      {/* Footer grup: catatan singkat + aksi inline. */}
+      <p className="px-1 text-[12.5px] leading-snug text-muted-foreground">
+        Free addresses change every few hours and after reconnecting.{" "}
+        <button
+          type="button"
+          onClick={onUseRecommended}
+          className="rounded-sm font-medium text-foreground underline-offset-2 outline-none hover:underline focus-visible:underline focus-visible:ring-[3px] focus-visible:ring-ring/40"
+        >
+          Use KCG Code link
+        </button>{" "}
+        for one that stays the same.
+      </p>
+    </section>
   );
 }
 
@@ -249,24 +241,22 @@ function sameOrigin(url: string): boolean {
   }
 }
 
-function StatusDot({ tone }: { tone: "success" | "busy" | "warning" | "muted" }) {
+type RowTone = "success" | "busy" | "warning" | "muted";
+
+/** Ikon bulat di awal baris (sama dengan baris lain di Settings). */
+function RowIcon({ tone, children }: { tone: RowTone; children: ReactNode }) {
   return (
     <span
+      aria-hidden
       className={cn(
-        "flex size-9 shrink-0 items-center justify-center rounded-full",
+        "flex size-9 shrink-0 items-center justify-center rounded-full [&>svg]:size-[18px]",
         tone === "success" && "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
         tone === "busy" && "bg-sky-500/10 text-sky-700 dark:text-sky-400",
         tone === "warning" && "bg-amber-500/15 text-amber-800 dark:text-amber-300",
         tone === "muted" && "bg-muted text-muted-foreground",
       )}
     >
-      {tone === "busy" ? (
-        <Spinner className="size-5" />
-      ) : tone === "warning" ? (
-        <CircleAlertIcon className="size-5" aria-hidden />
-      ) : (
-        <GlobeIcon className="size-5" aria-hidden />
-      )}
+      {tone === "busy" ? <Spinner className="size-[18px]" /> : children}
     </span>
   );
 }

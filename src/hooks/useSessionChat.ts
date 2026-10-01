@@ -205,6 +205,13 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
           onBackRef.current();
           break;
         case "error":
+          // Prompt kedaluwarsa: kartunya sudah dihapus lewat `prompt_resolved`,
+          // jadi pesannya tampil di timeline (bukan di kartu — kartu
+          // berikutnya tidak boleh mewarisi error ini).
+          if (msg.code === "PROMPT_EXPIRED") {
+            setError(msg.message);
+            break;
+          }
           // Error terkait prompt ditampilkan di kartunya masing-masing —
           // banner global di atas chat tidak terlihat oleh user yang sedang
           // fokus ke kartu (tombol terasa "mati" tanpa feedback).

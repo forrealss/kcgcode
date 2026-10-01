@@ -26,12 +26,15 @@ import type {
   SessionStatus,
 } from "../../../types";
 import { type AttachmentManager, createAttachmentManager } from "../attachments";
-import type {
-  AgentOption,
-  ModelOption,
-  OpenCodeClient,
-  OpenCodeEvent,
-  OpenCodePermissionReply,
+import {
+  type AgentOption,
+  type ModelOption,
+  OC_REQUEST_GONE,
+  type OpenCodeClient,
+  type OpenCodeEvent,
+  type OpenCodeFileChange,
+  type OpenCodePermissionReply,
+  type OpenCodeTodo,
 } from "../opencode-client";
 import type { OpenCodeServerHandle, OpenCodeServerManager } from "../opencode-server";
 import {
@@ -49,6 +52,11 @@ interface FakeClient extends OpenCodeClient {
   calls: string[];
   sendMessageResult: { ok: boolean; error?: string };
   promptAsyncResult: { ok: boolean; error?: string };
+  /**
+   * Request id yang sudah "dilupakan" opencode — reply/reject untuk id ini
+   * membalas `OC_REQUEST_GONE` (404 asli dari server).
+   */
+  goneRequests: Set<string>;
   createSessionResult: { ok: boolean; error?: string; id?: string };
   /** Hasil getSession — false mensimulasikan oc session tidak dikenal server. */
   getSessionResult: { ok: boolean; error?: string };
@@ -58,6 +66,9 @@ interface FakeClient extends OpenCodeClient {
   deleteSessionResult: { ok: boolean; error?: string };
   /** Hasil findFiles — dipakai autocomplete @file. */
   findFilesResult: { ok: boolean; error?: string };
+  /** Task list & perubahan file untuk panel konteks Session. */
+  todos: OpenCodeTodo[];
+  fileChanges: OpenCodeFileChange[];
   /** Daftar file yang "tersedia" untuk findFiles. */
   availableFiles: string[];
   /** Referensi file yang dikirim ke tiap promptAsync (kosong = tanpa file). */
@@ -87,11 +98,14 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     promptSystems: [],
     sendMessageResult: { ok: true },
     promptAsyncResult: { ok: true },
+    goneRequests: new Set<string>(),
     createSessionResult: { ok: true, id: "ses_remote1" },
     getSessionResult: { ok: true },
     listModelsResult: { ok: true },
     deleteSessionResult: { ok: true },
     findFilesResult: { ok: true },
+    todos: [],
+    fileChanges: [],
     availableFiles: [
       "src/App.tsx",
       "src/server/app.ts",
@@ -161,6 +175,14 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
         data: [{ name: "shadcn", description: "UI", location: null, source: "project" }],
       };
     },
+    async listTodos(sessionId) {
+      calls.push(`listTodos:${sessionId}`);
+      return { ok: true, data: client.todos };
+    },
+    async fileStatus() {
+      calls.push("fileStatus");
+      return { ok: true, data: client.fileChanges };
+    },
     async findFiles(query) {
       calls.push(`findFiles:${query}`);
       if (!client.findFilesResult.ok) {
@@ -198,16 +220,19 @@ function makeFakeClient(overrides: Partial<FakeClient> = {}): FakeClient {
     },
     async replyPermission(requestId, reply: OpenCodePermissionReply) {
       calls.push(`replyPermission:${requestId}:${reply}`);
+      if (client.goneRequests.has(requestId)) return { ok: false, error: OC_REQUEST_GONE };
       return { ok: true, data: null };
     },
     async replyQuestion(requestId, answers) {
       // Render nested: SATU grup per pertanyaan dipisah "|", label dalam
       // grup dipisah "," — membedakan jawaban per pertanyaan.
       calls.push(`replyQuestion:${requestId}:${answers.map((a) => a.join(",")).join("|")}`);
+      if (client.goneRequests.has(requestId)) return { ok: false, error: OC_REQUEST_GONE };
       return { ok: true, data: null };
     },
     async rejectQuestion(requestId) {
       calls.push(`rejectQuestion:${requestId}`);
+      if (client.goneRequests.has(requestId)) return { ok: false, error: OC_REQUEST_GONE };
       return { ok: true, data: null };
     },
     async abortSession(sessionId) {
@@ -2689,6 +2714,41 @@ test("resolvePrompt permission beda judul TIDAK ikut ter-fan-out", async () => {
     expect(client.calls).not.toContain("replyPermission:per_edit:once");
     const other = h.store.getPrompt("per_edit");
     expect(other.ok && other.data.status).toBe("pending");
+  } finally {
+    h.close();
+  }
+});
+
+test("resolvePrompt: request dilupakan opencode (404) -> prompt ditutup lokal, PROMPT_EXPIRED", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+
+    // Jawab question yang sudah tidak ditunggu agent.
+    const pid = await seedPrompt(h, sid, "question", "que_gone");
+    client.goneRequests.add("que_gone");
+    const r = await h.sm.resolvePrompt(sid, pid, { option: "A" });
+    expect(r).toEqual({ ok: false, error: "PROMPT_EXPIRED" });
+    // Baris tidak lagi pending -> kartu hilang & session tidak terkunci.
+    const row = h.store.getPrompt(pid);
+    expect(row.ok && row.data.status).toBe("resolved");
+    expect(h.store.listPendingPrompts(sid)).toHaveLength(0);
+
+    // Skip (reject) pada request yang hilang juga menutup prompt.
+    const pid2 = await seedPrompt(h, sid, "question", "que_gone2");
+    client.goneRequests.add("que_gone2");
+    expect((await h.sm.resolvePrompt(sid, pid2, "cancel")).error).toBe("PROMPT_EXPIRED");
+    expect(h.store.listPendingPrompts(sid)).toHaveLength(0);
+
+    // Kegagalan lain (bukan 404) tetap pending agar bisa dicoba lagi.
+    const pid3 = await seedPrompt(h, sid, "question", "que_ok");
+    client.replyQuestion = async () => ({ ok: false, error: "OC_QUESTION_REPLY_FAILED(500)" });
+    expect((await h.sm.resolvePrompt(sid, pid3, { option: "A" })).error).toBe(
+      "OC_QUESTION_REPLY_FAILED(500)",
+    );
+    const row3 = h.store.getPrompt(pid3);
+    expect(row3.ok && row3.data.status).toBe("pending");
   } finally {
     h.close();
   }

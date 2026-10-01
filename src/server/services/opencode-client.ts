@@ -16,7 +16,7 @@
  * `{ type, id, ...properties }` agar konsumen mudah membaca `requestID`,
  * `sessionID`, `permission`, `questions`, dst.
  */
-import type { MessagePart, SessionModel } from "../../types";
+import type { McpServerState, MessagePart, SessionModel } from "../../types";
 import type { Result, SimpleResult } from "../result";
 import { subscribeOpenCodeEvents } from "./opencode-sse";
 
@@ -43,22 +43,15 @@ export interface AgentOption {
   description: string | null;
 }
 
-/** Status koneksi MCP server — mengikuti skema `MCPStatus` opencode. */
-export type McpStatus =
-  | "connected"
-  | "disabled"
-  | "failed"
-  | "needs_auth"
-  | "needs_client_registration"
-  | "unknown";
+/**
+ * Satu MCP server Project — hasil `GET /mcp` server headless. Bentuknya
+ * didefinisikan SEKALI di `types/context.ts` (dipakai juga UI) agar server &
+ * klien tidak pernah berbeda.
+ */
+export type McpServerInfo = McpServerState;
 
-/** Satu MCP server Project — hasil `GET /mcp` server headless. */
-export interface McpServerInfo {
-  name: string;
-  status: McpStatus;
-  /** Pesan error bila `status === "failed"`. */
-  error: string | null;
-}
+/** Status koneksi MCP server — mengikuti skema `MCPStatus` opencode. */
+export type McpStatus = McpServerState["status"];
 
 /** Asal sebuah skill: bawaan opencode, folder Project, atau global user. */
 export type SkillSource = "builtin" | "project" | "global";
@@ -208,6 +201,26 @@ export interface OpenCodeFileRef {
   url: string;
 }
 
+/**
+ * Satu item task list (`todowrite` opencode) — `GET /session/{id}/todo`.
+ * `status`/`priority` dibiarkan string: skema opencode mendeskripsikannya
+ * sebagai string bebas (pending/in_progress/completed/cancelled), jadi nilai
+ * baru dari versi opencode berikutnya tidak membuat parsing gagal.
+ */
+export interface OpenCodeTodo {
+  content: string;
+  status: string;
+  priority: string;
+}
+
+/** Satu file yang berubah di worktree — `GET /file/status`. */
+export interface OpenCodeFileChange {
+  path: string;
+  added: number;
+  removed: number;
+  status: "added" | "deleted" | "modified";
+}
+
 /** Satu event SSE hasil normalisasi (properties digabung ke level atas). */
 export interface OpenCodeEvent {
   type: string;
@@ -278,6 +291,10 @@ export interface OpenCodeClient {
   ): Promise<Result<null>>;
   /** Cari file project untuk autocomplete `@file` (path relatif). */
   findFiles(query: string): Promise<Result<string[]>>;
+  /** Task list Session (`todowrite`) — kosong bila agent belum memakainya. */
+  listTodos(sessionId: string): Promise<Result<OpenCodeTodo[]>>;
+  /** File yang berubah di worktree project (git status versi opencode). */
+  fileStatus(): Promise<Result<OpenCodeFileChange[]>>;
   replyPermission(requestId: string, reply: OpenCodePermissionReply): Promise<Result<unknown>>;
   /**
    * `answers` = SATU array label per pertanyaan (urut sesuai `questions`);
@@ -294,6 +311,15 @@ export interface OpenCodeClient {
 function errResult(msg: string): { ok: false; error: string } {
   return { ok: false, error: msg };
 }
+
+/**
+ * Error reply permission/question saat opencode membalas 404
+ * (`QuestionNotFoundError` / `PermissionNotFoundError`): request sudah
+ * tidak ditunggu lagi — dijawab dari klien lain, dibatalkan karena turn
+ * di-abort, atau server opencode di-restart. Pemanggil memperlakukannya
+ * sebagai prompt kedaluwarsa (bukan kegagalan yang bisa dicoba ulang).
+ */
+export const OC_REQUEST_GONE = "OC_REQUEST_GONE";
 
 async function requestJson(
   baseUrl: string,
@@ -460,6 +486,70 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     }
   }
 
+  async function listTodos(sessionId: string): Promise<Result<OpenCodeTodo[]>> {
+    try {
+      const { status, json } = await requestJson(
+        baseUrl,
+        "GET",
+        `/session/${sessionId}/todo`,
+        undefined,
+        AbortSignal.timeout(5000),
+      );
+      if (status !== 200) return errResult(`OC_TODO_FAILED(${status})`);
+      const out: OpenCodeTodo[] = [];
+      for (const item of Array.isArray(json) ? json : []) {
+        if (typeof item !== "object" || item === null) continue;
+        const t = item as { content?: unknown; status?: unknown; priority?: unknown };
+        if (typeof t.content !== "string" || t.content === "") continue;
+        out.push({
+          content: t.content,
+          status: typeof t.status === "string" ? t.status : "pending",
+          priority: typeof t.priority === "string" ? t.priority : "medium",
+        });
+      }
+      return { ok: true, data: out };
+    } catch (e) {
+      return errResult(`OC_TODO_FAILED: ${(e as Error).message}`);
+    }
+  }
+
+  async function fileStatus(): Promise<Result<OpenCodeFileChange[]>> {
+    try {
+      const { status, json } = await requestJson(
+        baseUrl,
+        "GET",
+        "/file/status",
+        undefined,
+        AbortSignal.timeout(5000),
+      );
+      if (status !== 200) return errResult(`OC_FILE_STATUS_FAILED(${status})`);
+      const out: OpenCodeFileChange[] = [];
+      for (const item of Array.isArray(json) ? json : []) {
+        if (typeof item !== "object" || item === null) continue;
+        const f = item as {
+          path?: unknown;
+          added?: unknown;
+          removed?: unknown;
+          status?: unknown;
+        };
+        if (typeof f.path !== "string" || f.path === "") continue;
+        const kind =
+          f.status === "added" || f.status === "deleted" || f.status === "modified"
+            ? f.status
+            : "modified";
+        out.push({
+          path: f.path,
+          added: typeof f.added === "number" ? f.added : 0,
+          removed: typeof f.removed === "number" ? f.removed : 0,
+          status: kind,
+        });
+      }
+      return { ok: true, data: out };
+    } catch (e) {
+      return errResult(`OC_FILE_STATUS_FAILED: ${(e as Error).message}`);
+    }
+  }
+
   async function listModels(): Promise<Result<ModelOption[]>> {
     try {
       const { status, json } = await requestJson(baseUrl, "GET", "/config/providers");
@@ -554,9 +644,8 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
       const { status } = await requestJson(baseUrl, "POST", `/permission/${requestId}/reply`, {
         reply,
       });
-      return status === 200
-        ? { ok: true, data: null }
-        : errResult(`OC_PERMISSION_REPLY_FAILED(${status})`);
+      if (status === 200) return { ok: true, data: null };
+      return errResult(status === 404 ? OC_REQUEST_GONE : `OC_PERMISSION_REPLY_FAILED(${status})`);
     } catch (e) {
       return errResult(`OC_PERMISSION_REPLY_FAILED: ${(e as Error).message}`);
     }
@@ -571,9 +660,8 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
       const { status } = await requestJson(baseUrl, "POST", `/question/${requestId}/reply`, {
         answers,
       });
-      return status === 200
-        ? { ok: true, data: null }
-        : errResult(`OC_QUESTION_REPLY_FAILED(${status})`);
+      if (status === 200) return { ok: true, data: null };
+      return errResult(status === 404 ? OC_REQUEST_GONE : `OC_QUESTION_REPLY_FAILED(${status})`);
     } catch (e) {
       return errResult(`OC_QUESTION_REPLY_FAILED: ${(e as Error).message}`);
     }
@@ -582,9 +670,8 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
   async function rejectQuestion(requestId: string): Promise<Result<unknown>> {
     try {
       const { status } = await requestJson(baseUrl, "POST", `/question/${requestId}/reject`, {});
-      return status === 200
-        ? { ok: true, data: null }
-        : errResult(`OC_QUESTION_REJECT_FAILED(${status})`);
+      if (status === 200) return { ok: true, data: null };
+      return errResult(status === 404 ? OC_REQUEST_GONE : `OC_QUESTION_REJECT_FAILED(${status})`);
     } catch (e) {
       return errResult(`OC_QUESTION_REJECT_FAILED: ${(e as Error).message}`);
     }
@@ -615,6 +702,8 @@ export function createOpenCodeClient(baseUrl: string): OpenCodeClient {
     listSkills,
     disposeInstance,
     findFiles,
+    listTodos,
+    fileStatus,
     replyPermission,
     replyQuestion,
     rejectQuestion,

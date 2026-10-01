@@ -5,7 +5,8 @@
  * request berulang opencode tidak membanjiri UI.
  *
  * Dua mode tata letak:
- * - Mode gantung (default): panel mengambang di atas composer, `max-h-72`,
+ * - Mode gantung (default): panel mengambang di atas composer (`max-h-72`
+ *   desktop, 60% layar di HP),
  *   seluruh panel ikut scroll bila isinya panjang. Dipakai permission kartu
  *   dan tampilan tanpa timeline (empty-state).
  * - Mode docked (`docked`): panel menempel ke dasar MENGGANTIKAN composer
@@ -22,6 +23,8 @@
 import { AnimatePresence } from "motion/react";
 import * as m from "motion/react-m";
 import { PromptCard } from "@/components/sessions/PromptCard";
+import { CONVERSATION_MAX_W } from "@/lib/layout";
+import { cn } from "@/lib/utils";
 import type { InteractivePrompt, PromptResponse } from "@/types";
 
 export interface PromptPanelProps {
@@ -59,9 +62,16 @@ export function PromptPanel({
         empty
           ? "pointer-events-none relative z-30"
           : docked
-            ? // Docked: isi sisa kolom di bawah timeline — scroll ditangani kartu.
-              "pointer-events-auto relative z-30 flex min-h-0 flex-1 flex-col gap-2 px-3 pb-2 pt-2 sm:px-4"
-            : "pointer-events-auto relative z-30 mb-1.5 flex max-h-72 flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-2 sm:px-4"
+            ? // Docked: tinggi ALAMI kartu (bukan flex-1 — kartu pendek tidak
+              // lagi memakan separuh layar), dibatasi 75% layar; bila isinya
+              // lebih panjang, panel menyusut dan hanya daftar jawaban yang
+              // scroll. Composer tidak ada, jadi panel yang menjaga safe-area
+              // bawah (home indicator iOS).
+              "pointer-events-auto relative z-30 flex max-h-[75dvh] min-h-0 shrink flex-col gap-2 px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:max-h-[min(75dvh,36rem)] sm:px-4 sm:pb-3"
+            : // HP: kartu izin memakai tombol setinggi target sentuh yang
+              // bertumpuk, jadi butuh ruang lebih (60% layar) agar semua aksi
+              // terlihat tanpa scroll. Desktop tetap ringkas (max-h-72).
+              "pointer-events-auto relative z-30 mb-1.5 flex max-h-[60dvh] flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-2 sm:max-h-72 sm:px-4"
       }
     >
       <AnimatePresence initial mode="popLayout">
@@ -83,8 +93,8 @@ export function PromptPanel({
             }}
             className={
               docked
-                ? "flex min-h-0 flex-1 flex-col"
-                : "pointer-events-auto mx-auto w-full max-w-3xl"
+                ? cn("mx-auto flex min-h-0 w-full flex-col", CONVERSATION_MAX_W)
+                : cn("pointer-events-auto mx-auto w-full", CONVERSATION_MAX_W)
             }
           >
             <PromptCard

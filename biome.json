@@ -16,6 +16,7 @@
       "!.kiro",
       "!.claude",
       "!.agents",
+      "!.firecrawl",
       "!reverse-proxy"
     ]
   },

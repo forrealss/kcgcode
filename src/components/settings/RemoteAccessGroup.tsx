@@ -51,8 +51,7 @@ import type { TunnelPhase, TunnelStatus } from "@/server/services/tunnel";
 
 const BUSY_PHASES: TunnelPhase[] = ["starting", "connecting", "reconnecting"];
 
-const DESCRIPTION =
-  "Open KCG Code from your phone or any other computer, even when you're away from home.";
+const DESCRIPTION = "Open KCG Code from your phone or another computer, even when you're away.";
 
 function errorText(e: unknown, fallback: string): string {
   return e instanceof ApiError ? e.message : fallback;
@@ -224,13 +223,13 @@ const PROVIDERS: ProviderInfo[] = [
   {
     id: "kcg",
     title: "KCG Code link",
-    subtitle: "Same address every time. Sign in with Google once.",
+    subtitle: "Same address every time · sign in with Google once",
     recommended: true,
   },
   {
     id: "lhr",
     title: "localhost.run",
-    subtitle: "No account needed. Address changes every few hours.",
+    subtitle: "No account needed · address changes every few hours",
   },
 ];
 

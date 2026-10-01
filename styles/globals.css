@@ -288,3 +288,24 @@
     transform: translateY(10px);
   }
 }
+
+/* ---- Scrollbar gutter (dipakai timeline & footer composer) ----
+   Didefinisikan manual: tailwindcss yang ter-bundle di `bun-plugin-tailwind`
+   (4.1.14) belum mengenal utility `scrollbar-gutter-*`, sehingga kelas itu
+   diam-diam tidak menghasilkan CSS di build produksi. Tanpa gutter yang
+   SAMA di keduanya, titik tengah composer bergeser dari kolom chat selebar
+   scrollbar. */
+.scrollbar-gutter-stable {
+  scrollbar-gutter: stable;
+}
+
+/* ---- Syntax highlighting (Shiki dual theme, lihat src/lib/highlight.ts) ----
+   Tiap token membawa `--shiki-light` & `--shiki-dark`; warna dipilih dari
+   kelas `.dark` aplikasi sehingga ganti tema tidak perlu highlight ulang.
+   Latar blok tetap milik sistem desain (bg-muted), bukan latar tema Shiki. */
+.shiki-code span[style] {
+  color: var(--shiki-light);
+}
+.dark .shiki-code span[style] {
+  color: var(--shiki-dark);
+}

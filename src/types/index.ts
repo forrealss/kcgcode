@@ -5,6 +5,7 @@
  * Khusus server (bukan domain FE): `Result<T>` / `SimpleResult` hidup di
  * `src/server/result.ts` — jangan diimpor dari sini.
  */
+export * from "./context";
 export * from "./message";
 export * from "./project";
 export * from "./prompt";

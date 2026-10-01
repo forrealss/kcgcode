@@ -36,12 +36,14 @@ import type {
   MessagePart,
   PromptResponse,
   Session,
+  SessionContext,
   SessionMessage,
   SessionModel,
   SessionStatus,
 } from "../../types";
 import type { Result, SimpleResult } from "../result";
 import type { AttachmentManager } from "./attachments";
+import { EMPTY_GIT_INFO, readGitInfo } from "./git-info";
 import type {
   AgentOption,
   McpServerInfo,
@@ -51,6 +53,7 @@ import type {
   OpenCodeFileRef,
   SkillInfo,
 } from "./opencode-client";
+import { OC_REQUEST_GONE } from "./opencode-client";
 import type { OpenCodeServerManager } from "./opencode-server";
 import {
   deriveSessionTitle,
@@ -218,6 +221,11 @@ export interface SessionManager {
   hasPendingSkillRefresh(projectId: string): boolean;
   /** Cari file project untuk autocomplete `@file` di composer. */
   findFiles(projectId: string, query: string): Promise<Result<string[]>>;
+  /**
+   * Konteks kerja Session untuk panel kanan: perubahan file di worktree,
+   * cabang git, dan task list (`todowrite`) agent.
+   */
+  sessionContext(sessionId: string): Promise<Result<SessionContext>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
   setSessionModel(sessionId: string, model: SessionModel | null): SimpleResult;
   /**
@@ -926,6 +934,39 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * milik server headless opencode (sesuai perilaku `@` di opencode TUI).
    * `query` kosong juga valid (mengembalikan daftar awal).
    */
+  /**
+   * Konteks kerja Session (panel kanan). Ketiga sumbernya independen dan
+   * SELALU dibaca bersamaan; kegagalan salah satu tidak menggagalkan yang
+   * lain (mis. repo bukan git -> `git` kosong, task list tetap tampil).
+   * Session yang tidak berjalan -> hanya info git (server opencode tidak
+   * dinyalakan hanya untuk mengisi panel).
+   */
+  async function sessionContext(sessionId: string): Promise<Result<SessionContext>> {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    const cwd = cur.data.cwd;
+    const handle = servers.getServer(cur.data.projectId);
+
+    const [git, todos, changes, mcp] = await Promise.all([
+      readGitInfo(cwd).catch(() => EMPTY_GIT_INFO),
+      handle ? handle.client.listTodos(sessionId) : Promise.resolve(null),
+      handle ? handle.client.fileStatus() : Promise.resolve(null),
+      handle ? handle.client.listMcp() : Promise.resolve(null),
+    ]);
+
+    return {
+      ok: true,
+      data: {
+        git,
+        todos: todos?.ok ? todos.data : [],
+        changes: changes?.ok ? changes.data : [],
+        mcp: mcp?.ok ? mcp.data : [],
+        /** Panel perlu tahu data tool belum tersedia vs memang kosong. */
+        live: handle !== undefined && handle !== null,
+      },
+    };
+  }
+
   async function findFiles(projectId: string, query: string): Promise<Result<string[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
@@ -1213,7 +1254,23 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         return { ok: false, error: "INVALID_PROMPT_RESPONSE" };
       }
     }
-    if (!res.ok) return { ok: false, error: res.error };
+    if (!res.ok) {
+      if (res.error === OC_REQUEST_GONE) {
+        // opencode tidak lagi menunggu request ini (404): sudah dijawab dari
+        // klien lain, dibatalkan karena turn di-abort, atau server opencode
+        // di-restart. Tanpa penutupan di sini, baris DB tetap `pending`:
+        // kartu tidak bisa dijawab MAUPUN di-Skip (keduanya kena 404) dan
+        // composer tetap tersembunyi — session terkunci. Tutup prompt (dan
+        // kembarannya) secara lokal supaya UI pulih.
+        updatePromptResolved(promptId);
+        for (const twin of targets) {
+          updatePromptResolved(twin.id);
+          onPromptResolved?.(sessionId, twin.id);
+        }
+        return { ok: false, error: "PROMPT_EXPIRED" };
+      }
+      return { ok: false, error: res.error };
+    }
     updatePromptResolved(promptId);
     // Jawaban question cukup lewat reply API — tidak di-echo ke riwayat chat
     // agar transcript bersih (agent tetap menerima jawabannya).
@@ -1308,6 +1365,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     setSessionModel,
     setSessionAgent,
     findFiles,
+    sessionContext,
     sendFreeTextInput,
     resolvePrompt,
     reconcileOnStartup,

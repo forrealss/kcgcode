@@ -47,6 +47,7 @@ import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiErrorMessage, apiUploadFile } from "@/lib/api";
 import { isPreviewableImage, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { composerPlaceholder, extractMentionedFiles, splitComposerMentions } from "@/lib/composer";
+import { CONVERSATION_MAX_W } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import type { ClientMessage } from "@/ws-protocol";
@@ -331,15 +332,19 @@ export function SessionComposer({
   return (
     /* Input bebas. `pb-[env(safe-area-inset-bottom)]` menjaga composer tidak
         tertutup home indicator saat dipasang sebagai PWA di HP. */
-    <footer className="shrink-0 px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
+    // `overflow-y-hidden` + `scrollbar-gutter-stable`: footer mencadangkan
+    // lebar scrollbar yang SAMA dengan area scroll timeline di atasnya,
+    // sehingga keduanya punya titik tengah horizontal yang sama. Tanpa ini
+    // composer tampak bergeser ke kanan dari kolom percakapan.
+    <footer className="shrink-0 scrollbar-gutter-stable overflow-y-hidden px-3 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-4">
       {/* Pemilih model kini jadi judul header — composer fokus ke input saja
           supaya area mengetik di HP tidak terpotong baris tambahan. */}
-      {/* Composer sejajar dengan kolom percakapan, sedikit lebih sempit dari
-          kolom timeline agar terasa fokus (ala Gemini). */}
+      {/* Lebar = lebar TEKS percakapan (`CONVERSATION_MAX_W`), bukan kotak
+          timeline — tepi kiri-kanan input sejajar dengan isi chat. */}
       <form
         ref={formRef}
         onSubmit={submitText}
-        className="relative mx-auto flex w-full max-w-2xl flex-col"
+        className={cn("relative mx-auto flex w-full flex-col", CONVERSATION_MAX_W)}
       >
         {/* Pengukur lebar teks satu baris — font identik dengan textarea,
             tak terlihat & tanpa wrap (whitespace-pre) sehingga scrollWidth =

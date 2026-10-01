@@ -30,6 +30,20 @@ test("blok kode dapat scroll horizontal sendiri", () => {
   expect(out).toContain("overflow-x-auto");
 });
 
+test("blok kode: label bahasa, tombol salin, isi tampil langsung tanpa newline ekstra", () => {
+  const out = html("```ts\nconst x = 1;\n```");
+  // Render awal (sebelum highlight async) = teks polos, jadi kode langsung terbaca.
+  expect(out).toContain("const x = 1;</code>");
+  expect(out).toContain(">ts</span>");
+  expect(out).toContain('aria-label="Copy code"');
+});
+
+test("kode di dalam blok tetap di-escape (bukan HTML)", () => {
+  const out = html('```html\n<script>alert("x")</script>\n```');
+  expect(out).not.toContain("<script>");
+  expect(out).toContain("&lt;script&gt;");
+});
+
 test("HTML mentah TIDAK dirender sebagai DOM (anti-XSS)", () => {
   const out = html('Halo <img src=x onerror="alert(1)"> <script>alert(2)</script>');
   // Markup di-escape jadi teks: tidak ada tag sungguhan yang terbentuk.

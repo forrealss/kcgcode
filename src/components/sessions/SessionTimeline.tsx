@@ -6,7 +6,7 @@
  * pesan -> grup turn & status maskot dihitung di sini dari `messages` murni
  * (`lib/turns.ts`).
  */
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -17,10 +17,13 @@ import {
   useMessageScroller,
 } from "@/components/ui/message-scroller";
 import type { CollapsibleState } from "@/lib/collapsible";
-import { groupTurns, lastAssistantGroup, turnStatus } from "@/lib/turns";
+import { TIMELINE_MAX_W } from "@/lib/layout";
+import { groupTurns, lastAssistantGroup, textOf, turnStatus } from "@/lib/turns";
+import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionStatus } from "@/types";
 import { AssistantTurn } from "./AssistantTurn";
 import { Mascot } from "./Mascot";
+import { MessageRail, type UserMessageMark } from "./MessageRail";
 import { UserMessage } from "./UserMessage";
 
 export interface SessionTimelineProps {
@@ -68,6 +71,66 @@ export function SessionTimeline({
   const lastTurn = lastAssistantGroup(groups);
 
   /**
+   * Penanda rail: satu per pesan user, dengan cuplikan teks untuk tooltip.
+   * Pesan tanpa teks (mis. lampiran saja) tetap dapat penanda.
+   */
+  const marks = useMemo<UserMessageMark[]>(
+    () =>
+      messages
+        .filter((m) => m.role === "user")
+        .map((m) => {
+          const text = textOf(m.parts).trim().replace(/\s+/g, " ");
+          return {
+            id: m.id,
+            preview: text === "" ? "Attachment" : text.slice(0, 120),
+          };
+        }),
+    [messages],
+  );
+
+  /** Elemen tiap pesan user (target observer & tujuan lompat). */
+  const markEls = useRef(new Map<string, HTMLElement>());
+  const [activeMark, setActiveMark] = useState<string | null>(null);
+
+  // Penanda aktif = pesan user paling bawah yang bagian atasnya sudah lewat
+  // (atau dekat) tepi atas viewport — itulah bagian percakapan yang sedang
+  // dibaca. Dihitung dari rect, tidak menyimpan state scroll sendiri.
+  const syncActive = useCallback(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null) return;
+    const top = viewport.getBoundingClientRect().top;
+    let current: string | null = null;
+    for (const mark of marks) {
+      const el = markEls.current.get(mark.id);
+      if (el && el.getBoundingClientRect().top - top <= 24) current = mark.id;
+    }
+    setActiveMark(current ?? marks[0]?.id ?? null);
+  }, [marks]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (viewport === null || marks.length < 2) return;
+    syncActive();
+    // `passive`: handler hanya membaca rect, tidak pernah preventDefault.
+    viewport.addEventListener("scroll", syncActive, { passive: true });
+    return () => viewport.removeEventListener("scroll", syncActive);
+  }, [marks.length, syncActive]);
+
+  const registerMarkEl = useCallback((id: string, el: HTMLElement | null) => {
+    if (el) markEls.current.set(id, el);
+    else markEls.current.delete(id);
+  }, []);
+
+  const jumpTo = useCallback((id: string) => {
+    const el = markEls.current.get(id);
+    const viewport = viewportRef.current;
+    if (!el || !viewport) return;
+    // Lompat dengan sedikit ruang di atas agar pesan tidak menempel ke tepi.
+    const offset = el.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
+    viewport.scrollTo({ top: viewport.scrollTop + offset - 16, behavior: "smooth" });
+  }, []);
+
+  /**
    * Maskot GLOBAL (satu instance, bukan per-turn): status dihitung dari grup
    * assistant yang masih LIVE (sedang streaming) dan ditampilkan tetap di atas
    * composer — tidak ikut scroll bersama riwayat percakapan.
@@ -101,10 +164,12 @@ export function SessionTimeline({
       />
       <MessageScroller className="min-h-0 flex-1">
         <MessageScrollerViewport ref={viewportRef}>
-          {/* `max-w-3xl mx-auto`: di layar lebar baris teks yang membentang
+          {/* `TIMELINE_MAX_W mx-auto`: di layar lebar baris teks yang membentang
               penuh sulit dibaca; kolom percakapan dibatasi dan dipusatkan
               seperti aplikasi chat lain, sementara scrollbar tetap di tepi. */}
-          <MessageScrollerContent className="mx-auto w-full max-w-3xl gap-6 px-3 py-4 sm:gap-8 sm:px-4">
+          <MessageScrollerContent
+            className={cn("mx-auto w-full gap-6 px-3 py-4 sm:gap-8 sm:px-4", TIMELINE_MAX_W)}
+          >
             {error && (
               <MessageScrollerItem messageId="error">
                 <p className="text-sm text-destructive">{error}</p>
@@ -112,7 +177,14 @@ export function SessionTimeline({
             )}
             {groups.map((group) =>
               group.kind === "user" ? (
-                <UserMessage key={group.message.id} message={group.message} />
+                <div
+                  key={group.message.id}
+                  ref={(el) => registerMarkEl(group.message.id, el)}
+                  // `scroll-mt-4`: cadangan bila lompat dilakukan browser.
+                  className="scroll-mt-4"
+                >
+                  <UserMessage message={group.message} />
+                </div>
               ) : (
                 <AssistantTurn
                   key={group.id}
@@ -139,6 +211,8 @@ export function SessionTimeline({
             )}
           </MessageScrollerContent>
         </MessageScrollerViewport>
+        {/* Rail penanda pesan user (tepi kiri area percakapan). */}
+        <MessageRail marks={marks} activeId={activeMark} onJump={jumpTo} />
         <MessageScrollerButton />
       </MessageScroller>
     </MessageScrollerProvider>

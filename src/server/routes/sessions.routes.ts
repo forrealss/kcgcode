@@ -136,6 +136,19 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
       },
     },
 
+    // ---- Konteks kerja Session (panel kanan: Environment / Task list) ----
+    "/api/sessions/:id/context": {
+      GET: async (req: BunRequest<"/api/sessions/:id/context">) => {
+        try {
+          const res = await sessionManager.sessionContext(req.params.id);
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ context: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+    },
+
     // ---- Lampiran gambar upload dari perangkat ----
     "/api/sessions/:id/uploads": {
       /**

@@ -12,6 +12,10 @@ const result = await Bun.build({
   outdir,
   plugins: [tailwind],
   minify: true,
+  // Pecah dynamic import jadi chunk terpisah: grammar Shiki (syntax
+  // highlighting) hanya diunduh saat bahasa itu pertama kali tampil,
+  // bukan ikut bundle utama.
+  splitting: true,
   target: "browser",
   sourcemap: "linked",
   define: {

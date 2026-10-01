@@ -84,6 +84,8 @@ export const ErrorCodes = {
   PROMPT_ALREADY_RESOLVED: "PROMPT_ALREADY_RESOLVED",
   /** Reply prompt gagal diproses server opencode (mis. reply 404/400). */
   PROMPT_FAILED: "PROMPT_FAILED",
+  /** Agent tidak lagi menunggu jawaban; prompt ditutup & kartu dihapus. */
+  PROMPT_EXPIRED: "PROMPT_EXPIRED",
   INVALID_RESPONSE: "INVALID_RESPONSE",
   SESSION_NOT_RUNNING: "SESSION_NOT_RUNNING",
   INVALID_TEXT: "INVALID_TEXT",

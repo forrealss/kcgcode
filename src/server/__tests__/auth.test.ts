@@ -97,6 +97,7 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/sessions",
       "/api/sessions/x",
       "/api/sessions/x/files",
+      "/api/sessions/x/context",
       "/api/sessions/x/uploads",
       "/api/sessions/x/stop",
       "/api/uploads/s/i",

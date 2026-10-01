@@ -16,14 +16,17 @@
  *   seluruh bubble melebar (dan merusak layout HP); wrapper `overflow-x-auto`
  *   membuat hanya tabelnya yang bergeser. Blok kode diperlakukan sama.
  * - **Link buka tab baru** dengan `rel="noopener noreferrer nofollow"`.
+ * - **Blok kode di-highlight** lewat `CodeBlock` (Shiki, grammar dimuat
+ *   lazy per bahasa). Kode inline tetap teks monospace biasa.
  * - Parser remark bersifat recoverable, jadi Markdown setengah jadi saat
  *   streaming tetap dirender tanpa error (fence yang belum ditutup tampil
  *   sebagai kode berjalan, lalu rapi begitu token penutup tiba).
  */
 
-import type { ComponentProps, JSX } from "react";
+import { Children, type ComponentProps, isValidElement, type JSX, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CodeBlock } from "@/components/sessions/CodeBlock";
 import { cn } from "@/lib/utils";
 
 /**
@@ -89,6 +92,32 @@ function MarkdownCode({ node: _node, className, ...props }: MarkdownProps<"code"
   );
 }
 
+/** Gabungkan anak `code` jadi string (react-markdown memberi teks mentah). */
+function textOf(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) return textOf(node.props.children);
+  return "";
+}
+
+/**
+ * Blok kode: `pre > code.language-*`. Isi & bahasa diambil dari `code`
+ * anak lalu dirender `CodeBlock` (highlight + tombol salin). Fence tanpa
+ * bahasa tetap lewat `CodeBlock` (teks polos, tetap ada tombol salin).
+ */
+function MarkdownPre({ node: _node, children }: MarkdownProps<"pre">) {
+  const child = Children.toArray(children)[0];
+  if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+    const cls = child.props.className ?? "";
+    const lang = /(?:^|\s)language-(\S+)/.exec(cls)?.[1] ?? null;
+    // Fence selalu diakhiri newline oleh parser — buang agar tidak ada
+    // baris kosong ekstra di bawah blok.
+    const code = textOf(child.props.children).replace(/\n$/, "");
+    return <CodeBlock code={code} language={lang} />;
+  }
+  return <pre className="my-2 overflow-x-auto rounded-lg border bg-muted/60 p-3">{children}</pre>;
+}
+
 /**
  * Tabel + wrapper scroll horizontal. Wrapper `div` diperlukan karena elemen
  * `table` sendiri tidak dapat menjadi kontainer scroll.
@@ -109,11 +138,8 @@ const COMPONENTS = {
   a: MarkdownLink,
   code: MarkdownCode,
   table: MarkdownTable,
-  // Blok kode: scroll horizontal sendiri agar baris panjang tidak melebarkan bubble.
-  pre: styled(
-    "pre",
-    "my-2 max-w-full overflow-x-auto rounded-lg border bg-muted/60 p-3 text-base leading-relaxed first:mt-0 last:mb-0",
-  ),
+  // Blok kode: highlight + scroll horizontal sendiri (lihat `CodeBlock`).
+  pre: MarkdownPre,
   p: styled("p", "my-2 first:mt-0 last:mb-0"),
   h1: styled("h1", "mt-4 mb-2 text-lg font-semibold first:mt-0"),
   h2: styled("h2", "mt-4 mb-2 text-lg font-semibold first:mt-0"),

@@ -14,10 +14,15 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openSessionStore, type SessionStore } from "../../db";
-import type { Project, Session } from "../../types";
+import type { Project, Session, SessionContext } from "../../types";
 import type { ServerMessage } from "../../ws-protocol";
 import { createKcgServer, type KcgServer } from "../app";
-import type { OpenCodeClient, OpenCodeEvent } from "../services/opencode-client";
+import type {
+  OpenCodeClient,
+  OpenCodeEvent,
+  OpenCodeFileChange,
+  OpenCodeTodo,
+} from "../services/opencode-client";
 import type { OpenCodeServerManager } from "../services/opencode-server";
 import type { SkillsRegistry } from "../services/skills-registry";
 
@@ -35,6 +40,9 @@ interface FakeClient extends OpenCodeClient {
   promptFilesCalls: { filename: string; mime: string; url: string }[][];
   /** Apakah `getSession` melaporkan session remote masih ada (default: ya). */
   getSessionOk: boolean;
+  /** Task list & perubahan file untuk panel konteks Session. */
+  todos: OpenCodeTodo[];
+  fileChanges: OpenCodeFileChange[];
   /**
    * Prompt berikutnya gagal diproses opencode: alih-alih sukses, server
    * memancarkan `session.error` (meniru kegagalan diam-diam di sisi model).
@@ -52,6 +60,8 @@ function makeFakeClient(projectId: string): FakeClient {
     promptFilesCalls: [],
     getSessionOk: true,
     failNextPrompt: false,
+    todos: [],
+    fileChanges: [],
     async createSession() {
       return { ok: true, data: { id: `ses_${projectId}`, directory: "/proj" } };
     },
@@ -64,6 +74,12 @@ function makeFakeClient(projectId: string): FakeClient {
     },
     async findFiles(query) {
       return { ok: true, data: query ? ["src/App.tsx"] : [] };
+    },
+    async listTodos() {
+      return { ok: true, data: client.todos };
+    },
+    async fileStatus() {
+      return { ok: true, data: client.fileChanges };
     },
     async listModels() {
       return {
@@ -806,6 +822,52 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
 
     // Session tak dikenal -> 404.
     const missing = await fetch(`${baseUrl()}/api/sessions/tidak-ada/files?q=x`);
+    expect(missing.status).toBe(404);
+  });
+
+  test("panel konteks: GET /api/sessions/:id/context memuat git, task list & perubahan file", async () => {
+    mkdirSync(path.join(root, "proj-ctx"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "ctx-proj", path: "proj-ctx" }),
+      })
+    ).json()) as { project: Project };
+
+    const sess = (await (
+      await fetch(`${baseUrl()}/api/sessions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agentType: "opencode", projectId: proj.project.id }),
+      })
+    ).json()) as { session: Session };
+
+    // Data tool berasal dari fake client Project ini (server headless-nya
+    // sudah dibuat saat Session dibuat).
+    const client = servers.clients.get(proj.project.id);
+    if (!client) throw new Error("fake client tidak ada");
+    client.todos = [
+      { content: "Tulis tes", status: "in_progress", priority: "high" },
+      { content: "Rapikan UI", status: "pending", priority: "medium" },
+    ];
+    client.fileChanges = [{ path: "src/App.tsx", added: 3, removed: 1, status: "modified" }];
+
+    const res = await fetch(`${baseUrl()}/api/sessions/${sess.session.id}/context`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { context: SessionContext };
+    expect(body.context.todos.map((t) => t.status)).toEqual(["in_progress", "pending"]);
+    expect(body.context.changes[0]?.path).toBe("src/App.tsx");
+    expect(body.context.changes[0]?.added).toBe(3);
+    expect(body.context.live).toBe(true);
+    // MCP server Project ikut dimuat (fake client: context7 connected).
+    expect(body.context.mcp).toEqual([{ name: "context7", status: "connected", error: null }]);
+    // Direktori project di tmpdir bukan repo git -> bagian git kosong, bukan error.
+    expect(body.context.git.branch).toBeNull();
+    expect(body.context.git.hasRemote).toBe(false);
+
+    // Session tak dikenal -> 404.
+    const missing = await fetch(`${baseUrl()}/api/sessions/tidak-ada/context`);
     expect(missing.status).toBe(404);
   });
 
