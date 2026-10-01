@@ -60,6 +60,12 @@ export interface SessionChat {
 
   // Data percakapan
   messages: SessionMessage[];
+  /**
+   * Riwayat awal (`history`) sudah diterima dari server. Sebelum ini,
+   * `messages` kosong BUKAN berarti percakapan kosong — UI menampilkan
+   * kerangka loading, bukan empty-state "No conversation yet".
+   */
+  historyLoaded: boolean;
   /** Status toggle blok "Thought process" per turn. */
   collapsible: CollapsibleState;
   toggleBlock: (key: string) => void;
@@ -398,6 +404,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     error,
     reportError,
     messages,
+    historyLoaded,
     collapsible,
     toggleBlock,
     prompts,

@@ -11,6 +11,10 @@
  *   Enter / tombol ✓.
  * - Password: kartu dengan kolom sandi besar, tombol tampilkan, indikator
  *   Caps Lock, dan tombol "Unlock" penuh.
+ * - Passkey: bila alamat ini punya passkey terdaftar & browser mendukung,
+ *   tampilan utama berganti jadi satu tombol sidik jari besar. PIN/password
+ *   tetap tersedia lewat "Use PIN instead". Dialog sistem tidak dibuka
+ *   otomatis — beberapa browser (Safari) mewajibkan ketukan pengguna.
  * Salah -> getar; terlalu banyak percobaan -> hitung mundur dari server.
  *
  * Aksesibilitas: dialog modal (`role="dialog"`, `aria-modal`), status
@@ -22,6 +26,7 @@ import {
   DeleteIcon,
   EyeIcon,
   EyeOffIcon,
+  FingerprintIcon,
   KeyboardIcon,
   LockIcon,
   TriangleAlertIcon,
@@ -31,6 +36,7 @@ import { ProfileAvatar } from "@/components/auth/ProfileAvatar";
 import { Spinner } from "@/components/ui/spinner";
 import { refreshAuth } from "@/lib/auth";
 import { applyPinAction, digitsFromPaste, pinKeyAction } from "@/lib/lock-screen";
+import { getPasskeyAvailability, passkeysSupportedHere, unlockWithPasskey } from "@/lib/passkeys";
 import { cn } from "@/lib/utils";
 import type { AuthStatus } from "@/server/services/auth";
 
@@ -44,6 +50,28 @@ export function LockScreen({ status }: { status: AuthStatus }) {
     status.retryAfterSec > 0 ? Date.now() + status.retryAfterSec * 1000 : 0,
   );
   const [now, setNow] = useState(() => Date.now());
+  /** Alamat ini punya passkey & browser mendukung (diketahui setelah mount). */
+  const [passkeyReady, setPasskeyReady] = useState(false);
+  /** Mode input: passkey jadi utama bila tersedia; user bisa beralih. */
+  const [mode, setMode] = useState<"passkey" | "secret">("secret");
+  const [passkeyBusy, setPasskeyBusy] = useState(false);
+
+  useEffect(() => {
+    if (!passkeysSupportedHere()) return;
+    let cancelled = false;
+    void getPasskeyAvailability()
+      .then((a) => {
+        if (cancelled || !a.supported || a.count === 0) return;
+        setPasskeyReady(true);
+        setMode("passkey");
+      })
+      .catch(() => {
+        // Gagal cek -> tetap PIN/password.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Jam (dan hitung mundur rate limit).
   useEffect(() => {
@@ -100,6 +128,33 @@ export function LockScreen({ status }: { status: AuthStatus }) {
     [busy, blocked, kind, fail],
   );
 
+  const unlockPasskey = useCallback(async () => {
+    if (passkeyBusy || blocked) return;
+    setPasskeyBusy(true);
+    setError(null);
+    const res = await unlockWithPasskey();
+    if (res.ok) {
+      await refreshAuth();
+      setPasskeyBusy(false);
+      return;
+    }
+    setPasskeyBusy(false);
+    // Menutup dialog sistem bukan kesalahan — diam saja.
+    if (res.cancelled) return;
+    if (res.code === "AUTH_RATE_LIMITED") {
+      // Detik tunggu dibaca dari status server (sumber yang sama dgn PIN).
+      try {
+        const st = (await (await fetch("/api/auth/status")).json()) as AuthStatus;
+        setRetryUntil(Date.now() + Math.max(1, st.retryAfterSec) * 1000);
+      } catch {
+        setRetryUntil(Date.now() + 30_000);
+      }
+      fail("Too many attempts.");
+      return;
+    }
+    fail(res.message);
+  }, [passkeyBusy, blocked, fail]);
+
   const time = new Date(now).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const date = new Date(now).toLocaleDateString(undefined, {
     weekday: "long",
@@ -150,8 +205,17 @@ export function LockScreen({ status }: { status: AuthStatus }) {
                 {name ? `Welcome back, ${name}` : "KCG Code is locked"}
               </h1>
               <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-                <LockIcon className="size-3.5" aria-hidden />
-                {kind === "pin" ? "Enter your PIN to unlock" : "Enter your password to unlock"}
+                {mode === "passkey" ? (
+                  <>
+                    <FingerprintIcon className="size-3.5" aria-hidden />
+                    Use your passkey to unlock
+                  </>
+                ) : (
+                  <>
+                    <LockIcon className="size-3.5" aria-hidden />
+                    {kind === "pin" ? "Enter your PIN to unlock" : "Enter your password to unlock"}
+                  </>
+                )}
               </p>
             </div>
           </div>
@@ -167,7 +231,19 @@ export function LockScreen({ status }: { status: AuthStatus }) {
             shake && "animate-[lock-shake_0.45s]",
           )}
         >
-          {kind === "pin" ? (
+          {mode === "passkey" ? (
+            <PasskeyEntry
+              busy={passkeyBusy}
+              disabled={passkeyBusy || blocked}
+              message={message}
+              secretLabel={kind === "pin" ? "PIN" : "password"}
+              onUnlock={() => void unlockPasskey()}
+              onUseSecret={() => {
+                setError(null);
+                setMode("secret");
+              }}
+            />
+          ) : kind === "pin" ? (
             <PinEntry
               value={secret}
               onChange={(v) => {
@@ -194,6 +270,22 @@ export function LockScreen({ status }: { status: AuthStatus }) {
               invalid={Boolean(error)}
             />
           )}
+          {mode === "secret" && passkeyReady && (
+            <div className="mt-5 flex justify-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setSecret("");
+                  setMode("passkey");
+                }}
+                className="inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-medium text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <FingerprintIcon className="size-4" aria-hidden />
+                Use passkey instead
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Mobile: petunjuk lupa kunci di dasar layar; md+: di kolom kiri. */}
@@ -208,6 +300,98 @@ function ForgotHint({ className }: { className?: string }) {
     <p className={cn("text-xs text-muted-foreground/80", className)}>
       Forgot it? Run <code className="font-mono">kcgcode reset-lock</code> on the host machine.
     </p>
+  );
+}
+
+// -------------------------------------------------------------- passkey ----
+
+/**
+ * Mode passkey: satu tombol bundar besar (target sentuh 96px+) dengan cincin
+ * yang berdenyut pelan saat menunggu perangkat. Enter / Space juga memicu.
+ */
+export function PasskeyEntry({
+  busy,
+  disabled,
+  message,
+  secretLabel,
+  onUnlock,
+  onUseSecret,
+}: {
+  busy: boolean;
+  disabled: boolean;
+  message: string | null;
+  secretLabel: string;
+  onUnlock: () => void;
+  onUseSecret: () => void;
+}) {
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  // Fokus ke tombol: Enter langsung memicu passkey dari keyboard.
+  useEffect(() => {
+    buttonRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  return (
+    <div className="flex flex-col items-center gap-5 py-2">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={onUnlock}
+        disabled={disabled}
+        aria-busy={busy}
+        aria-describedby="lock-passkey-status"
+        className="group relative flex size-28 items-center justify-center rounded-full outline-none disabled:cursor-not-allowed [@media(min-height:760px)]:size-32"
+      >
+        {/* Cincin luar: berdenyut saat menunggu konfirmasi di perangkat. */}
+        <span
+          aria-hidden
+          className={cn(
+            "absolute inset-0 rounded-full border-2 border-primary/25 transition-colors",
+            busy && "animate-ping border-primary/40 motion-reduce:animate-none",
+          )}
+        />
+        <span
+          aria-hidden
+          className={cn(
+            "flex size-full items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-[transform,opacity] duration-150",
+            "group-hover:scale-[1.03] group-active:scale-95 group-focus-visible:ring-[4px] group-focus-visible:ring-ring/50 group-focus-visible:ring-offset-2 group-focus-visible:ring-offset-background",
+            disabled && !busy && "opacity-40",
+          )}
+        >
+          {busy ? (
+            <Spinner className="size-9" />
+          ) : (
+            <FingerprintIcon className="size-12" strokeWidth={1.6} />
+          )}
+        </span>
+        <span className="sr-only">{busy ? "Waiting for your passkey" : "Unlock with passkey"}</span>
+      </button>
+
+      <div className="flex flex-col items-center gap-1 text-center">
+        <p className="text-[15px] font-medium">
+          {busy ? "Confirm on your device…" : "Unlock with passkey"}
+        </p>
+        <p
+          id="lock-passkey-status"
+          aria-live="polite"
+          className={cn(
+            "min-h-5 max-w-xs text-sm",
+            message ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {message ?? (busy ? "Use your fingerprint, face, or screen lock." : "Tap to continue")}
+        </p>
+      </div>
+
+      <button
+        type="button"
+        onClick={onUseSecret}
+        disabled={busy}
+        className="inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-medium text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
+      >
+        <KeyboardIcon className="size-4" aria-hidden />
+        Use {secretLabel} instead
+      </button>
+    </div>
   );
 }
 

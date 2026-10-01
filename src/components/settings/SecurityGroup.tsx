@@ -1,6 +1,6 @@
 /**
  * Settings -> Security (`/settings/security`): kunci aplikasi (PIN/password),
- * ganti/hapus kunci lewat dialog, dan kunci otomatis.
+ * ganti/hapus kunci lewat dialog, kunci otomatis, dan passkey.
  */
 import {
   KeyRoundIcon,
@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { PasskeysGroup } from "@/components/settings/PasskeysGroup";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import {
@@ -167,6 +168,9 @@ export function SecurityGroup({ status, onOk }: { status: AuthStatus; onOk: (t: 
               </Select>
             </li>
           </PrefsGroup>
+
+          {/* Passkey = cara buka kunci tambahan; hanya ada bila kunci aktif. */}
+          <PasskeysGroup status={status} />
 
           <PrefsGroup>
             <ActionRow
@@ -512,7 +516,7 @@ function RemoveLockDialog({
           <DialogTitle>Remove app lock?</DialogTitle>
           <DialogDescription>
             Without a lock, anyone who can reach this address can control your agents. All devices
-            will be signed out.
+            will be signed out and every passkey will be removed.
           </DialogDescription>
         </DialogHeader>
         <form id="remove-lock-form" onSubmit={submit} className="flex flex-col gap-3">

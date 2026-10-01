@@ -67,6 +67,12 @@ export interface AuthStatus {
   profile: AuthProfile;
   /** Detik tersisa sebelum boleh mencoba lagi (anti brute-force). */
   retryAfterSec: number;
+  /**
+   * Instalasi baru yang belum menyelesaikan welcome screen. Hanya `true`
+   * bila kunci BELUM diatur — begitu app dikunci, onboarding dianggap
+   * selesai (pengunjung lewat tunnel tidak boleh melihat/menjalankannya).
+   */
+  needsOnboarding: boolean;
 }
 
 export interface LoginContext {
@@ -116,6 +122,8 @@ export interface AuthService {
   setAvatarPreset(preset: string): Result<AuthProfile>;
   getAvatar(): { bytes: Uint8Array; mime: string } | null;
   setAutoLock(minutes: number): Result<number>;
+  /** Welcome screen selesai / dilewati (idempoten). */
+  completeOnboarding(): void;
   listDevices(currentToken: string | null): DeviceInfo[];
   /** Cabut sesi lain (atau satu sesi tertentu). */
   revokeOthers(currentToken: string | null): void;
@@ -128,6 +136,20 @@ export interface AuthService {
   sweep(): void;
   /** Reset total dari CLI: hapus kunci & semua sesi. */
   resetLock(): void;
+  /**
+   * Hook internal untuk modul passkey (`auth-passkeys.ts`) — memakai ulang
+   * penerbitan sesi, verifikasi sandi, dan anti brute-force yang sama.
+   */
+  internal: {
+    issueSession(ctx: LoginContext): IssuedSession;
+    /** Verifikasi PIN/password saat ini (dengan rate limit). */
+    checkCurrentSecret(secret: string, ip: string): Promise<Result<null>>;
+    /** Detik tunggu anti brute-force; 0 = boleh mencoba. */
+    retryAfterSec(ip: string): number;
+    recordFailure(ip: string): void;
+    recordSuccess(ip: string): void;
+    findSessionId(token: string | null): string | null;
+  };
 }
 
 export interface AuthServiceOptions {
@@ -406,6 +428,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
       autoLockMinutes: s.autoLockMinutes,
       profile: profile(),
       retryAfterSec: Math.ceil(retryAfterMs(ip) / 1000),
+      needsOnboarding: !prot && s.onboardedAt === null,
     };
   }
 
@@ -452,6 +475,8 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     }
     const h = await hash(input.secret);
     store.setAuthLock(input.kind, h, now());
+    // Kunci diatur = instalasi sudah dikonfigurasi.
+    store.setAuthOnboarded(now());
     // Sandi berubah -> seluruh sesi lama tidak berlaku lagi.
     revokeAllExcept(null);
     lockChanged();
@@ -467,6 +492,8 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
         error: res.error === "AUTH_INVALID" ? "CURRENT_SECRET_INVALID" : res.error,
       };
     store.setAuthLock(null, null, now());
+    // Passkey hanya cara buka kunci TAMBAHAN — tanpa kunci, tidak berarti.
+    store.deleteAllPasskeys();
     revokeAllExcept(null);
     lockChanged();
     return { ok: true, data: null };
@@ -554,6 +581,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
 
   function resetLock(): void {
     store.setAuthLock(null, null, now());
+    store.deleteAllPasskeys();
     revokeAllExcept(null);
     lockChanged();
   }
@@ -572,6 +600,7 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     setAvatarPreset,
     getAvatar: () => store.getAuthAvatar(),
     setAutoLock,
+    completeOnboarding: () => store.setAuthOnboarded(now()),
     listDevices,
     revokeOthers,
     revokeDevice,
@@ -585,5 +614,20 @@ export function createAuthService(opts: AuthServiceOptions): AuthService {
     },
     sweep,
     resetLock,
+    internal: {
+      issueSession: issue,
+      async checkCurrentSecret(secret, ip) {
+        const res = await checkSecret(secret, ip);
+        if (res.ok) return res;
+        return {
+          ok: false,
+          error: res.error === "AUTH_INVALID" ? "CURRENT_SECRET_INVALID" : res.error,
+        };
+      },
+      retryAfterSec: (ip) => Math.ceil(retryAfterMs(ip) / 1000),
+      recordFailure,
+      recordSuccess,
+      findSessionId: (token) => findSession(token)?.id ?? null,
+    },
   };
 }

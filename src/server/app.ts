@@ -26,6 +26,7 @@ import { resolveHostname } from "./host";
 import { authRoutes } from "./routes/auth.routes";
 import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
 import { metaRoutes } from "./routes/meta.routes";
+import { passkeyRoutes } from "./routes/passkeys.routes";
 import { projectsRoutes } from "./routes/projects.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
 import { skillsRoutes } from "./routes/skills.routes";
@@ -34,6 +35,7 @@ import type { ApiRouteContext } from "./routes/types";
 import { uploadsRoutes } from "./routes/uploads.routes";
 import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
 import { type AuthService, createAuthService } from "./services/auth";
+import { createPasskeyService } from "./services/auth-passkeys";
 import { createFrpcInstaller } from "./services/frpc-installer";
 import {
   createOpenCodeServerManager,
@@ -205,6 +207,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
 
   // ---- Kunci aplikasi (lock screen) ----
   const auth = opts.auth ?? createAuthService({ store });
+  const passkeys = createPasskeyService({ store, auth });
 
   // ---- Tunnel publik (<username>.<domain dari VPS>) — wajib app lock ----
   const tunnel = opts.tunnel
@@ -278,6 +281,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
 
   const apiRoutes = guardRoutes(auth, {
     ...authRoutes(auth),
+    ...passkeyRoutes(auth, passkeys),
     ...metaRoutes(),
     ...projectsRoutes(routeCtx),
     ...sessionsRoutes(routeCtx),

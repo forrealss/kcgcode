@@ -457,3 +457,29 @@ test("4.4: persistensi setelah restart server (file sqlite yang sama)", () => {
   store2.close();
   rmSync(dir, { recursive: true, force: true });
 });
+
+test("migrasi onboarded_at: instalasi lama (sudah punya project/kunci) ditandai selesai", () => {
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const { runMigrations } = require("../db/schema") as typeof import("../db/schema");
+  // DB lama: skema tanpa kolom onboarded_at + sudah ada nickname.
+  const old = new Database(":memory:");
+  old.exec(`CREATE TABLE auth_settings (
+    id INTEGER PRIMARY KEY CHECK (id = 1), lock_kind TEXT, lock_hash TEXT, nickname TEXT,
+    avatar_mime TEXT, avatar BLOB, avatar_version INTEGER NOT NULL DEFAULT 0,
+    auto_lock_minutes INTEGER NOT NULL DEFAULT 15, updated_at INTEGER NOT NULL)`);
+  old.exec("INSERT INTO auth_settings (id, nickname, updated_at) VALUES (1, 'Irsyad', 42)");
+  runMigrations(old);
+  const row = old.query("SELECT onboarded_at FROM auth_settings WHERE id = 1").get() as {
+    onboarded_at: number | null;
+  };
+  expect(row.onboarded_at).toBe(42);
+
+  // DB baru (belum ada apa-apa) -> tetap butuh onboarding.
+  const fresh = new Database(":memory:");
+  runMigrations(fresh);
+  fresh.exec("INSERT INTO auth_settings (id, updated_at) VALUES (1, 1)");
+  const r2 = fresh.query("SELECT onboarded_at FROM auth_settings WHERE id = 1").get() as {
+    onboarded_at: number | null;
+  };
+  expect(r2.onboarded_at).toBeNull();
+});

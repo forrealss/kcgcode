@@ -88,6 +88,24 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   expires_at INTEGER NOT NULL
 );
 
+-- Passkey (WebAuthn) — cara buka kunci TAMBAHAN di samping PIN/password.
+-- Hanya kunci publik yang disimpan (bukan rahasia). rp_id = domain tempat
+-- passkey didaftarkan; passkey hanya berlaku di domain yang sama.
+CREATE TABLE IF NOT EXISTS auth_passkeys (
+  id TEXT PRIMARY KEY,
+  credential_id TEXT NOT NULL UNIQUE,
+  public_key BLOB NOT NULL,
+  counter INTEGER NOT NULL DEFAULT 0,
+  transports TEXT,
+  rp_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  device_type TEXT,
+  backed_up INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  last_used_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_auth_passkeys_rp ON auth_passkeys(rp_id);
+
 -- Tunnel publik (<username>.<domain>) lewat API kcgcode-rp + frpc.
 -- Satu baris (id = 1). device_token (dari device flow, bisa dicabut di VPS)
 -- & tunnel_secret tidak pernah dikirim ke browser; enabled = tunnel
@@ -182,4 +200,22 @@ export function runMigrations(db: Database): void {
     "avatar_preset",
     "ALTER TABLE auth_settings ADD COLUMN avatar_preset TEXT",
   );
+  // Onboarding (welcome screen) selesai — NULL = instalasi baru.
+  const hadOnboarded = (
+    db.query("PRAGMA table_info(auth_settings)").all() as { name: string }[]
+  ).some((c) => c.name === "onboarded_at");
+  ensureColumn(
+    db,
+    "auth_settings",
+    "onboarded_at",
+    "ALTER TABLE auth_settings ADD COLUMN onboarded_at INTEGER",
+  );
+  if (!hadOnboarded) {
+    // Instalasi LAMA (sudah punya kunci / profil / project sebelum fitur ini)
+    // tidak perlu melihat welcome screen — tandai selesai saat migrasi.
+    db.exec(`UPDATE auth_settings SET onboarded_at = updated_at
+             WHERE onboarded_at IS NULL
+               AND (lock_kind IS NOT NULL OR nickname IS NOT NULL
+                    OR EXISTS (SELECT 1 FROM projects))`);
+  }
 }

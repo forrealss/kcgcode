@@ -130,10 +130,21 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/tunnel/lhr/start",
       "/api/tunnel/lhr/stop",
       "/api/meta",
+      "/api/auth/onboarding/complete",
+      "/api/auth/passkeys",
+      "/api/auth/passkeys/register/options",
+      "/api/auth/passkeys/register",
+      "/api/auth/passkeys/x",
     ];
     // Setiap pola rute /api terdaftar (kecuali publik) harus tercakup daftar
     // di atas — rute baru yang belum diuji membuat test ini gagal.
-    const PUBLIC = new Set(["/api/auth/status", "/api/auth/login"]);
+    const PUBLIC = new Set([
+      "/api/auth/status",
+      "/api/auth/login",
+      "/api/auth/passkeys/availability",
+      "/api/auth/passkeys/login/options",
+      "/api/auth/passkeys/login",
+    ]);
     const toRegex = (pattern: string) => new RegExp(`^${pattern.replace(/:[^/]+/g, "[^/]+")}$`);
     for (const pattern of app.apiRoutePatterns) {
       if (PUBLIC.has(pattern)) continue;
@@ -192,6 +203,70 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       headers: { origin: base },
     });
     expect(same.status).toBe(200);
+  });
+
+  test("passkey HTTP: endpoint publik terbatas, kelola wajib sesi + sandi", async () => {
+    // Publik (lock screen): http://127.0.0.1 bukan secure context -> tidak didukung.
+    const avail = await call("/api/auth/passkeys/availability", { headers: { origin: base } });
+    expect(avail.status).toBe(200);
+    expect(await avail.json()).toEqual({ supported: false, count: 0 });
+    // GET seperti browser (tanpa Origin) via localhost -> secure context.
+    const availLocal = await call("/api/auth/passkeys/availability", {
+      headers: { "x-forwarded-host": `localhost:${app.server.port}` },
+    });
+    expect(await availLocal.json()).toEqual({ supported: true, count: 0 });
+    // Hanya jumlah — tidak ada daftar/nama passkey yang bocor.
+    const opts = await call("/api/auth/passkeys/login/options", {
+      method: "POST",
+      headers: { origin: base },
+    });
+    expect(opts.status).toBe(400);
+    expect(((await opts.json()) as { error: string }).error).toBe("PASSKEY_UNSUPPORTED_ORIGIN");
+
+    // Daftar & pendaftaran tanpa cookie -> 401.
+    expect((await call("/api/auth/passkeys")).status).toBe(401);
+    expect(
+      (
+        await call("/api/auth/passkeys/register/options", {
+          method: "POST",
+          body: JSON.stringify({ current: "482915" }),
+        })
+      ).status,
+    ).toBe(401);
+    // Dengan cookie: daftar kosong; tanpa sandi yang benar pendaftaran ditolak.
+    const list = await call("/api/auth/passkeys", { cookie });
+    expect(await list.json()).toEqual({ passkeys: [] });
+    // Origin localhost (secure context) lewat proxy header -> sampai ke cek sandi.
+    const local = `localhost:${app.server.port}`;
+    const localHeaders = { origin: `http://${local}`, "x-forwarded-host": local };
+    const wrong = await call("/api/auth/passkeys/register/options", {
+      method: "POST",
+      cookie,
+      body: JSON.stringify({ current: "000000" }),
+      headers: { ...localHeaders, "x-forwarded-for": "7.7.7.7" },
+    });
+    expect(wrong.status).toBe(401);
+    expect(((await wrong.json()) as { error: string }).error).toBe("CURRENT_SECRET_INVALID");
+    // Sandi benar -> options WebAuthn untuk rpId localhost.
+    const right = await call("/api/auth/passkeys/register/options", {
+      method: "POST",
+      cookie,
+      body: JSON.stringify({ current: "482915" }),
+      headers: localHeaders,
+    });
+    expect(right.status).toBe(200);
+    const body = (await right.json()) as {
+      challengeId: string;
+      options: { rp: { id: string }; challenge: string };
+    };
+    expect(body.options.rp.id).toBe("localhost");
+    expect(body.challengeId.length).toBeGreaterThan(0);
+    // Origin lintas situs ditolak sebelum apa pun.
+    const cross = await call("/api/auth/passkeys/login/options", {
+      method: "POST",
+      headers: { origin: "https://evil.example" },
+    });
+    expect(cross.status).toBe(403);
   });
 
   test("login: salah -> 401, benar -> cookie baru; rate limit -> 429 + Retry-After", async () => {

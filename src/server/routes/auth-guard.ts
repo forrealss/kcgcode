@@ -3,7 +3,8 @@
  * CSRF / cross-site WebSocket hijacking), dan bungkus setiap handler rute
  * `/api/*` agar menolak request tanpa sesi valid (401).
  *
- * Rute publik (lock screen butuh ini sebelum login): status, login, avatar.
+ * Rute publik (lock screen butuh ini sebelum login): status, login, avatar,
+ * dan login passkey.
  */
 import type { Server } from "bun";
 import type { AuthService } from "../services/auth";
@@ -18,6 +19,10 @@ export const PUBLIC_API: ReadonlyMap<string, ReadonlySet<string>> = new Map([
   ["/api/auth/status", new Set(["GET"])],
   ["/api/auth/login", new Set(["POST"])],
   ["/api/auth/avatar", new Set(["GET"])],
+  // Lock screen: cek ketersediaan passkey & login dengan passkey.
+  ["/api/auth/passkeys/availability", new Set(["GET"])],
+  ["/api/auth/passkeys/login/options", new Set(["POST"])],
+  ["/api/auth/passkeys/login", new Set(["POST"])],
 ]);
 
 export function isPublicApi(route: string, method: string): boolean {

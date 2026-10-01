@@ -8,6 +8,9 @@
  * - Dikunci: lock screen turun dari atas. App lama ditahan di DOM (inert)
  *   hanya sampai lock screen mendarat, lalu dilepas.
  * - Dibuka: lock screen naik keluar layar, app sudah ada di bawahnya.
+ * - Instalasi baru (`needsOnboarding`): welcome screen (`WelcomeScreen`)
+ *   memudar masuk di lapisan sendiri; setelah selesai memudar keluar dan
+ *   app muncul dari baliknya.
  *
  * Kunci otomatis: server menegakkan batas idle; klien menirunya dengan timer
  * aktivitas lokal (agar layar terkunci tepat waktu walau tidak ada request)
@@ -16,8 +19,9 @@
  */
 import { AnimatePresence, useIsPresent, useReducedMotion } from "motion/react";
 import * as m from "motion/react-m";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { LockScreen } from "@/components/auth/LockScreen";
+import { WelcomeScreen } from "@/components/auth/WelcomeScreen";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { lockNow, refreshAuth, useAuth } from "@/lib/auth";
@@ -36,6 +40,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
 
   const status = auth.phase === "ready" ? auth.status : null;
   const unlocked = status !== null && (!status.protected || status.authenticated);
+
+  /**
+   * Welcome screen di-"latch": begitu tampil, ia bertahan sampai pengguna
+   * menyelesaikannya (`onFinished`) — walau di tengah alur server sudah
+   * melaporkan `needsOnboarding: false` (mis. setelah kunci dipasang di
+   * langkah Lock, heartbeat / refresh status lain tidak boleh memotong
+   * layar "Done").
+   */
+  const [onboarding, setOnboarding] = useState(false);
+  // Latch disetel SAAT render (bukan di effect) agar tidak ada satu frame
+  // pun app tampil sebelum welcome screen.
+  if (status?.needsOnboarding && !onboarding) setOnboarding(true);
   const autoLockMs =
     status?.protected && status.autoLockMinutes > 0 ? status.autoLockMinutes * 60_000 : 0;
 
@@ -93,24 +109,48 @@ export function AuthGate({ children }: { children: ReactNode }) {
   }
 
   const locked = !unlocked && status !== null;
+  /**
+   * Instalasi baru: welcome screen MENUTUPI app (lapisan sendiri di atas).
+   * App baru dirender setelah onboarding selesai — tidak ada request data
+   * selama welcome screen — lalu muncul dari balik layar yang memudar.
+   */
+  const showWelcome = !locked && (onboarding || status?.needsOnboarding === true);
   return (
-    <AnimatePresence initial={false}>
-      {locked ? (
-        <m.div
-          key="lock"
-          // Tirai: turun dari atas saat dikunci, naik keluar saat dibuka.
-          // Bayangan di tepi bawah hanya terlihat selama bergerak.
-          className="fixed inset-0 z-[100] shadow-[0_24px_48px_-12px_rgb(0_0_0/0.45)]"
-          initial={{ y: "-100%" }}
-          animate={{ y: 0, transition: { duration: 0.55, ease: LOCK_EASE } }}
-          exit={{ y: "-100%", transition: { duration: 0.45, ease: LOCK_EASE } }}
-        >
-          <LockScreen status={status} />
-        </m.div>
-      ) : (
-        <AppLayer key="app">{children}</AppLayer>
-      )}
-    </AnimatePresence>
+    <>
+      <AnimatePresence initial={false}>
+        {locked ? (
+          <m.div
+            key="lock"
+            // Tirai: turun dari atas saat dikunci, naik keluar saat dibuka.
+            // Bayangan di tepi bawah hanya terlihat selama bergerak.
+            className="fixed inset-0 z-[100] shadow-[0_24px_48px_-12px_rgb(0_0_0/0.45)]"
+            initial={{ y: "-100%" }}
+            animate={{ y: 0, transition: { duration: 0.55, ease: LOCK_EASE } }}
+            exit={{ y: "-100%", transition: { duration: 0.45, ease: LOCK_EASE } }}
+          >
+            <LockScreen status={status} />
+          </m.div>
+        ) : showWelcome ? null : (
+          <AppLayer key="app">{children}</AppLayer>
+        )}
+      </AnimatePresence>
+
+      {/* Lapisan terpisah: SELALU beranimasi masuk (bahkan saat app pertama
+          dibuka) dan keluar dengan memudar + sedikit membesar. */}
+      <AnimatePresence>
+        {showWelcome && status && (
+          <m.div
+            key="welcome"
+            className="fixed inset-0 z-[90]"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1, transition: { duration: 0.4, ease: "easeOut" } }}
+            exit={{ opacity: 0, scale: 1.03, transition: { duration: 0.45, ease: LOCK_EASE } }}
+          >
+            <WelcomeScreen status={status} onFinished={() => setOnboarding(false)} />
+          </m.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 

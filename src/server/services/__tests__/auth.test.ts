@@ -319,3 +319,23 @@ describe("createAuthService", () => {
     expect((await auth.login("wrong horse!", ctx)).ok).toBe(false);
   });
 });
+
+describe("onboarding (welcome screen)", () => {
+  test("instalasi baru -> needsOnboarding; selesai -> false (idempoten)", () => {
+    const h = harness();
+    expect(h.auth.status(null, ctx.ip).needsOnboarding).toBe(true);
+    h.auth.completeOnboarding();
+    expect(h.auth.status(null, ctx.ip).needsOnboarding).toBe(false);
+    const first = h.store.getAuthSettings(0).onboardedAt;
+    h.advance(1000);
+    h.auth.completeOnboarding();
+    expect(h.store.getAuthSettings(0).onboardedAt).toBe(first);
+  });
+
+  test("mengatur kunci menandai onboarding selesai; app terkunci tak pernah needsOnboarding", async () => {
+    const h = harness();
+    await h.auth.setLock({ kind: "pin", secret: "482915" }, ctx);
+    expect(h.store.getAuthSettings(0).onboardedAt).not.toBeNull();
+    expect(h.auth.status(null, ctx.ip).needsOnboarding).toBe(false);
+  });
+});

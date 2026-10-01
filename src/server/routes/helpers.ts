@@ -45,7 +45,20 @@ export function errorStatus(code: string): number {
     case "AVATAR_PRESET_INVALID":
     case "AUTH_NOT_CONFIGURED":
     case "INVALID_PROVIDER":
+    case "PASSKEY_NAME_INVALID":
+    case "PASSKEY_UNSUPPORTED_ORIGIN":
+    case "PASSKEY_CHALLENGE_INVALID":
+    case "PASSKEY_VERIFY_FAILED":
       return 400;
+    case "PASSKEY_LOCK_REQUIRED":
+    case "PASSKEY_ALREADY_REGISTERED":
+    case "PASSKEY_LIMIT":
+    case "PASSKEY_NONE":
+      return 409;
+    case "PASSKEY_INVALID":
+      return 401;
+    case "PASSKEY_NOT_FOUND":
+      return 404;
     // Tunnel: prasyarat belum terpenuhi.
     case "TUNNEL_LOCK_REQUIRED":
     case "TUNNEL_SIGNED_OUT":

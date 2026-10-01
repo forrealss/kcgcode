@@ -14,6 +14,7 @@
  * - `PUT    /api/auth/avatar`          multipart `file` | `DELETE` hapus
  * - `PUT    /api/auth/avatar/preset`   {preset} avatar bawaan
  * - `PATCH  /api/auth/settings`        {autoLockMinutes}
+ * - `POST   /api/auth/onboarding/complete`  welcome screen selesai
  * - `GET    /api/auth/devices`         sesi aktif per perangkat
  * - `POST   /api/auth/devices/revoke-others`
  * - `DELETE /api/auth/devices/:id`
@@ -232,6 +233,19 @@ export function authRoutes(auth: AuthService) {
           const res = auth.setAutoLock(typeof autoLockMinutes === "number" ? autoLockMinutes : -1);
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ autoLockMinutes: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+    },
+
+    // Welcome screen selesai / dilewati. Dijaga guard: setelah app dikunci,
+    // hanya sesi login yang bisa memanggilnya (dan saat itu sudah onboarded).
+    "/api/auth/onboarding/complete": {
+      POST: () => {
+        try {
+          auth.completeOnboarding();
+          return json({ ok: true });
         } catch (e) {
           return serverError(e);
         }

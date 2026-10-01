@@ -108,6 +108,26 @@ export function apiErrorMessage(code: string): string {
       return "Too many attempts. Wait a moment and try again.";
     case "AUTH_NOT_CONFIGURED":
       return "No lock has been set up yet.";
+    case "PASSKEY_INVALID":
+      return "That passkey wasn't accepted. Try again or use your PIN or password.";
+    case "PASSKEY_NONE":
+      return "No passkey is set up for this address yet.";
+    case "PASSKEY_UNSUPPORTED_ORIGIN":
+      return "Passkeys need a secure address (https or localhost).";
+    case "PASSKEY_CHALLENGE_INVALID":
+      return "The passkey request expired. Try again.";
+    case "PASSKEY_VERIFY_FAILED":
+      return "Couldn't verify the passkey. Try again.";
+    case "PASSKEY_ALREADY_REGISTERED":
+      return "This passkey is already added.";
+    case "PASSKEY_LIMIT":
+      return "You've reached the maximum of 20 passkeys. Remove one first.";
+    case "PASSKEY_LOCK_REQUIRED":
+      return "Set up a PIN or password before adding a passkey.";
+    case "PASSKEY_NAME_INVALID":
+      return "Passkey names must be 1–60 characters.";
+    case "PASSKEY_NOT_FOUND":
+      return "That passkey no longer exists.";
     case "PIN_DIGITS_ONLY":
       return "PIN can only contain numbers.";
     case "PIN_LENGTH":

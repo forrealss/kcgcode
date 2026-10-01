@@ -11,6 +11,10 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import {
+  SessionComposerSkeleton,
+  SessionTimelineSkeleton,
+} from "@/components/sessions/SessionTimelineSkeleton";
 import { SessionView } from "@/components/sessions/SessionView";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "@/hooks/useRouter";
@@ -68,22 +72,20 @@ export function SessionPage({ projectId, sessionId }: SessionPageProps) {
   }, [load]);
 
   if (state.phase === "loading") {
-    // Kerangka setara SessionView (header + area chat + composer) agar tidak
-    // ada lompatan layout saat data tiba.
+    // Kerangka setara SessionView (header + timeline + composer) — bagian
+    // timeline & composer SAMA dengan yang dipakai SessionView saat menunggu
+    // riwayat, jadi peralihan dua fase loading tidak berkedip.
     return (
-      <div className="flex h-full min-h-0 flex-col" role="status" aria-label="Loading session">
-        <div className="flex items-center gap-2 px-3 py-3 sm:px-4">
+      <div className="flex h-full min-h-0 flex-col" aria-busy="true">
+        <div className="flex shrink-0 items-center gap-2 px-3 py-3 sm:px-4">
           <Skeleton className="size-9 rounded-md" />
-          <Skeleton className="h-5 w-40" />
+          <div className="flex flex-col gap-1.5">
+            <Skeleton className="h-4 w-40" />
+            <Skeleton className="hidden h-3 w-56 sm:block" />
+          </div>
         </div>
-        <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-3 py-4 sm:px-4">
-          <Skeleton className="ml-auto h-10 w-1/2 rounded-2xl" />
-          <Skeleton className="h-4 w-3/4" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
-        <div className="px-3 pb-3 sm:px-4">
-          <Skeleton className="mx-auto h-[3.25rem] w-full max-w-2xl rounded-xl" />
-        </div>
+        <SessionTimelineSkeleton />
+        <SessionComposerSkeleton />
       </div>
     );
   }

@@ -33,6 +33,10 @@ import { FileDropOverlay } from "@/components/sessions/FileDropOverlay";
 import { SessionComposer, type SessionComposerHandle } from "@/components/sessions/SessionComposer";
 import { SessionHeader } from "@/components/sessions/SessionHeader";
 import { SessionTimeline } from "@/components/sessions/SessionTimeline";
+import {
+  SessionComposerSkeleton,
+  SessionTimelineSkeleton,
+} from "@/components/sessions/SessionTimelineSkeleton";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
@@ -55,7 +59,14 @@ export interface SessionViewProps {
 
 export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const chat = useSessionChat({ session, onBack, onDeleted });
-  const empty = chat.messages.length === 0;
+  /**
+   * Riwayat belum tiba dari WebSocket. `messages` kosong di fase ini BUKAN
+   * percakapan kosong — tampilkan kerangka, jangan empty-state. Pengecualian:
+   * pesan optimistis (prompt pertama dari homepage) sudah ada sejak frame
+   * pertama, jadi langsung tampil sebagai percakapan.
+   */
+  const loadingHistory = !chat.historyLoaded && chat.messages.length === 0;
+  const empty = !loadingHistory && chat.messages.length === 0;
   const composerRef = useRef<SessionComposerHandle>(null);
   /** Panel konteks kanan; default tertutup agar area chat tetap lega. */
   const [contextOpen, setContextOpen] = useState(false);
@@ -71,14 +82,17 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
     () => (contextOpen ? collectReferences(chat.messages, session.cwd) : []),
     [contextOpen, chat.messages, session.cwd],
   );
-  // Composer tidak dirender saat pertanyaan menunggu jawaban (panel docked).
-  const composerShown = empty || !chat.hasPendingQuestion;
+  // Composer tidak dirender saat pertanyaan menunggu jawaban (panel docked)
+  // maupun saat riwayat masih dimuat (belum tahu tata letak akhirnya).
+  const composerShown = !loadingHistory && (empty || !chat.hasPendingQuestion);
   const acceptingFiles = composerShown && chat.canInput;
-  const blockedReason = !composerShown
-    ? "Answer the question first, then add your files."
-    : chat.busy
-      ? "Wait for the response to finish, then drop your files."
-      : "Start the session to add files.";
+  const blockedReason = loadingHistory
+    ? "Wait for the conversation to load, then drop your files."
+    : !composerShown
+      ? "Answer the question first, then add your files."
+      : chat.busy
+        ? "Wait for the response to finish, then drop your files."
+        : "Start the session to add files.";
 
   return (
     // `data-vt-name`: tujuan transisi "to-session" — composer homepage meluas
@@ -100,7 +114,13 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
           sempit. */}
       <div className="relative flex min-h-0 flex-1">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          {empty ? (
+          {loadingHistory ? (
+            // Kerangka sama persis dengan fase `SessionPage` -> tanpa kedipan.
+            <>
+              <SessionTimelineSkeleton />
+              <SessionComposerSkeleton />
+            </>
+          ) : empty ? (
             /* Empty-state ala Gemini: sapaan + composer dipusatkan vertikal.
             Timeline & prompt panel belum dirender (tidak ada isinya); spacer
             flex-1 di atas & bawah menjaga blok ini tepat di tengah kolom di
