@@ -1,25 +1,28 @@
 /**
  * Halaman Settings (`/settings/:section`) — tata letak ala GNOME Settings
  * (libadwaita): kolom sempit di tengah, grup berjudul berisi "boxed list".
- * Tiap bagian punya URL sendiri, dipilih lewat navigasi tab di atas konten:
+ * Tiap bagian punya URL sendiri. EMPAT tab (muat di desktop & bottom nav HP):
  *
  * - Profile  (`/settings`, `/settings/profile`): avatar, nickname, dan akun
  *   KCG Code (username/email dari akun tunnel).
- * - Security (`/settings/security`): kunci aplikasi, jenis kunci, auto-lock.
+ * - Security (`/settings/security`): kunci aplikasi, auto-lock, passkey, dan
+ *   perangkat yang login (`/settings/devices` lama -> grup ini).
+ * - Workspace (`/settings/workspace`): folder tempat semua Project berada.
  * - Remote access (`/settings/remote`): tunnel publik lewat Google sign-in.
- * - Devices  (`/settings/devices`): sesi login per perangkat.
- * - About    (`/settings/about`): logo, versi, dan kredit tim.
+ *
+ * About (`/settings/about`) bukan pengaturan — dibuka dari tombol ⓘ di
+ * samping judul, bukan tab.
  */
-import { GlobeIcon, InfoIcon, MonitorSmartphoneIcon, ShieldIcon, UserIcon } from "lucide-react";
-import { type ComponentType, useCallback } from "react";
+import { ArrowLeftIcon, FolderIcon, GlobeIcon, InfoIcon, ShieldIcon, UserIcon } from "lucide-react";
+import { type ComponentType, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import { AvatarEditor } from "@/components/auth/AvatarEditor";
 import { AboutGroup } from "@/components/settings/AboutGroup";
 import { AccountGroup } from "@/components/settings/AccountGroup";
-import { DevicesGroup } from "@/components/settings/DevicesGroup";
 import { EntryRow, PrefsGroup } from "@/components/settings/prefs";
 import { RemoteAccessGroup } from "@/components/settings/RemoteAccessGroup";
 import { SecurityGroup } from "@/components/settings/SecurityGroup";
+import { WorkspaceGroup } from "@/components/settings/WorkspaceGroup";
 import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -28,29 +31,46 @@ import { type SettingsSection, settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import type { AuthStatus } from "@/server/services/auth";
 
-const SECTIONS: {
-  id: SettingsSection;
+/** Tab Settings — sengaja dibatasi empat agar tidak sesak. */
+export const SETTINGS_TABS: {
+  id: Exclude<SettingsSection, "about">;
   label: string;
-  /** Label ringkas untuk bottom nav mobile (5 kolom sempit). */
+  /** Label ringkas untuk bottom nav mobile. */
   short?: string;
   icon: ComponentType<{ className?: string }>;
 }[] = [
   { id: "profile", label: "Profile", icon: UserIcon },
   { id: "security", label: "Security", icon: ShieldIcon },
+  { id: "workspace", label: "Workspace", icon: FolderIcon },
   { id: "remote", label: "Remote access", short: "Remote", icon: GlobeIcon },
-  { id: "devices", label: "Devices", icon: MonitorSmartphoneIcon },
-  { id: "about", label: "About", icon: InfoIcon },
 ];
 
 function errorText(e: unknown, fallback: string): string {
   return e instanceof ApiError ? e.message : fallback;
 }
 
-export function SettingsPage({ section }: { section: SettingsSection }) {
+export function SettingsPage({
+  section,
+  anchor,
+}: {
+  section: SettingsSection;
+  /** Grup yang dituju (mis. URL lama `/settings/devices` -> "devices"). */
+  anchor?: string;
+}) {
   const auth = useAuth();
   const status = auth.phase === "ready" ? auth.status : null;
   const ok = useCallback((text: string) => toast.success(text), []);
   const error = useCallback((text: string) => toast.error(text), []);
+  const ready = status !== null;
+
+  // Gulir ke grup tujuan setelah kontennya dirender.
+  useEffect(() => {
+    if (!anchor || !ready) return;
+    const t = setTimeout(() => {
+      document.getElementById(anchor)?.scrollIntoView({ block: "start", behavior: "smooth" });
+    }, 100);
+    return () => clearTimeout(t);
+  }, [anchor, ready]);
 
   return (
     // Mobile: ruang ekstra di bawah agar konten tidak tertutup bottom nav.
@@ -66,8 +86,8 @@ export function SettingsPage({ section }: { section: SettingsSection }) {
         <div className="flex flex-col gap-8">
           {section === "profile" && <ProfileSection status={status} onOk={ok} onError={error} />}
           {section === "security" && <SecurityGroup status={status} onOk={ok} />}
+          {section === "workspace" && <WorkspaceGroup status={status} />}
           {section === "remote" && <RemoteAccessGroup protectedApp={status.protected} />}
-          {section === "devices" && <DevicesSection status={status} onError={error} />}
           {section === "about" && <AboutGroup />}
         </div>
       )}
@@ -79,10 +99,10 @@ export function SettingsPage({ section }: { section: SettingsSection }) {
 
 /**
  * Navigasi bagian Settings.
- * - sm+: deretan pil di bawah judul.
- * - Mobile: bottom navigation tetap di bawah layar (ikon + label, ala
- *   Material 3 NavigationBar) — terjangkau jempol dan tidak memakan
- *   tinggi di atas konten.
+ * - Judul + tombol About (ⓘ) di kanannya. Di halaman About, judul berubah
+ *   jadi tombol kembali — About bukan tab.
+ * - sm+: deretan pil (4) di bawah judul.
+ * - Mobile: bottom navigation (4 kolom, ala Material 3 NavigationBar).
  */
 function SettingsNav({ current }: { current: SettingsSection }) {
   const { navigate } = useRouter();
@@ -91,14 +111,43 @@ function SettingsNav({ current }: { current: SettingsSection }) {
     e.preventDefault();
     navigate(href);
   };
+  const onAbout = current === "about";
+  const aboutHref = settingsPath("about");
+  const backHref = settingsPath("profile");
 
   return (
     <>
       <div className="flex flex-col gap-3">
-        <h1 className="px-1 text-2xl font-semibold tracking-tight">Settings</h1>
+        <div className="flex items-center justify-between gap-3 px-1">
+          {onAbout ? (
+            <a
+              href={backHref}
+              onClick={go(backHref)}
+              className="-ml-2 flex items-center gap-2 rounded-full py-1 pr-3 pl-2 text-2xl font-semibold tracking-tight outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            >
+              <ArrowLeftIcon className="size-5" aria-hidden />
+              <span>Settings</span>
+            </a>
+          ) : (
+            <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
+          )}
+          <a
+            href={aboutHref}
+            onClick={go(aboutHref)}
+            aria-label="About KCG Code"
+            aria-current={onAbout ? "page" : undefined}
+            title="About KCG Code"
+            className={cn(
+              "flex size-10 items-center justify-center rounded-full text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
+              onAbout && "bg-muted text-foreground",
+            )}
+          >
+            <InfoIcon className="size-5" aria-hidden />
+          </a>
+        </div>
         <nav aria-label="Settings sections" className="hidden sm:block">
           <ul className="flex gap-1">
-            {SECTIONS.map(({ id, label, icon: Icon }) => {
+            {SETTINGS_TABS.map(({ id, label, icon: Icon }) => {
               const active = id === current;
               const href = settingsPath(id);
               return (
@@ -128,8 +177,8 @@ function SettingsNav({ current }: { current: SettingsSection }) {
         aria-label="Settings sections"
         className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:hidden"
       >
-        <ul className="mx-auto grid max-w-md grid-cols-5">
-          {SECTIONS.map(({ id, label, short, icon: Icon }) => {
+        <ul className="mx-auto grid max-w-md grid-cols-4">
+          {SETTINGS_TABS.map(({ id, label, short, icon: Icon }) => {
             const active = id === current;
             const href = settingsPath(id);
             return (
@@ -221,20 +270,6 @@ function ProfileSection({
 
       <AccountGroup />
     </>
-  );
-}
-
-// ----------------------------------------------------------- devices ----
-
-function DevicesSection({ status, onError }: { status: AuthStatus; onError: (t: string) => void }) {
-  if (status.protected) return <DevicesGroup onError={onError} />;
-  return (
-    <PrefsGroup title="Signed-in devices" description="Devices that have unlocked KCG Code.">
-      <li className="px-4 py-4 text-[13px] text-muted-foreground">
-        Devices are tracked once an app lock is set. Turn it on in{" "}
-        <SectionLink section="security">Security</SectionLink>.
-      </li>
-    </PrefsGroup>
   );
 }
 

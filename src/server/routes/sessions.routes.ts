@@ -127,7 +127,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
           const cur = sessionManager.getSession(req.params.id);
           if (!cur.ok)
             return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
-          const res = await sessionManager.findFiles(cur.data.projectId, query);
+          const res = await sessionManager.findFiles(cur.data.projectId, query, cur.data.agentType);
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ files: res.data });
         } catch (e) {

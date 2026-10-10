@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { type DashboardInfo, renderDashboard } from "../dashboard";
+import {
+  activeProvider,
+  bestUrl,
+  type DashboardInfo,
+  menuItems,
+  renderDashboard,
+} from "../dashboard";
 
 function makeInfo(overrides: Partial<DashboardInfo> = {}): DashboardInfo {
   return {
@@ -20,14 +26,19 @@ function makeInfo(overrides: Partial<DashboardInfo> = {}): DashboardInfo {
 }
 
 describe("renderDashboard", () => {
-  test("logo KCG + card SERVER dan ACTIVITY", () => {
+  test("logo KCG + status simpel Running", () => {
     const frame = renderDashboard(makeInfo(), "0.1.0");
     expect(frame).toContain("kcgcode");
     expect(frame).toContain("v0.1.0");
     expect(frame).toContain("██╗");
-    expect(frame).toContain("SERVER");
-    expect(frame).toContain("ACTIVITY");
-    expect(frame).toContain("active job");
+    expect(frame).toContain("Running");
+    expect(frame).toContain("URL");
+    expect(frame).toContain("PID");
+    expect(frame).toContain("Memory");
+    expect(frame).toContain("Uptime");
+    expect(frame).toContain("Tunnel");
+    expect(frame).toContain("Open in browser");
+    expect(frame).toContain("↑/↓ navigate");
     expect(frame).not.toContain("CONFIG");
   });
 
@@ -50,13 +61,44 @@ describe("renderDashboard", () => {
     });
 
     const before = renderDashboard(info, "0.1.0");
-    expect(before).toContain("sessions");
+    expect(before).toContain("Sessions");
 
     sessions = [{ id: "s9", status: "running", title: "fresh" }];
     const after = renderDashboard(info, "0.1.0");
-    expect(after).toContain("fresh");
-    expect(after).toContain("TUNNEL");
+    expect(after).toContain("1 running");
+    expect(after).toContain("Tunnel");
     expect(after).toContain("https://demo.example.com");
     expect(after).not.toBe(before);
+  });
+
+  test("menu simpel + info provider kcg/lhr", () => {
+    const info = makeInfo({
+      server: {
+        store: {
+          listProjects: () => [],
+          listSessions: () => [],
+          getTunnelSettings: () => ({ provider: "lhr" }),
+        },
+        tunnel: {
+          status: () => ({ phase: "stopped", account: null, error: null, pairing: null }),
+        },
+        lhr: {
+          status: () => ({ phase: "online", url: "https://abc.lhr.life", error: null }),
+        },
+        tunnelProvider: () => "lhr" as const,
+      } as unknown as DashboardInfo["server"],
+    });
+
+    expect(activeProvider(info)).toBe("lhr");
+    expect(bestUrl(info)).toEqual({ label: "public (lhr)", url: "https://abc.lhr.life" });
+    expect(menuItems({}).map((m) => m.id)).toEqual(["open", "copy", "qr", "detail", "quit"]);
+
+    const frame = renderDashboard(info, "0.1.0", { showQr: true, showDetail: true, menuIndex: 2 });
+    expect(frame).toContain("Running");
+    expect(frame).toContain("TUNNEL DETAIL");
+    expect(frame).toContain("OPEN ON PHONE");
+    expect(frame).toContain("lhr");
+    expect(frame).toContain("https://abc.lhr.life");
+    expect(frame).toContain("Hide phone QR");
   });
 });

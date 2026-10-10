@@ -79,8 +79,11 @@ export const MAX_FREE_TEXT_LENGTH = 10000;
 export const TURN_IDLE_TIMEOUT_MS = 300_000;
 export const SHUTDOWN_BUDGET_MS = 5000;
 
-/** v1 headless: hanya opencode (claude-code punya mekanisme headless sendiri). */
-export const SUPPORTED_AGENT_TYPES: readonly AgentType[] = ["opencode"];
+/**
+ * Tipe CLI_Agent yang dikenal. `claude-code` hanya aktif bila
+ * `claudeServers` diinjeksi (lihat `SessionManagerOptions`).
+ */
+export const SUPPORTED_AGENT_TYPES: readonly AgentType[] = ["opencode", "claude-code"];
 
 export interface CreateSessionRequest {
   agentType: AgentType;
@@ -101,6 +104,11 @@ const SKILL_REFRESH_DELAY_MS = 1500;
 export interface SessionManagerOptions {
   store: SessionStore;
   servers: OpenCodeServerManager;
+  /**
+   * Backend Claude Code (Agent SDK) dengan kontrak yang sama dengan
+   * `servers`. Tidak diisi -> Session `claude-code` ditolak.
+   */
+  claudeServers?: OpenCodeServerManager;
   /**
    * Penyimpanan lampiran gambar (upload dari perangkat). Bila tidak diisi,
    * fitur gambar dinonaktifkan — pesan dengan `images` ditolak.
@@ -199,16 +207,16 @@ export interface SessionManager {
    */
   releaseProject(projectId: string): Promise<SimpleResult>;
   /** Daftar model yang tersedia pada server headless milik Project. */
-  listModels(projectId: string): Promise<Result<ModelOption[]>>;
+  listModels(projectId: string, agentType?: AgentType): Promise<Result<ModelOption[]>>;
   /**
    * Daftar agent (mode) opencode milik Project — primary/all saja, siap
    * ditampilkan di pemilih mode composer.
    */
-  listAgents(projectId: string): Promise<Result<AgentOption[]>>;
+  listAgents(projectId: string, agentType?: AgentType): Promise<Result<AgentOption[]>>;
   /** Status MCP server yang terkonfigurasi untuk Project. */
-  listMcp(projectId: string): Promise<Result<McpServerInfo[]>>;
+  listMcp(projectId: string, agentType?: AgentType): Promise<Result<McpServerInfo[]>>;
   /** Skill yang terdaftar untuk Project (global, folder Project, bawaan). */
-  listSkills(projectId: string): Promise<Result<SkillInfo[]>>;
+  listSkills(projectId: string, agentType?: AgentType): Promise<Result<SkillInfo[]>>;
   /**
    * Muat ulang daftar skill server headless Project setelah skill dipasang.
    * Bila ada turn aktif di Project, refresh ditunda (`refreshed: false`) agar
@@ -220,7 +228,7 @@ export interface SessionManager {
   /** Project dengan refresh skill tertunda (menunggu turn selesai). */
   hasPendingSkillRefresh(projectId: string): boolean;
   /** Cari file project untuk autocomplete `@file` di composer. */
-  findFiles(projectId: string, query: string): Promise<Result<string[]>>;
+  findFiles(projectId: string, query: string, agentType?: AgentType): Promise<Result<string[]>>;
   /**
    * Konteks kerja Session untuk panel kanan: perubahan file di worktree,
    * cabang git, dan task list (`todowrite`) agent.
@@ -259,6 +267,17 @@ export interface SessionManager {
 export function createSessionManager(opts: SessionManagerOptions): SessionManager {
   const store = opts.store;
   const servers = opts.servers;
+  const claudeServers = opts.claudeServers;
+
+  /** Server manager backend milik tipe CLI_Agent. */
+  function serversFor(agentType: AgentType): OpenCodeServerManager {
+    return agentType === "claude-code" && claudeServers ? claudeServers : servers;
+  }
+
+  /** Kunci subscription/exit per backend + Project (keduanya bisa hidup). */
+  function backendKey(agentType: AgentType, projectId: string): string {
+    return agentType === "claude-code" ? `claude-code:${projectId}` : projectId;
+  }
   const attachments = opts.attachments;
   const now = opts.now ?? Date.now;
   const shutdownBudgetMs = opts.shutdownBudgetMs ?? SHUTDOWN_BUDGET_MS;
@@ -309,11 +328,11 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const ocToSession = new Map<string, string>();
   /** Kebalikan `ocToSession`: id Session lokal -> seluruh ocSessionId miliknya. */
   const sessionOcIds = new Map<string, Set<string>>();
-  /** Project yang event SSE-nya sudah disubscribe (subscription aktif). */
+  /** Backend+Project yang event-nya sudah disubscribe (lihat `backendKey`). */
   const activeSubscriptions = new Map<string, { active: boolean; unsubscribe: () => void }>();
   /** Serialisasi kirim pesan per Session agar turn tidak tumpang tindih. */
   const inflight = new Map<string, Promise<void>>();
-  /** Project yang sudah diproses saat server-nya keluar (hindari duplikasi). */
+  /** Backend+Project yang sudah diproses saat server-nya keluar (hindari duplikasi). */
   const exitNotified = new Set<string>();
   const onMessagePart = opts.onMessagePart;
   const onMessagePartDelta = opts.onMessagePartDelta;
@@ -557,31 +576,34 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   async function ensureServerFor(
     projectId: string,
     projectPath: string,
-    opts: { refreshConfig?: boolean } = {},
+    opts: { refreshConfig?: boolean; agentType?: AgentType } = {},
   ): Promise<Result<{ client: OpenCodeClient }>> {
-    const prevClient = servers.getServer(projectId)?.client;
+    const agentType = opts.agentType ?? "opencode";
+    const backend = serversFor(agentType);
+    const key = backendKey(agentType, projectId);
+    const prevClient = backend.getServer(projectId)?.client;
     const ensure = opts.refreshConfig
-      ? servers.ensureFreshServer(projectId, projectPath)
-      : servers.ensureServer(projectId, projectPath);
+      ? backend.ensureFreshServer(projectId, projectPath)
+      : backend.ensureServer(projectId, projectPath);
     const res = await ensure;
     if (!res.ok) return { ok: false, error: res.error };
     const handle = res.data;
     // Server headless dapat diganti (crash lalu ensure ulang, resume, atau
     // restart config). Bila client berbeda dari sebelumnya, subscription
     // lama tidak lagi menempel — buang dan subscribe ulang ke instance baru.
-    const sub = activeSubscriptions.get(projectId);
+    const sub = activeSubscriptions.get(key);
     if (prevClient && handle.client !== prevClient) {
       sub?.unsubscribe();
-      activeSubscriptions.delete(projectId);
+      activeSubscriptions.delete(key);
     }
-    if (!activeSubscriptions.get(projectId)?.active) {
-      const prev = activeSubscriptions.get(projectId);
+    if (!activeSubscriptions.get(key)?.active) {
+      const prev = activeSubscriptions.get(key);
       prev?.unsubscribe();
       const unsubscribe = handle.client.subscribeEvents((ev) => handleEvent(projectId, ev));
-      activeSubscriptions.set(projectId, { active: true, unsubscribe });
+      activeSubscriptions.set(key, { active: true, unsubscribe });
     }
     // Server baru (atau hasil restart) — izinkan event exit berikutnya diproses.
-    exitNotified.delete(projectId);
+    exitNotified.delete(key);
     return { ok: true, data: { client: handle.client } };
   }
 
@@ -595,7 +617,10 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
   async function createSession(req: CreateSessionRequest): Promise<CreateSessionResult> {
     // (1) tipe CLI_Agent didukung (Requirement 1.3)
-    if (!SUPPORTED_AGENT_TYPES.includes(req.agentType)) {
+    if (
+      !SUPPORTED_AGENT_TYPES.includes(req.agentType) ||
+      (req.agentType === "claude-code" && !claudeServers)
+    ) {
       return { ok: false, error: "UNSUPPORTED_AGENT_TYPE" };
     }
     // (2) Project ada di Session_Store (Requirement 10.10)
@@ -612,7 +637,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!dirExists) return { ok: false, error: "PROJECT_DIR_NOT_FOUND" };
 
     // (4) pastikan server headless untuk Project (spawn bila perlu)
-    const serverRes = await ensureServerFor(project.id, project.path);
+    const serverRes = await ensureServerFor(project.id, project.path, {
+      agentType: req.agentType,
+    });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     const client = serverRes.data.client;
 
@@ -680,7 +707,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (cur.data.status !== "running") return { ok: false, error: "SESSION_NOT_RUNNING" };
     // Abort turn berjalan (best-effort, tidak menunggu).
     if (cur.data.ocSessionId) {
-      const handle = servers.getServer(cur.data.projectId);
+      const handle = serversFor(cur.data.agentType).getServer(cur.data.projectId);
       void handle?.client.abortSession(cur.data.ocSessionId);
     }
     // Simpan parts yang sudah terkumpul sebelum Session ditutup.
@@ -705,7 +732,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
     // Abort turn berjalan (best-effort, tidak menunggu).
     if (cur.data.status === "running" && cur.data.ocSessionId) {
-      const handle = servers.getServer(cur.data.projectId);
+      const handle = serversFor(cur.data.agentType).getServer(cur.data.projectId);
       void handle?.client.abortSession(cur.data.ocSessionId);
     }
     // Buang turn parsial (tidak disimpan) + broadcast turn tidak aktif.
@@ -734,7 +761,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
 
     // (1) Pastikan server headless Project hidup (spawn ulang bila perlu).
-    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    const serverRes = await ensureServerFor(project.data.id, project.data.path, {
+      agentType: cur.data.agentType,
+    });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
 
     // (2) Verifikasi ocSessionId lama; bila tidak dikenal -> sesi remote baru.
@@ -781,13 +810,17 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (!res.ok) return res;
     }
     await servers.stopServer(projectId);
+    await claudeServers?.stopServer(projectId);
     // Subscription SSE ikut dilepas — server-nya sudah tidak ada.
-    const sub = activeSubscriptions.get(projectId);
-    if (sub) {
-      sub.unsubscribe();
-      activeSubscriptions.delete(projectId);
+    for (const agentType of SUPPORTED_AGENT_TYPES) {
+      const key = backendKey(agentType, projectId);
+      const sub = activeSubscriptions.get(key);
+      if (sub) {
+        sub.unsubscribe();
+        activeSubscriptions.delete(key);
+      }
+      exitNotified.delete(key);
     }
-    exitNotified.delete(projectId);
     return { ok: true };
   }
 
@@ -799,12 +832,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * (opencode serve tidak hot-reload config). Restart ditahan bila ada
    * Session `running` agar turn yang sedang berjalan tidak terputus.
    */
-  async function listModels(projectId: string): Promise<Result<ModelOption[]>> {
+  async function listModels(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<ModelOption[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
     const hasRunning = store.listProjectSessions(projectId).some((s) => s.status === "running");
     const serverRes = await ensureServerFor(project.data.id, project.data.path, {
       refreshConfig: !hasRunning,
+      agentType,
     });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.listModels();
@@ -817,12 +854,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * memicu restart server agar daftar ikut terbaru (dengan guard yang sama
    * seperti `listModels`).
    */
-  async function listAgents(projectId: string): Promise<Result<AgentOption[]>> {
+  async function listAgents(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<AgentOption[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
     const hasRunning = store.listProjectSessions(projectId).some((s) => s.status === "running");
     const serverRes = await ensureServerFor(project.data.id, project.data.path, {
       refreshConfig: !hasRunning,
+      agentType,
     });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.listAgents();
@@ -833,12 +874,16 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * daftar MCP dibaca dari config opencode di direktori Project. Config yang
    * berubah memicu restart (guard sama dengan `listModels`).
    */
-  async function listMcp(projectId: string): Promise<Result<McpServerInfo[]>> {
+  async function listMcp(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<McpServerInfo[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
     const hasRunning = store.listProjectSessions(projectId).some((s) => s.status === "running");
     const serverRes = await ensureServerFor(project.data.id, project.data.path, {
       refreshConfig: !hasRunning,
+      agentType,
     });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.listMcp();
@@ -848,10 +893,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
    * Skill yang terdaftar untuk Project. Skill di dalam folder Project
    * ditandai `project` sehingga UI dapat membedakannya dari skill global.
    */
-  async function listSkills(projectId: string): Promise<Result<SkillInfo[]>> {
+  async function listSkills(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<SkillInfo[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
-    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    const serverRes = await ensureServerFor(project.data.id, project.data.path, { agentType });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.listSkills(project.data.path);
   }
@@ -945,11 +993,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const cur = store.getSession(sessionId);
     if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
     const cwd = cur.data.cwd;
-    const handle = servers.getServer(cur.data.projectId);
+    const handle = serversFor(cur.data.agentType).getServer(cur.data.projectId);
+    // Task list disimpan per session REMOTE (opencode `ses_...` / UUID Claude).
+    const remoteId = cur.data.ocSessionId ?? sessionId;
 
     const [git, todos, changes, mcp] = await Promise.all([
       readGitInfo(cwd).catch(() => EMPTY_GIT_INFO),
-      handle ? handle.client.listTodos(sessionId) : Promise.resolve(null),
+      handle ? handle.client.listTodos(remoteId) : Promise.resolve(null),
       handle ? handle.client.fileStatus() : Promise.resolve(null),
       handle ? handle.client.listMcp() : Promise.resolve(null),
     ]);
@@ -967,10 +1017,14 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     };
   }
 
-  async function findFiles(projectId: string, query: string): Promise<Result<string[]>> {
+  async function findFiles(
+    projectId: string,
+    query: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<string[]>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
-    const serverRes = await ensureServerFor(project.data.id, project.data.path);
+    const serverRes = await ensureServerFor(project.data.id, project.data.path, { agentType });
     if (!serverRes.ok) return { ok: false, error: serverRes.error };
     return serverRes.data.client.findFiles(query);
   }
@@ -1017,7 +1071,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     turns.finish(sessionId);
     // Bila masih running, abort turn remote agar model berhenti dieksekusi.
     if (cur.data.status === "running" && cur.data.ocSessionId) {
-      const runningHandle = servers.getServer(cur.data.projectId);
+      const runningHandle = serversFor(cur.data.agentType).getServer(cur.data.projectId);
       void runningHandle?.client.abortSession(cur.data.ocSessionId);
     }
     unmapOcSessions(sessionId);
@@ -1028,11 +1082,13 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     //     dan hanya akan dihentikan saat shutdown.
     const ocSessionId = cur.data.ocSessionId;
     if (ocSessionId) {
-      let client = servers.getServer(cur.data.projectId)?.client;
+      let client = serversFor(cur.data.agentType).getServer(cur.data.projectId)?.client;
       if (!client) {
         const project = store.getProjectById(cur.data.projectId);
         if (!project.ok) return { ok: false, error: project.error };
-        const serverRes = await ensureServerFor(project.data.id, project.data.path);
+        const serverRes = await ensureServerFor(project.data.id, project.data.path, {
+          agentType: cur.data.agentType,
+        });
         if (!serverRes.ok) return { ok: false, error: serverRes.error };
         client = serverRes.data.client;
       }
@@ -1073,7 +1129,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     if (!ocSessionId) return { ok: false, error: "SESSION_NOT_ACTIVE" };
 
     // Pastikan server masih hidup SEBELUM menyimpan echo user.
-    const handle = servers.getServer(cur.data.projectId);
+    const handle = serversFor(cur.data.agentType).getServer(cur.data.projectId);
     if (!handle) return { ok: false, error: "SESSION_NOT_ACTIVE" };
 
     // Gambar upload dipetakan ke info + path absolut. Kegagalan resolve
@@ -1202,7 +1258,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
 
     const cur = store.getSession(sessionId);
     if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
-    const handle = servers.getServer(cur.data.projectId);
+    const handle = serversFor(cur.data.agentType).getServer(cur.data.projectId);
     if (!handle) return { ok: false, error: "SESSION_NOT_ACTIVE" };
 
     // Kumpulkan request pending yang identik (grup kartu yang sama di UI):
@@ -1316,7 +1372,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     const running = store.listSessions().filter((s) => s.status === "running");
     const results = running.map((s) => store.insertStatusHistory(s.id, "running", now()));
     await raceWithTimeout(Promise.resolve(results), shutdownBudgetMs);
-    await servers.stopAll();
+    await Promise.all([servers.stopAll(), claudeServers?.stopAll()]);
   }
 
   /** Balapan dengan timer budget; timer selalu dibersihkan setelah selesai. */
@@ -1333,19 +1389,22 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   // Saat server keluar tak terduga, tandai Session project tsb `crashed`.
-  servers.onServerExit((projectId) => {
-    if (exitNotified.has(projectId)) return;
-    exitNotified.add(projectId);
+  const onBackendExit = (agentType: AgentType) => (projectId: string) => {
+    const key = backendKey(agentType, projectId);
+    if (exitNotified.has(key)) return;
+    exitNotified.add(key);
     const crashedAt = now();
     for (const s of store.listSessions()) {
-      if (s.projectId === projectId && s.status === "running") {
+      if (s.projectId === projectId && s.agentType === agentType && s.status === "running") {
         // Server mati di tengah turn: selamatkan parts yang sudah ter-stream.
         turns.finish(s.id);
         updateStatus(s.id, "crashed", crashedAt);
         unmapOcSessions(s.id);
       }
     }
-  });
+  };
+  servers.onServerExit(onBackendExit("opencode"));
+  claudeServers?.onServerExit(onBackendExit("claude-code"));
 
   return {
     createSession,

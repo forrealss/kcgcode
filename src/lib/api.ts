@@ -9,12 +9,20 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** Body JSON respons error (detail tambahan, mis. daftar item penghalang). */
+  readonly body: Record<string, unknown> | null;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(
+    status: number,
+    code: string,
+    message: string,
+    body?: Record<string, unknown> | null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.body = body ?? null;
   }
 }
 
@@ -108,6 +116,31 @@ export function apiErrorMessage(code: string): string {
       return "Too many attempts. Wait a moment and try again.";
     case "AUTH_NOT_CONFIGURED":
       return "No lock has been set up yet.";
+    case "WORKSPACE_PATH_REQUIRED":
+      return "Enter a folder path.";
+    case "WORKSPACE_PATH_INVALID":
+      return "That path isn't valid.";
+    case "WORKSPACE_PATH_NOT_ABSOLUTE":
+      return "Use a full path, like ~/code or /srv/projects.";
+    case "WORKSPACE_NOT_FOUND":
+      return 'That folder doesn\'t exist. Tick "Create the folder" to make it.';
+    case "WORKSPACE_PARENT_NOT_FOUND":
+      return "The folder above it doesn't exist. Only the last folder can be created.";
+    case "WORKSPACE_NOT_DIRECTORY":
+      return "That path is a file, not a folder.";
+    case "WORKSPACE_TOO_BROAD":
+      return "That folder is too broad. Pick a dedicated folder, not your home or a system folder.";
+    case "WORKSPACE_CONTAINS_APP_DATA":
+      return "That folder overlaps KCG Code's own data. Pick a different folder.";
+    case "WORKSPACE_NOT_WRITABLE":
+      return "KCG Code can't write to that folder. Check its permissions.";
+    case "WORKSPACE_PROJECTS_OUTSIDE":
+      return "Some projects are outside the new folder. Remove them or pick a folder that contains them:";
+    case "WORKSPACE_CREATE_FAILED":
+      return "Couldn't create the folder.";
+    case "WORKSPACE_CONFIG_UNREADABLE":
+    case "WORKSPACE_CONFIG_WRITE_FAILED":
+      return "Couldn't save the config file. Check its permissions.";
     case "PASSKEY_INVALID":
       return "That passkey wasn't accepted. Try again or use your PIN or password.";
     case "PASSKEY_NONE":
@@ -219,14 +252,18 @@ export async function apiFetch(path: string, init: RequestInit = {}): Promise<Re
   const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     let code = `HTTP_${res.status}`;
+    let body: Record<string, unknown> | null = null;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (typeof body.error === "string" && body.error !== "") code = body.error;
+      const parsed = (await res.json()) as unknown;
+      if (parsed && typeof parsed === "object") {
+        body = parsed as Record<string, unknown>;
+        if (typeof body.error === "string" && body.error !== "") code = body.error;
+      }
     } catch {
       // body bukan JSON — pakai kode HTTP default.
     }
     if (res.status === 401 && code === "AUTH_REQUIRED") onAuthRequired?.();
-    throw new ApiError(res.status, code, apiErrorMessage(code));
+    throw new ApiError(res.status, code, apiErrorMessage(code), body);
   }
   return res;
 }

@@ -1,5 +1,5 @@
 {
-  "name": "kcgcode",
+  "name": "kcg-code",
   "version": "0.1.0",
   "description": "Control CLI AI agents (OpenCode / Claude Code) from your phone — mobile PWA + local headless bridge.",
   "license": "MIT",
@@ -44,6 +44,7 @@
     "postpack": "bun scripts/stamp-build-config.ts --reset"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.296",
     "@radix-ui/react-label": "^2.1.7",
     "@radix-ui/react-select": "^2.2.6",
     "@radix-ui/react-slot": "^1.2.3",

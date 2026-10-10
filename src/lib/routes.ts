@@ -14,12 +14,23 @@ export type AppRoute =
   | { name: "project"; projectId: string }
   | { name: "session"; projectId: string; sessionId: string }
   | { name: "skills" }
-  | { name: "settings"; section: SettingsSection }
+  | { name: "settings"; section: SettingsSection; anchor?: string }
   | { name: "not-found" };
 
-/** Sub-halaman Settings (`/settings/:section`). */
-export const SETTINGS_SECTIONS = ["profile", "security", "remote", "devices", "about"] as const;
+/**
+ * Sub-halaman Settings (`/settings/:section`). Tab yang tampil hanya
+ * profile/security/workspace/remote; `about` dibuka dari ikon di judul.
+ */
+export const SETTINGS_SECTIONS = ["profile", "security", "workspace", "remote", "about"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
+
+/**
+ * Alias URL lama -> section + anchor. `devices` kini bagian dari Security
+ * (grup "Signed-in devices"); URL lamanya tetap berfungsi.
+ */
+const SETTINGS_ALIASES: Record<string, { section: SettingsSection; anchor: string }> = {
+  devices: { section: "security", anchor: "devices" },
+};
 
 function isSettingsSection(value: string): value is SettingsSection {
   return (SETTINGS_SECTIONS as readonly string[]).includes(value);
@@ -78,6 +89,12 @@ export function parseRoute(pathname: string): AppRoute {
     if (segments.length === 2 && section !== undefined && isSettingsSection(section)) {
       return { name: "settings", section };
     }
+    // `Object.hasOwn`: hindari kunci prototipe (mis. "/settings/constructor").
+    const alias =
+      segments.length === 2 && section !== undefined && Object.hasOwn(SETTINGS_ALIASES, section)
+        ? SETTINGS_ALIASES[section]
+        : undefined;
+    if (alias) return { name: "settings", section: alias.section, anchor: alias.anchor };
     return { name: "not-found" };
   }
   if (segments[0] !== "projects") return { name: "not-found" };

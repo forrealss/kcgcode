@@ -2,6 +2,8 @@
  * Parser argumen CLI kcgcode (tanpa dependency eksternal).
  */
 
+import { c } from "./theme";
+
 export interface CliArgs {
   command: "start" | "init" | "reset-lock" | "help" | "version" | "invalid";
   port?: number;
@@ -47,8 +49,18 @@ EXAMPLES
   kcgcode init --config ~/.kcgcode/config.json
 `;
 
+/** Help berwarna: heading cyan, flag/command hijau, deskripsi redup. */
 export function helpText(): string {
-  return HELP_TEXT;
+  return HELP_TEXT.split("\n")
+    .map((line, i) => {
+      if (i === 0) return c.cyanBright(line);
+      if (/^[A-Z]+$/.test(line)) return c.cyanBright(line);
+      const m = line.match(/^(\s{2})(\S.*?)(\s{2,})(\S.*)$/);
+      if (m) return `${m[1]}${c.green(m[2] as string)}${m[3]}${c.dim(m[4] as string)}`;
+      if (/^\s+kcgcode/.test(line)) return c.white(line);
+      return line;
+    })
+    .join("\n");
 }
 
 export function parseArgs(argv: string[]): CliArgs {

@@ -1,6 +1,7 @@
 /**
- * Settings -> Signed-in devices (`/settings/devices`): sesi login per
- * perangkat, bisa di-sign-out satu per satu atau sekaligus.
+ * Settings -> Security -> Signed-in devices (`/settings/security#devices`,
+ * URL lama `/settings/devices` dialihkan ke sini): sesi login per perangkat,
+ * bisa di-sign-out satu per satu atau sekaligus.
  */
 import { LaptopIcon, SmartphoneIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
@@ -86,6 +87,7 @@ export function DevicesGroup({ onError }: { onError: (t: string) => void }) {
 
   return (
     <PrefsGroup
+      id="devices"
       title="Signed-in devices"
       description="Devices that have unlocked KCG Code."
       suffix={

@@ -9,8 +9,18 @@
  * (`app.ts`) bersama tabel rute lain — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
+import type { AgentType } from "../../types";
 import { errorStatus, json, readJson, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
+
+/**
+ * Backend yang ditanyakan lewat `?agent=` (default opencode) — daftar model &
+ * agent berbeda antara opencode dan Claude Code.
+ */
+function agentTypeParam(req: Request): AgentType {
+  const agent = new URL(req.url).searchParams.get("agent");
+  return agent === "claude-code" ? "claude-code" : "opencode";
+}
 
 export function projectsRoutes(ctx: ApiRouteContext) {
   const { projectManager, sessionManager, notifyDataChanged } = ctx;
@@ -107,7 +117,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
     "/api/projects/:id/models": {
       GET: async (req: BunRequest<"/api/projects/:id/models">) => {
         try {
-          const res = await sessionManager.listModels(req.params.id);
+          const res = await sessionManager.listModels(req.params.id, agentTypeParam(req));
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ models: res.data });
         } catch (e) {
@@ -145,7 +155,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
     "/api/projects/:id/agents": {
       GET: async (req: BunRequest<"/api/projects/:id/agents">) => {
         try {
-          const res = await sessionManager.listAgents(req.params.id);
+          const res = await sessionManager.listAgents(req.params.id, agentTypeParam(req));
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ agents: res.data });
         } catch (e) {

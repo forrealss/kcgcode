@@ -1,6 +1,7 @@
 /**
  * Settings -> Security (`/settings/security`): kunci aplikasi (PIN/password),
- * ganti/hapus kunci lewat dialog, kunci otomatis, dan passkey.
+ * ganti/hapus kunci lewat dialog, kunci otomatis, passkey, dan perangkat
+ * yang sedang login (dulu tab "Devices" sendiri).
  */
 import {
   KeyRoundIcon,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { DevicesGroup } from "@/components/settings/DevicesGroup";
 import { PasskeysGroup } from "@/components/settings/PasskeysGroup";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
@@ -171,6 +173,9 @@ export function SecurityGroup({ status, onOk }: { status: AuthStatus; onOk: (t: 
 
           {/* Passkey = cara buka kunci tambahan; hanya ada bila kunci aktif. */}
           <PasskeysGroup status={status} />
+
+          {/* Perangkat yang login (dulu tab "Devices" sendiri). */}
+          <DevicesGroup onError={(t) => toast.error(t)} />
 
           <PrefsGroup>
             <ActionRow

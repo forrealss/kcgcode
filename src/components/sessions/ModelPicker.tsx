@@ -31,13 +31,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { activeModelLabel, keyOfSessionModel, shortModelName } from "@/lib/model-picker";
 import type { ModelOption } from "@/server/services/opencode-client";
-import type { SessionModel } from "@/types";
+import type { AgentType, SessionModel } from "@/types";
 
 export interface ModelPickerProps {
   projectId: string;
+  /** Backend Session — daftar model opencode vs Claude Code berbeda. */
+  agentType?: AgentType;
   /** null = Session belum ada; pilihan tidak disimpan ke server. */
   sessionId: string | null;
   /** Model aktif saat ini; null = default opencode. */
@@ -57,6 +60,7 @@ export interface ModelPickerProps {
 
 export function ModelPicker({
   projectId,
+  agentType = "opencode",
   sessionId,
   model,
   onChanged,
@@ -79,7 +83,7 @@ export function ModelPicker({
     if (!open) return;
     setLoading(true);
     setError(null);
-    apiFetch(`/api/projects/${projectId}/models`)
+    apiFetch(`/api/projects/${projectId}/models${agentQuery(agentType)}`)
       .then(async (res) => {
         const body = (await res.json()) as { models: ModelOption[] };
         setModels(body.models);
@@ -91,7 +95,7 @@ export function ModelPicker({
       .finally(() => {
         setLoading(false);
       });
-  }, [open, projectId]);
+  }, [open, projectId, agentType]);
 
   const choose = async (next: SessionModel | null) => {
     setSaving(true);

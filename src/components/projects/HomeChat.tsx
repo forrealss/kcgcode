@@ -13,6 +13,7 @@
  * Keduanya di-reset saat Project berganti karena daftarnya per Project.
  */
 import {
+  BotIcon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
@@ -41,6 +42,7 @@ import {
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "@/hooks/useRouter";
+import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
 import { pickHeadline } from "@/lib/headlines";
@@ -49,9 +51,10 @@ import type { ProjectOverview } from "@/lib/project-overview";
 import { sessionPath } from "@/lib/routes";
 import { seedSession } from "@/lib/session-handoff";
 import logo from "@/logo.svg";
-import type { Session, SessionModel } from "@/types";
+import type { AgentType, Session, SessionModel } from "@/types";
 
 const LAST_PROJECT_KEY = "kcg-home-project";
+const LAST_AGENT_TYPE_KEY = "kcg-home-agent-type";
 
 export interface HomeChatProps {
   /** Project terurut aktivitas terbaru (`buildProjectOverviews`). */
@@ -64,12 +67,24 @@ function readLastProject(): string | null {
   return typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_PROJECT_KEY);
 }
 
+function readLastAgentType(): AgentType {
+  try {
+    const saved =
+      typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_AGENT_TYPE_KEY);
+    return saved === "claude-code" ? "claude-code" : "opencode";
+  } catch {
+    return "opencode";
+  }
+}
+
 export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   const { navigate } = useRouter();
   // Dipilih sekali per kunjungan — tidak berganti saat re-render.
   const [headline] = useState(() => pickHeadline());
   const [text, setText] = useState("");
   const [projectId, setProjectId] = useState<string | null>(readLastProject);
+  /** Backend Session baru (OpenCode / Claude Code), diingat per perangkat. */
+  const [agentType, setAgentType] = useState<AgentType>(readLastAgentType);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Model & agent untuk Session baru; null = default opencode. */
@@ -96,6 +111,21 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  const chooseAgentType = (next: AgentType) => {
+    if (next !== agentType) {
+      // Model & mode berasal dari backend masing-masing.
+      setModel(null);
+      setAgent(null);
+    }
+    setAgentType(next);
+    try {
+      localStorage.setItem(LAST_AGENT_TYPE_KEY, next);
+    } catch {
+      // Penyimpanan tidak tersedia (private mode) — pilihan tetap berlaku.
+    }
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
   const canSend = selected !== null && text.trim() !== "" && !sending;
 
   const submit = async (event?: React.FormEvent<HTMLFormElement>) => {
@@ -106,7 +136,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     try {
       const res = await apiFetch("/api/sessions", {
         method: "POST",
-        body: JSON.stringify({ agentType: "opencode", projectId: selected.id, model, agent }),
+        body: JSON.stringify({ agentType, projectId: selected.id, model, agent }),
       });
       const { session } = (await res.json()) as { session: Session };
       setPendingPrompt(session.id, text);
@@ -162,6 +192,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
               {selected && (
                 <AgentPicker
                   projectId={selected.id}
+                  agentType={agentType}
                   sessionId={null}
                   agent={agent}
                   onChanged={setAgent}
@@ -196,6 +227,9 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
                 >
                   <FolderIcon data-icon="inline-start" />
                   <span className="truncate">{selected?.name ?? "Select project"}</span>
+                  {agentType === "claude-code" && (
+                    <span className="shrink-0 text-xs text-muted-foreground/80">· Claude Code</span>
+                  )}
                   <ChevronDownIcon data-icon="inline-end" />
                 </Button>
               </DropdownMenuTrigger>
@@ -216,6 +250,17 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
                   ))}
                 </DropdownMenuGroup>
                 <DropdownMenuSeparator />
+                <DropdownMenuLabel>Agent</DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  {AGENT_TYPES.map((t) => (
+                    <DropdownMenuItem key={t} onSelect={() => chooseAgentType(t)}>
+                      <BotIcon />
+                      <span className="flex-1">{AGENT_TYPE_LABELS[t]}</span>
+                      {t === agentType && <CheckIcon />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuGroup>
+                <DropdownMenuSeparator />
                 <DropdownMenuGroup>
                   <DropdownMenuItem onSelect={onNewProject}>
                     <FolderPlusIcon />
@@ -229,6 +274,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
               <div className="flex min-w-0 max-w-[45%] justify-end">
                 <ModelPicker
                   projectId={selected.id}
+                  agentType={agentType}
                   sessionId={null}
                   model={model}
                   onChanged={setModel}

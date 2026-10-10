@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { keyOfSessionModel } from "@/lib/model-picker";
 import type { ModelOption } from "@/server/services/opencode-client";
@@ -35,7 +36,6 @@ import type { AgentType, SessionModel } from "@/types";
 import { ModelSearchList } from "./ModelSearchList";
 
 // v1 headless: hanya opencode (claude-code punya mekanisme headless sendiri).
-const AGENT_TYPES: AgentType[] = ["opencode"];
 
 export interface NewSessionDialogProps {
   open: boolean;
@@ -68,7 +68,7 @@ export function NewSessionDialog({
     setCreateError(null);
     setModelsLoading(true);
     setModelsError(null);
-    apiFetch(`/api/projects/${projectId}/models`)
+    apiFetch(`/api/projects/${projectId}/models${agentQuery(agentType)}`)
       .then(async (res) => {
         const body = (await res.json()) as { models: ModelOption[] };
         setModels(body.models);
@@ -80,7 +80,7 @@ export function NewSessionDialog({
       .finally(() => {
         setModelsLoading(false);
       });
-  }, [open, projectId]);
+  }, [open, projectId, agentType]);
 
   const create = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -115,21 +115,29 @@ export function NewSessionDialog({
         <DialogHeader>
           <DialogTitle>New session</DialogTitle>
           <DialogDescription>
-            The session runs on a headless OpenCode server with the project path as working
-            directory.
+            {agentType === "claude-code"
+              ? "The session runs Claude Code with your Claude Code settings, using the project path as working directory."
+              : "The session runs on a headless OpenCode server with the project path as working directory."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={create} className="flex min-h-0 flex-1 flex-col gap-4">
           <Field>
             <FieldLabel htmlFor="agent-type">CLI_Agent type</FieldLabel>
-            <Select value={agentType} onValueChange={(v) => setAgentType(v as AgentType)}>
+            <Select
+              value={agentType}
+              onValueChange={(v) => {
+                setAgentType(v as AgentType);
+                // Model berasal dari backend lain — pilihan lama tidak berlaku.
+                setSelectedModel(null);
+              }}
+            >
               <SelectTrigger id="agent-type" className="w-full">
                 <SelectValue placeholder="Choose type" />
               </SelectTrigger>
               <SelectContent>
                 {AGENT_TYPES.map((t) => (
                   <SelectItem key={t} value={t}>
-                    {t}
+                    {AGENT_TYPE_LABELS[t]}
                   </SelectItem>
                 ))}
               </SelectContent>

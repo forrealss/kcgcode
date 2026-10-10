@@ -126,7 +126,7 @@ export function SessionComposer({
    * Fetch + pick daftar agent untuk Sheet aksi mobile — dipakai langsung
    * (tanpa nested popover) supaya tap satu mode langsung menerapkannya.
    */
-  const agentPicker = useAgentPicker(session.projectId, session.id, setAgent);
+  const agentPicker = useAgentPicker(session.projectId, session.id, setAgent, session.agentType);
   // Muat daftar agent begitu Sheet aksi mobile pertama dibuka (lazy, sama
   // seperti popover AgentPicker di desktop).
   useEffect(() => {
@@ -589,6 +589,7 @@ export function SessionComposer({
             const agentPickerEl = (
               <AgentPicker
                 projectId={session.projectId}
+                agentType={session.agentType}
                 sessionId={session.id}
                 agent={agent}
                 onChanged={setAgent}

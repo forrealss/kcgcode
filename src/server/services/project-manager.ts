@@ -30,6 +30,14 @@ export interface ProjectManager {
    * Menolak bila masih ada Session miliknya (`PROJECT_HAS_SESSIONS`).
    */
   deleteProject(projectId: string): SimpleResult;
+  /** Sandbox_Root aktif (path absolut). */
+  getSandboxRoot(): string;
+  /**
+   * Ganti Sandbox_Root saat berjalan (Settings -> Workspace). Pemanggil
+   * WAJIB sudah memvalidasi root lewat `workspace.ts`; dari titik ini semua
+   * operasi (listing, create) memakai root baru.
+   */
+  setSandboxRoot(root: string): void;
 }
 
 /** Batas panjang custom instruction Project (karakter). */
@@ -41,9 +49,11 @@ function sandboxError(reason: string): string {
 }
 
 /**
- * Membuat instance Project_Manager terikat pada `sandboxRoot` dan `store`.
+ * Membuat instance Project_Manager terikat pada `store`. Sandbox_Root
+ * awal dari config; bisa diganti lewat `setSandboxRoot` tanpa restart.
  */
-export function createProjectManager(sandboxRoot: string, store: SessionStore): ProjectManager {
+export function createProjectManager(initialRoot: string, store: SessionStore): ProjectManager {
+  let sandboxRoot = initialRoot;
   function listDirectory(relativePath: string): Result<{ entries: string[] }> {
     const res = resolveWithinSandbox(sandboxRoot, relativePath);
     if (!res.ok) return { ok: false, error: sandboxError(res.reason) };
@@ -129,5 +139,9 @@ export function createProjectManager(sandboxRoot: string, store: SessionStore): 
     getProject,
     updateInstructions,
     deleteProject,
+    getSandboxRoot: () => sandboxRoot,
+    setSandboxRoot: (root: string) => {
+      sandboxRoot = root;
+    },
   };
 }

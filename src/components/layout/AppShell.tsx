@@ -106,7 +106,9 @@ export function AppShell() {
                     <ProjectDetailPage key={route.projectId} projectId={route.projectId} />
                   )}
                   {route.name === "skills" && <SkillsPage />}
-                  {route.name === "settings" && <SettingsPage section={route.section} />}
+                  {route.name === "settings" && (
+                    <SettingsPage section={route.section} anchor={route.anchor} />
+                  )}
                   {route.name === "not-found" && <NotFoundView />}
                 </div>
               </main>

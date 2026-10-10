@@ -45,6 +45,17 @@ export function errorStatus(code: string): number {
     case "AVATAR_PRESET_INVALID":
     case "AUTH_NOT_CONFIGURED":
     case "INVALID_PROVIDER":
+    case "WORKSPACE_PATH_REQUIRED":
+    case "WORKSPACE_PATH_INVALID":
+    case "WORKSPACE_PATH_NOT_ABSOLUTE":
+    case "WORKSPACE_NOT_DIRECTORY":
+    case "WORKSPACE_TOO_BROAD":
+    case "WORKSPACE_CONTAINS_APP_DATA":
+    case "WORKSPACE_NOT_WRITABLE":
+      return 400;
+    case "WORKSPACE_NOT_FOUND":
+    case "WORKSPACE_PARENT_NOT_FOUND":
+      return 404;
     case "PASSKEY_NAME_INVALID":
     case "PASSKEY_UNSUPPORTED_ORIGIN":
     case "PASSKEY_CHALLENGE_INVALID":

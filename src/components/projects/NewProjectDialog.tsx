@@ -8,7 +8,7 @@
  */
 
 import { ArrowLeftIcon, ArrowRightIcon, FolderIcon, FolderPlusIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { FolderBrowser } from "@/components/projects/FolderBrowser";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -24,8 +24,11 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
+import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiFetch } from "@/lib/api";
+import { settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
+import type { WorkspaceInfo } from "@/server/services/workspace";
 
 export interface NewProjectDialogProps {
   open: boolean;
@@ -49,6 +52,25 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
   const [nameTouched, setNameTouched] = useState(false);
   const [creating, setCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  /** Workspace (Sandbox_Root) aktif — ditampilkan di langkah 1. */
+  const [workspace, setWorkspace] = useState<WorkspaceInfo | null>(null);
+  const { navigate } = useRouter();
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void apiFetch("/api/workspace")
+      .then((r) => r.json())
+      .then((b: { workspace: WorkspaceInfo }) => {
+        if (!cancelled) setWorkspace(b.workspace);
+      })
+      .catch(() => {
+        // Info tambahan saja; dialog tetap bisa dipakai.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   const reset = () => {
     setStep(1);
@@ -125,6 +147,27 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
             <div className="min-h-0 flex-1">
               <FolderBrowser path={path} onNavigate={setPath} />
             </div>
+            {workspace && (
+              <p className="flex min-w-0 items-center gap-1.5 text-[12px] text-muted-foreground">
+                <span className="shrink-0">Projects live in</span>
+                <code className="min-w-0 truncate font-mono" title={workspace.root}>
+                  {workspace.display}
+                </code>
+                <span aria-hidden>·</span>
+                <a
+                  href={settingsPath("workspace")}
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+                    e.preventDefault();
+                    handleOpenChange(false);
+                    navigate(settingsPath("workspace"));
+                  }}
+                  className="shrink-0 font-medium text-foreground underline underline-offset-2"
+                >
+                  Change
+                </a>
+              </p>
+            )}
             <DialogFooter>
               <Button type="button" onClick={goToNaming}>
                 Next

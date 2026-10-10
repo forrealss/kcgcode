@@ -22,9 +22,12 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Spinner } from "@/components/ui/spinner";
 import { useAgentPicker } from "@/hooks/useAgentPicker";
 import { cn } from "@/lib/utils";
+import type { AgentType } from "@/types";
 
 export interface AgentPickerProps {
   projectId: string;
+  /** Backend Session — Claude Code menawarkan mode permission. */
+  agentType?: AgentType;
   /** null = Session belum ada (composer homepage): pilihan tidak di-PUT. */
   sessionId: string | null;
   /** Agent aktif saat ini; null = default opencode (build). */
@@ -39,6 +42,7 @@ export interface AgentPickerProps {
 
 export function AgentPicker({
   projectId,
+  agentType = "opencode",
   sessionId,
   agent,
   onChanged,
@@ -53,6 +57,7 @@ export function AgentPicker({
       onChanged(name);
       setOpen(false);
     },
+    agentType,
   );
 
   const isPlan = agent?.toLowerCase() === "plan";

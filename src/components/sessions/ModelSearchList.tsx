@@ -86,7 +86,12 @@ export function ModelSearchList({
             {showDefault && (
               <ModelRow
                 name="Default model"
-                hint="Follow opencode configuration"
+                hint={
+                  // Daftar dari backend Claude Code (providerID `claude-code`).
+                  models?.[0]?.providerID === "claude-code"
+                    ? "Follow your Claude Code settings"
+                    : "Follow opencode configuration"
+                }
                 selected={activeKey === DEFAULT_MODEL_KEY}
                 disabled={disabled}
                 onSelect={() => onSelect(null)}

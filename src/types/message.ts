@@ -34,7 +34,7 @@ export interface MessagePart {
    * `input` (argumen tool, mis. `filePath` untuk read/edit), dan `output`
    * (hasil). Dipakai renderer untuk menampilkan target tiap tool call.
    */
-  state?: { input?: Record<string, unknown>; output?: unknown };
+  state?: { input?: Record<string, unknown>; output?: unknown; [k: string]: unknown };
   /**
    * Timing asli dari opencode (ReasoningPart, TextPart, ToolState).
    * `start`/`end` adalah Unix ms. Hadir di part yang sudah selesai di-stream;

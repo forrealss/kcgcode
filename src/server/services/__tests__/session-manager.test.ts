@@ -3467,3 +3467,43 @@ test("deleteSession membersihkan lampiran gambar Session", async () => {
     h.close();
   }
 });
+
+test("Session claude-code memakai backend Claude Code; opencode tidak tersentuh", async () => {
+  const claude = makeFakeServers();
+  const h = freshHarnessWithHooks({}, {}, { claudeServers: claude.manager });
+  try {
+    const sid = await createSession(h, "claude-code");
+    expect(claude.ensureCalls).toHaveLength(1);
+    expect(h.fake.ensureCalls).toHaveLength(0);
+    const cc = claude.clients.get("p1");
+    if (!cc) throw new Error("claude client tidak ada");
+
+    expect((await h.sm.sendFreeTextInput(sid, "halo")).ok).toBe(true);
+    await flush();
+    expect(cc.calls).toContain("promptAsync:halo");
+
+    // Event dari backend Claude Code memetakan ke Session lokal yang sama.
+    cc.emit({
+      type: "permission.asked",
+      sessionID: "ses_remote1",
+      requestID: "per_cc",
+      permission: "bash",
+      patterns: ["ls"],
+    });
+    expect(h.prompts.map((p) => p.id)).toEqual(["per_cc"]);
+    expect((await h.sm.resolvePrompt(sid, "per_cc", "approve")).ok).toBe(true);
+    expect(cc.calls).toContain("replyPermission:per_cc:once");
+
+    // Daftar model per backend + task list dibaca dari session remote.
+    expect((await h.sm.listModels("p1", "claude-code")).ok).toBe(true);
+    expect(cc.calls).toContain("listModels");
+    expect((await h.sm.sessionContext(sid)).ok).toBe(true);
+    expect(cc.calls).toContain("listTodos:ses_remote1");
+    expect(h.fake.ensureCalls).toHaveLength(0);
+
+    expect((await h.sm.releaseProject("p1")).ok).toBe(true);
+    expect(claude.stopped).toContain("p1");
+  } finally {
+    h.close();
+  }
+});

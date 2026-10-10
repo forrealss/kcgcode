@@ -131,6 +131,7 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/tunnel/lhr/stop",
       "/api/meta",
       "/api/auth/onboarding/complete",
+      "/api/workspace",
       "/api/auth/passkeys",
       "/api/auth/passkeys/register/options",
       "/api/auth/passkeys/register",

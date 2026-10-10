@@ -7,8 +7,10 @@
  * di Sheet tidak perlu buka popover lagi di dalam popover.
  */
 import { useCallback, useRef, useState } from "react";
+import { agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { AgentOption } from "@/server/services/opencode-client";
+import type { AgentType } from "@/types";
 
 export interface UseAgentPickerResult {
   agents: AgentOption[] | null;
@@ -26,6 +28,8 @@ export function useAgentPicker(
   /** null = Session belum ada (composer homepage): pilihan tidak di-PUT. */
   sessionId: string | null,
   onChanged: (agent: string | null) => void,
+  /** Backend Session — Claude Code menawarkan mode permission sebagai agent. */
+  agentType: AgentType = "opencode",
 ): UseAgentPickerResult {
   const [agents, setAgents] = useState<AgentOption[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -55,7 +59,7 @@ export function useAgentPicker(
     setError(null);
     void (async () => {
       try {
-        const res = await apiFetch(`/api/projects/${projectId}/agents`);
+        const res = await apiFetch(`/api/projects/${projectId}/agents${agentQuery(agentType)}`);
         const body = (await res.json()) as { agents: AgentOption[] };
         setAgents(body.agents);
       } catch (e) {
@@ -66,7 +70,7 @@ export function useAgentPicker(
         setLoading(false);
       }
     })();
-  }, [projectId]);
+  }, [projectId, agentType]);
 
   const pick = useCallback(
     async (name: string | null) => {

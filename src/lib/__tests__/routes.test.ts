@@ -113,8 +113,19 @@ describe("rute settings", () => {
     expect(parseRoute("/settings/security/x")).toEqual({ name: "not-found" });
   });
 
+  test("URL lama /settings/devices -> Security, grup devices", () => {
+    expect(parseRoute("/settings/devices")).toEqual({
+      name: "settings",
+      section: "security",
+      anchor: "devices",
+    });
+    // Kunci prototipe bukan alias.
+    expect(parseRoute("/settings/constructor")).toEqual({ name: "not-found" });
+    expect(parseRoute("/settings/toString")).toEqual({ name: "not-found" });
+  });
+
   test("sub-halaman settings", () => {
-    for (const section of ["profile", "security", "remote", "devices", "about"] as const) {
+    for (const section of ["profile", "security", "workspace", "remote", "about"] as const) {
       expect(settingsPath(section)).toBe(`/settings/${section}`);
       expect(parseRoute(`/settings/${section}`)).toEqual({ name: "settings", section });
       expect(parseRoute(`/settings/${section}/`)).toEqual({ name: "settings", section });

@@ -261,6 +261,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
   let app: KcgServer;
   let root: string;
   let servers: FakeServers;
+  let claudeServers: FakeServers;
   /** Instalasi yang diminta ke Skills_Registry palsu: [cwd, source, skill]. */
   const installCalls: [string, string, string][] = [];
   const skillsRegistry: SkillsRegistry = {
@@ -297,10 +298,12 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     root = mkdtempSync(path.join(tmpdir(), "kcg-e2e2-"));
     mkdirSync(path.join(root, "proj"), { recursive: true });
     servers = makeFakeServers();
+    claudeServers = makeFakeServers();
     app = createKcgServer({
       config: { sandboxRoot: root, configPath: "test" },
       store,
       servers: servers.manager,
+      claudeServers: claudeServers.manager,
       uploadsRoot: path.join(root, "uploads"),
       port: 0,
       skillsRegistry,
@@ -658,7 +661,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(sessRes.status).toBe(200);
   });
 
-  test("agentType claude-code ditolak (v1 headless hanya opencode)", async () => {
+  test("agentType claude-code memakai backend Claude Code; tipe tak dikenal ditolak", async () => {
     const projRes = await fetch(`${baseUrl()}/api/projects`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -678,10 +681,20 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     const sessRes = await fetch(`${baseUrl()}/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ agentType: "claude-code", projectId: body2.project.id }),
+      body: JSON.stringify({ agentType: "codex", projectId: body2.project.id }),
     });
     expect(sessRes.status).toBe(400);
     expect(((await sessRes.json()) as { error: string }).error).toBe("UNSUPPORTED_AGENT_TYPE");
+
+    const claudeRes = await fetch(`${baseUrl()}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentType: "claude-code", projectId: body2.project.id }),
+    });
+    expect(claudeRes.status).toBe(201);
+    const { session } = (await claudeRes.json()) as { session: Session };
+    expect(session.agentType).toBe("claude-code");
+    expect(session.ocSessionId).toBe(`ses_${body2.project.id}`);
   });
 
   test("body JSON tidak valid -> 400 INVALID_JSON", async () => {

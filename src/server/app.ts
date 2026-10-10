@@ -21,7 +21,12 @@ import path from "node:path";
 import { type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
 import { type AppConfig, loadConfig } from "../config";
 import { openSessionStore, type SessionStore } from "../db";
-import { PUBLIC_DIR, resolveEffectiveUploadsDir, resolveFrpcConfigPath } from "../paths";
+import {
+  PUBLIC_DIR,
+  resolveEffectiveDbPath,
+  resolveEffectiveUploadsDir,
+  resolveFrpcConfigPath,
+} from "../paths";
 import { resolveHostname } from "./host";
 import { authRoutes } from "./routes/auth.routes";
 import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
@@ -33,9 +38,11 @@ import { skillsRoutes } from "./routes/skills.routes";
 import { tunnelRoutes } from "./routes/tunnel.routes";
 import type { ApiRouteContext } from "./routes/types";
 import { uploadsRoutes } from "./routes/uploads.routes";
+import { workspaceRoutes } from "./routes/workspace.routes";
 import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
 import { type AuthService, createAuthService } from "./services/auth";
 import { createPasskeyService } from "./services/auth-passkeys";
+import { createClaudeCodeServerManager } from "./services/claude-code-client";
 import { createFrpcInstaller } from "./services/frpc-installer";
 import {
   createOpenCodeServerManager,
@@ -73,6 +80,8 @@ export interface KcgServerOptions {
   store?: SessionStore;
   /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
   servers?: OpenCodeServerManager;
+  /** Injeksi backend Claude Code (Agent SDK) untuk pengujian. */
+  claudeServers?: OpenCodeServerManager;
   /** Injeksi Skills_Registry (skills.sh + CLI `skills`) untuk pengujian. */
   skillsRegistry?: SkillsRegistry;
   /** Injeksi Auth_Service (mis. hash cepat untuk test). */
@@ -119,6 +128,10 @@ export interface KcgServer {
   auth: AuthService;
   /** Tunnel publik (diekspos untuk dashboard terminal & pengujian). */
   tunnel: TunnelManager;
+  /** Tunnel localhost.run (diekspos untuk dashboard terminal). */
+  lhr: LhrManager;
+  /** Provider tunnel terpilih: "kcg" | "lhr". */
+  tunnelProvider: () => "kcg" | "lhr";
   /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
   apiRoutePatterns: string[];
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
@@ -160,6 +173,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
 
   const projectManager = createProjectManager(config.sandboxRoot, store);
   const servers = opts.servers ?? createOpenCodeServerManager();
+  // Proses `claude` baru di-spawn saat Session Claude Code menerima prompt.
+  const claudeServers = opts.claudeServers ?? createClaudeCodeServerManager();
   const attachments: AttachmentManager = createAttachmentManager(uploadsRoot);
 
   // Skills_Registry & job instalasi dibuat lebih dulu: session manager
@@ -176,6 +191,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const sessionManager = createSessionManager({
     store,
     servers,
+    claudeServers,
     attachments,
     onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
     onMessagePart: (sessionId, messageId, part) =>
@@ -288,6 +304,17 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     ...uploadsRoutes(routeCtx),
     ...skillsRoutes(routeCtx),
     ...tunnelRoutes(routeCtx),
+    ...workspaceRoutes(routeCtx, {
+      auth,
+      configPath: config.configPath,
+      // Data (DB, uploads, frpc.toml) & config KCG Code tak boleh berada di
+      // dalam workspace — agent bisa membaca hash sandi / token tunnel.
+      protectedDirs: [
+        path.dirname(resolveEffectiveDbPath()),
+        uploadsRoot,
+        path.dirname(config.configPath),
+      ],
+    }),
   });
 
   const server = serve<WsData>({
@@ -392,6 +419,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     skillInstalls,
     auth,
     tunnel,
+    lhr,
+    tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
     apiRoutePatterns: Object.keys(apiRoutes),
     close,
   };

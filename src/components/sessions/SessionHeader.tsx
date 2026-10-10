@@ -75,6 +75,7 @@ export function SessionHeader({
         <div className="flex min-w-0 flex-1 flex-col items-start">
           <ModelPicker
             projectId={session.projectId}
+            agentType={session.agentType}
             sessionId={session.id}
             model={model}
             onChanged={setModel}
