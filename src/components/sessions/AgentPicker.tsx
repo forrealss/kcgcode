@@ -104,14 +104,18 @@ export function AgentPicker({
         side="top"
         sideOffset={8}
         collisionPadding={12}
-        className="w-80 p-0"
+        // Tinggi SELURUH popover (header + daftar) dibatasi ruang yang
+        // tersedia (Radix). Bila hanya daftar yang dibatasi, header membuat
+        // popover selalu sedikit melebihi ruang -> floating-ui membalik sisi
+        // atas/bawah, tinggi daftar ikut berubah, dan ResizeObserver berputar
+        // ("ResizeObserver loop completed…") saat "More modes" dibuka.
+        className="flex max-h-[min(26rem,var(--radix-popover-content-available-height))] w-80 flex-col overflow-hidden p-0"
       >
-        <div className="border-b px-3 pt-2.5 pb-2">
+        <div className="shrink-0 border-b px-3 pt-2.5 pb-2">
           <p className="text-sm font-medium">Mode</p>
           <p className="text-xs text-muted-foreground">How the agent handles your next message</p>
         </div>
-        {/* Tinggi menyesuaikan ruang di atas trigger (Radix), dibatasi 22rem. */}
-        <div className="max-h-[min(22rem,var(--radix-popover-content-available-height))] overflow-y-auto overscroll-contain p-1.5 [scrollbar-width:thin]">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5 [scrollbar-width:thin]">
           <AgentModeList
             agents={agents}
             loading={loading}

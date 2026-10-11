@@ -183,7 +183,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const skillsRegistry = opts.skillsRegistry ?? createSkillsRegistry();
   const skillInstalls = createSkillInstallJobs({
     registry: skillsRegistry,
-    refreshSkills: (projectId) => sessionManager.refreshSkills(projectId),
+    refreshSkills: (projectId, agentType) => sessionManager.refreshSkills(projectId, agentType),
     validate: (source, skill) => isValidSource(source) && isValidSkillId(skill),
   });
 

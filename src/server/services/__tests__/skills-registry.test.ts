@@ -146,6 +146,12 @@ describe("parsing", () => {
     ]);
   });
 
+  test("buildInstallArgs: beberapa agent setelah satu --agent", () => {
+    const args = buildInstallArgs("a/b", "c", ["opencode", "claude-code"]);
+    const i = args.indexOf("--agent");
+    expect(args.slice(i, i + 4)).toEqual(["--agent", "opencode", "claude-code", "-y"]);
+  });
+
   test("parseInstallOutput: JSON setelah teks lain; status harus installed/updated", () => {
     const ok = parseInstallOutput(
       'log line\n[{"name":"c","status":"installed","path":"/p/.agents/skills/c"}]',

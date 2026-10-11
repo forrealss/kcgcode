@@ -7,13 +7,16 @@
  * - Audit keamanan: `GET https://skills.sh/api/v1/skills/audit/{id}` (saat
  *   ini dapat diakses tanpa token; 404 = belum pernah diaudit).
  * - Instalasi: `bunx skills@<ver> add <source> --skill <name> --agent
- *   opencode -y --json` di direktori Project. CLI memasang ke
- *   `.agents/skills/<name>/` yang langsung dibaca opencode; server headless
- *   Project perlu `POST /instance/dispose` agar daftar skill ter-refresh.
+ *   <opencode> <claude-code> -y --json` di direktori Project (satu atau
+ *   kedua agent sekaligus). CLI memasang ke
+ *   `.agents/skills/<name>/` (dibaca opencode; server headless Project perlu
+ *   `POST /instance/dispose` agar daftar skill ter-refresh); untuk Claude
+ *   Code ditambah symlink `.claude/skills/<name>/`.
  *
  * Argumen CLI dibangun sebagai array (tanpa shell) dan `source`/`skill`
  * divalidasi ketat sebelum dipakai, sehingga tidak ada celah injeksi.
  */
+import type { AgentType } from "../../types";
 import type { Result } from "../result";
 
 /** Versi CLI `skills` yang dipin (hindari perubahan perilaku mendadak). */
@@ -154,7 +157,11 @@ export function parseAuditResponse(payload: unknown): SkillAudit {
 }
 
 /** Argumen `bunx` untuk instalasi (array — tanpa shell). */
-export function buildInstallArgs(source: string, skillId: string): string[] {
+export function buildInstallArgs(
+  source: string,
+  skillId: string,
+  agentTypes: readonly AgentType[] = ["opencode"],
+): string[] {
   return [
     "bunx",
     `skills@${SKILLS_CLI_VERSION}`,
@@ -162,8 +169,10 @@ export function buildInstallArgs(source: string, skillId: string): string[] {
     source,
     "--skill",
     skillId,
+    // Id agent CLI `skills` kebetulan sama dengan `AgentType`; beberapa
+    // nilai setelah satu `--agent` diterima CLI.
     "--agent",
-    "opencode",
+    ...agentTypes,
     "-y",
     "--json",
   ];
@@ -235,6 +244,8 @@ export interface SkillsRegistry {
     skillId: string,
     onLine?: (line: string) => void,
     signal?: AbortSignal,
+    /** Agent tujuan (`--agent`); default `["opencode"]`. */
+    agentTypes?: readonly AgentType[],
   ): Promise<Result<InstallResult>>;
 }
 
@@ -418,6 +429,7 @@ export function createSkillsRegistry(opts: SkillsRegistryOptions = {}): SkillsRe
     skillId: string,
     onLine?: (line: string) => void,
     signal?: AbortSignal,
+    agentTypes: readonly AgentType[] = ["opencode"],
   ): Promise<Result<InstallResult>> {
     if (!isValidSource(source) || !isValidSkillId(skillId)) {
       return { ok: false, error: "INVALID_SKILL_ID" };
@@ -435,7 +447,7 @@ export function createSkillsRegistry(opts: SkillsRegistryOptions = {}): SkillsRe
       onLine(line);
     };
     try {
-      const args = buildInstallArgs(source, skillId);
+      const args = buildInstallArgs(source, skillId, agentTypes);
       emit(`$ ${args.join(" ")}`);
       const res = await spawn(args, projectPath, INSTALL_TIMEOUT_MS, emit, signal);
       if (signal?.aborted) {

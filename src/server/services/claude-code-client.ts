@@ -43,6 +43,8 @@ import {
 import type { SessionModel } from "../../types";
 import type { Result, SimpleResult } from "../result";
 import { ClaudeTurnTranslator, permissionName, permissionTarget } from "./claude-code-translate";
+import { mergeClaudeMcp, readClaudeMcpConfig } from "./claude-mcp";
+import { claudeGlobalSkillsDir, listClaudeSkills } from "./claude-skills";
 import type {
   AgentOption,
   McpServerInfo,
@@ -827,7 +829,10 @@ export function createClaudeCodeClient(
       }
       break;
     }
-    return { ok: true, data: lastMcp };
+    // Server terkonfigurasi tetap tampil walau belum ada proses `claude`
+    // (status `unknown` sampai proses berjalan dan melaporkannya).
+    const configured = await readClaudeMcpConfig(cwd, baseEnv);
+    return { ok: true, data: mergeClaudeMcp(configured, lastMcp) };
   }
 
   async function projectFiles(): Promise<string[]> {
@@ -982,7 +987,11 @@ export function createClaudeCodeClient(
     },
     listMcp,
     async listSkills() {
-      return { ok: true, data: [] };
+      try {
+        return { ok: true, data: await listClaudeSkills(cwd, claudeGlobalSkillsDir(baseEnv)) };
+      } catch (e) {
+        return { ok: false, error: `CC_SKILLS_FAILED: ${(e as Error).message}` };
+      }
     },
     async disposeInstance() {
       // Skill/config dibaca ulang tiap proses `claude` baru.

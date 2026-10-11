@@ -3,16 +3,21 @@
  *
  * Dipakai dua tempat dengan cara berbeda:
  * - `ModelPicker.tsx` (ganti model Session berjalan) membukanya sebagai dialog.
- * - `SessionList.tsx` (buat Session baru) menyematkannya di dalam form.
+ * - `NewSessionDialog.tsx` (buat Session baru) menyematkannya di dalam form.
+ *
+ * Gaya libadwaita (GNOME): kolom cari ala GtkSearchEntry (terisi, tanpa
+ * border, tombol hapus), lalu "boxed list" per provider seperti
+ * AdwPreferencesGroup — judul grup di atas kartu membulat berbaris
+ * pemisah; model aktif ditandai centang di kanan (bukan latar), hasil kosong
+ * memakai pola AdwStatusPage. Enter di kolom cari memilih hasil pertama.
  *
  * Komponen ini tidak melakukan fetch maupun simpan: pemanggil menyediakan
  * `models` dan menerima pilihan lewat `onSelect`. Aturan pencarian dan
  * pengelompokan berasal dari `lib/model-picker.ts` (murni, teruji).
  */
 
-import { CheckIcon, SearchIcon } from "lucide-react";
-import { useMemo, useState } from "react";
-import { Input } from "@/components/ui/input";
+import { CheckIcon, SearchIcon, XIcon } from "lucide-react";
+import { type ReactNode, useMemo, useRef, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import {
   DEFAULT_MODEL_KEY,
@@ -48,6 +53,7 @@ export function ModelSearchList({
   className,
 }: ModelSearchListProps) {
   const [query, setQuery] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const filtered = useMemo(() => filterModels(models ?? [], query), [models, query]);
   const groups = useMemo(() => groupModels(filtered), [filtered]);
@@ -57,51 +63,101 @@ export function ModelSearchList({
     return q === "" || "model default".includes(q);
   }, [query]);
   const empty = !loading && !showDefault && groups.length === 0;
+  const isClaude = models?.[0]?.providerID === "claude-code";
+
+  /** Enter di kolom cari: pilih hasil teratas (default bila masih tampil). */
+  const pickFirst = () => {
+    if (loading || disabled) return;
+    if (showDefault) return onSelect(null);
+    const first = groups[0]?.models[0];
+    if (first) onSelect({ providerID: first.providerID, modelID: first.modelID });
+  };
 
   return (
-    <div className={cn("flex min-h-0 flex-col gap-2", className)}>
+    <div className={cn("flex min-h-0 flex-col gap-3", className)}>
+      {/* GtkSearchEntry: terisi, tanpa border, ikon kaca pembesar + hapus. */}
       <div className="relative shrink-0">
-        <SearchIcon className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
+        <SearchIcon
+          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <input
+          ref={inputRef}
+          type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search models or providers…"
-          aria-label="Search models"
-          className="pl-9"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              pickFirst();
+            } else if (e.key === "Escape" && query !== "") {
+              // Esc mengosongkan cari dulu (dialog pemanggil menahan tutupnya,
+              // lihat `ModelPicker`); Esc berikutnya baru menutup dialog.
+              e.preventDefault();
+              setQuery("");
+            }
+          }}
+          placeholder={
+            models && models.length > 0 ? `Search ${models.length} models…` : "Search models…"
+          }
+          aria-label="Search models or providers"
+          aria-describedby="model-search-count"
+          // 16px di HP: iOS Safari men-zoom halaman saat fokus ke input < 16px.
+          className="h-9 w-full rounded-lg bg-black/[0.06] pr-9 pl-9 text-base outline-none transition-shadow placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring/60 sm:text-sm dark:bg-white/[0.08] [&::-webkit-search-cancel-button]:hidden"
         />
+        {query !== "" && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              inputRef.current?.focus();
+            }}
+            aria-label="Clear search"
+            className="absolute top-1/2 right-1.5 flex size-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        )}
+        <span id="model-search-count" className="sr-only" aria-live="polite">
+          {loading ? "Loading models" : describeModelCount(filtered.length)}
+        </span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* `-mx-1 px-1`: ruang untuk ring fokus baris agar tidak terpotong. */}
+      <div className="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1 pb-1">
         {loading ? (
-          <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-            <Spinner className="size-4" />
+          <div className="flex h-full min-h-40 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <Spinner className="size-6" />
             Loading models…
           </div>
         ) : empty ? (
-          <p className="py-8 text-center text-sm text-muted-foreground">
-            No models match “{query.trim()}”.
-          </p>
+          // AdwStatusPage
+          <div className="flex h-full min-h-40 flex-col items-center justify-center gap-2 px-6 text-center">
+            <SearchIcon className="mb-2 size-12 text-muted-foreground/40" aria-hidden />
+            <p className="text-lg font-semibold">No Results Found</p>
+            <p className="text-sm text-muted-foreground">
+              No model matches “{query.trim()}”. Try a different search.
+            </p>
+          </div>
         ) : (
-          <div className="flex flex-col gap-1 pb-1">
+          <div className="flex flex-col gap-5">
             {showDefault && (
-              <ModelRow
-                name="Default model"
-                hint={
-                  // Daftar dari backend Claude Code (providerID `claude-code`).
-                  models?.[0]?.providerID === "claude-code"
-                    ? "Follow your Claude Code settings"
-                    : "Follow opencode configuration"
-                }
-                selected={activeKey === DEFAULT_MODEL_KEY}
-                disabled={disabled}
-                onSelect={() => onSelect(null)}
-              />
+              <BoxedList label="Default">
+                <ModelRow
+                  name="Default model"
+                  hint={
+                    isClaude
+                      ? "Follows your Claude Code settings"
+                      : "Follows opencode configuration"
+                  }
+                  selected={activeKey === DEFAULT_MODEL_KEY}
+                  disabled={disabled}
+                  onSelect={() => onSelect(null)}
+                />
+              </BoxedList>
             )}
             {groups.map((g) => (
-              <div key={g.providerID} className="flex flex-col gap-1">
-                <p className="px-2 pt-2 text-xs font-medium text-muted-foreground">
-                  {g.providerName}
-                </p>
+              <PrefsGroup key={g.providerID} title={g.providerName}>
                 {g.models.map((m) => (
                   <ModelRow
                     key={optionKey(m)}
@@ -112,16 +168,34 @@ export function ModelSearchList({
                     onSelect={() => onSelect({ providerID: m.providerID, modelID: m.modelID })}
                   />
                 ))}
-              </div>
+              </PrefsGroup>
             ))}
           </div>
         )}
       </div>
-
-      <p className="shrink-0 text-xs text-muted-foreground">
-        {loading ? "Loading…" : describeModelCount(filtered.length)}
-      </p>
     </div>
+  );
+}
+
+/** Kartu membulat berisi baris dengan garis pemisah (libadwaita `.boxed-list`). */
+function BoxedList({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <ul
+      aria-label={label}
+      className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card shadow-xs"
+    >
+      {children}
+    </ul>
+  );
+}
+
+/** Judul grup + boxed list (AdwPreferencesGroup). */
+function PrefsGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="px-1 text-[13px] font-semibold">{title}</h3>
+      <BoxedList label={title}>{children}</BoxedList>
+    </section>
   );
 }
 
@@ -133,24 +207,29 @@ interface ModelRowProps {
   onSelect: () => void;
 }
 
-/** Satu baris model — `min-h-11` memberi target sentuh nyaman di HP. */
+/**
+ * Satu baris model (AdwActionRow yang bisa diaktifkan): judul + subjudul,
+ * centang aksen di kanan untuk pilihan aktif. `min-h-13` = target sentuh
+ * nyaman di HP.
+ */
 function ModelRow({ name, hint, selected, disabled, onSelect }: ModelRowProps) {
   return (
-    <button
-      type="button"
-      onClick={onSelect}
-      disabled={disabled}
-      aria-current={selected}
-      className={cn(
-        "flex min-h-11 w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none disabled:opacity-50",
-        selected && "bg-accent",
-      )}
-    >
-      <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-sm font-medium">{name}</span>
-        <span className="truncate font-mono text-[11px] text-muted-foreground">{hint}</span>
-      </span>
-      {selected && <CheckIcon className="size-4 shrink-0 text-primary" />}
-    </button>
+    <li>
+      <button
+        type="button"
+        onClick={onSelect}
+        disabled={disabled}
+        aria-current={selected}
+        className="flex min-h-13 w-full items-center gap-3 px-4 py-2 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset active:bg-muted disabled:pointer-events-none disabled:opacity-50"
+      >
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-[15px] leading-5">{name}</span>
+          <span className="truncate text-[13px] leading-snug text-muted-foreground">{hint}</span>
+        </span>
+        {selected && (
+          <CheckIcon className="size-[18px] shrink-0 text-primary" strokeWidth={2.5} aria-hidden />
+        )}
+      </button>
+    </li>
   );
 }

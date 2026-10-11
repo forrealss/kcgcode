@@ -12,6 +12,7 @@
  * setelah `FINISHED_TTL_MS` agar memori tidak tumbuh terus.
  */
 import { randomUUID } from "node:crypto";
+import type { AgentType } from "../../types";
 import type { Result } from "../result";
 import type { InstallResult, SkillsRegistry } from "./skills-registry";
 
@@ -28,6 +29,8 @@ export interface InstallJob {
   projectName: string;
   source: string;
   skillId: string;
+  /** Agent tujuan instalasi (`.agents/skills` dan/atau `.claude/skills`). */
+  agentTypes: AgentType[];
   status: InstallJobStatus;
   /** Kode error domain bila `failed`. */
   error: string | null;
@@ -58,6 +61,8 @@ export interface StartInstallInput {
   projectPath: string;
   source: string;
   skillId: string;
+  /** Default `["opencode"]`. */
+  agentTypes?: readonly AgentType[];
 }
 
 export interface SkillInstallJobs {
@@ -84,8 +89,11 @@ export interface SkillInstallJobs {
 
 export interface SkillInstallJobsOptions {
   registry: SkillsRegistry;
-  /** Refresh skill server opencode Project setelah terpasang. */
-  refreshSkills: (projectId: string) => Promise<Result<{ refreshed: boolean }>>;
+  /** Refresh daftar skill agent Project setelah terpasang. */
+  refreshSkills: (
+    projectId: string,
+    agentType: AgentType,
+  ) => Promise<Result<{ refreshed: boolean }>>;
   now?: () => number;
   /** Validasi source/skill sebelum job dibuat. */
   validate: (source: string, skillId: string) => boolean;
@@ -138,6 +146,7 @@ export function createSkillInstallJobs(opts: SkillInstallJobsOptions): SkillInst
         job.skillId,
         (l) => push(st, l),
         signal,
+        job.agentTypes,
       );
     } catch (e) {
       res = { ok: false, error: "SKILL_INSTALL_FAILED" };
@@ -154,12 +163,15 @@ export function createSkillInstallJobs(opts: SkillInstallJobsOptions): SkillInst
       return;
     }
     push(st, "Reloading the agent's skill list…");
-    let refreshed = false;
-    try {
-      const r = await opts.refreshSkills(job.projectId);
-      refreshed = r.ok ? r.data.refreshed : false;
-    } catch {
-      refreshed = false;
+    // Refresh tiap agent tujuan; "aktif" hanya bila semuanya ter-refresh.
+    let refreshed = true;
+    for (const agentType of job.agentTypes) {
+      try {
+        const r = await opts.refreshSkills(job.projectId, agentType);
+        if (!r.ok || !r.data.refreshed) refreshed = false;
+      } catch {
+        refreshed = false;
+      }
     }
     push(
       st,
@@ -186,6 +198,7 @@ export function createSkillInstallJobs(opts: SkillInstallJobsOptions): SkillInst
       projectName: input.projectName,
       source: input.source,
       skillId: input.skillId,
+      agentTypes: [...(input.agentTypes ?? ["opencode"])],
       status: "running",
       error: null,
       refreshed: null,

@@ -222,9 +222,9 @@ export interface SessionManager {
    * Bila ada turn aktif di Project, refresh ditunda (`refreshed: false`) agar
    * chat yang berjalan tidak terganggu — lalu dijalankan OTOMATIS begitu
    * seluruh turn di Project selesai (`onSkillsRefreshed`). Server yang belum
-   * hidup tidak perlu di-refresh.
+   * hidup tidak perlu di-refresh. Claude Code selalu langsung `refreshed`.
    */
-  refreshSkills(projectId: string): Promise<Result<{ refreshed: boolean }>>;
+  refreshSkills(projectId: string, agentType?: AgentType): Promise<Result<{ refreshed: boolean }>>;
   /** Project dengan refresh skill tertunda (menunggu turn selesai). */
   hasPendingSkillRefresh(projectId: string): boolean;
   /** Cari file project untuk autocomplete `@file` di composer. */
@@ -948,9 +948,15 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     onSkillsRefreshed?.(projectId);
   }
 
-  async function refreshSkills(projectId: string): Promise<Result<{ refreshed: boolean }>> {
+  async function refreshSkills(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<{ refreshed: boolean }>> {
     const project = store.getProjectById(projectId);
     if (!project.ok) return { ok: false, error: "PROJECT_NOT_FOUND" };
+    // Claude Code: daftar skill dibaca langsung dari disk dan proses `claude`
+    // memuat skill sendiri — tidak ada cache server yang perlu dibuang.
+    if (agentType === "claude-code") return { ok: true, data: { refreshed: true } };
     const handle = servers.getServer(projectId);
     // Server belum hidup -> skill terbaca saat server di-spawn nanti.
     if (!handle) {

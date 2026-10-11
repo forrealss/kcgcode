@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
+import { AGENT_TYPE_LABELS } from "@/lib/agent-types";
 import { apiErrorMessage } from "@/lib/api";
 import {
   cancelInstall,
@@ -123,9 +124,9 @@ function InstallCard({ entry }: { entry: InstallEntry }) {
       ? apiErrorMessage(job.error ?? "SKILL_INSTALL_FAILED")
       : awaitingActivation
         ? `Added to ${job.projectName}. Activates automatically when the running chat finishes.`
-        : `${running ? "into" : "Added to"} ${job.projectName}${
-            job.status === "succeeded" ? " · active" : ""
-          }`;
+        : `${running ? "into" : "Added to"} ${job.projectName} · ${(job.agentTypes ?? ["opencode"])
+            .map((a) => AGENT_TYPE_LABELS[a])
+            .join(" + ")}${job.status === "succeeded" ? " · active" : ""}`;
 
   return (
     <article

@@ -21,6 +21,7 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, apiFetch } from "@/lib/api";
 import type { InstallJob, InstallJobLog } from "@/server/services/skill-install-jobs";
+import type { AgentType } from "@/types";
 
 /** Interval polling saat job berjalan. */
 const POLL_MS = 700;
@@ -231,10 +232,11 @@ export async function startInstall(
   projectId: string,
   source: string,
   skill: string,
+  agentTypes: readonly AgentType[] = ["opencode"],
 ): Promise<InstallJob> {
   const res = await apiFetch(`/api/projects/${projectId}/skills/install`, {
     method: "POST",
-    body: JSON.stringify({ source, skill }),
+    body: JSON.stringify({ source, skill, agents: agentTypes }),
   });
   const { job } = (await res.json()) as { job: InstallJob };
   upsert(newEntry(job, true));

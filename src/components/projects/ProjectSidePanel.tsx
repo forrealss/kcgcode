@@ -4,17 +4,26 @@
  *
  * Tiap seksi bisa dilipat (status diingat). Daftar berupa "grouped list"
  * (kotak berdivider) dengan padding simetris — tanpa margin negatif.
- * - MCP: `GET /api/projects/:id/mcp` — ikon, nama, pill status; error
- *   `failed` tampil inline. Yang bermasalah diurutkan paling atas.
- * - Skills: `GET /api/projects/:id/skills` — pencarian (bila banyak) + chip
- *   asal (All / This project / Global / Built-in); deskripsi 1 baris, klik
- *   baris untuk membuka deskripsi lengkap.
- * Tiap seksi memuat datanya sendiri sehingga seksi yang lambat tidak menahan
- * seksi lain. Tombol reload memuat ulang keduanya.
+ *
+ * MCP & Skills dibaca dari KEDUA agent (OpenCode & Claude Code) lalu
+ * digabung per nama, sama seperti halaman Skills:
+ * - MCP: `GET /api/projects/:id/mcp?agent=` — tiap baris menampilkan status
+ *   per agent (logo + label); yang bermasalah diurutkan paling atas, error
+ *   `failed` tampil inline. Server Claude Code dibaca dari config
+ *   (`.mcp.json`, `~/.claude.json`); statusnya "Not checked" sampai ada
+ *   Session Claude Code yang berjalan.
+ * - Skills: `GET /api/projects/:id/skills?agent=` — pencarian (bila banyak)
+ *   + chip asal (All / This project / Global / Built-in); logo agent yang
+ *   memuat skill; klik baris untuk deskripsi lengkap. Tombol "+" membuka
+ *   halaman Skills untuk Project ini.
+ * Satu agent gagal dibaca tidak menggagalkan yang lain (catatan kecil di
+ * seksi). Tiap seksi memuat datanya sendiri; tombol reload memuat ulang
+ * keduanya.
  */
 import {
   ChevronDownIcon,
   PlugIcon,
+  PlusIcon,
   RefreshCwIcon,
   SearchIcon,
   SparklesIcon,
@@ -23,51 +32,83 @@ import {
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { PanelBody, PanelHint, PanelList, PanelSection } from "@/components/projects/PanelSection";
 import { ProjectInstructions } from "@/components/projects/ProjectInstructions";
+import { AgentLogo } from "@/components/sessions/AgentLogo";
+import { AgentBadges } from "@/components/skills/SkillCards";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRouter } from "@/hooks/useRouter";
+import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import {
-  describeMcpSummary,
+  describeMcpEntries,
   filterSkills,
   groupSkills,
   MCP_STATUS_LABEL,
+  type McpServerEntry,
+  mergeMcpServers,
   SKILL_SOURCE_LABEL,
 } from "@/lib/project-extensions";
+import { skillsPath } from "@/lib/routes";
+import { type InstalledSkill, mergeInstalledSkills } from "@/lib/skills-catalog";
 import { cn } from "@/lib/utils";
 import type { McpServerInfo, SkillInfo, SkillSource } from "@/server/services/opencode-client";
-import type { Project } from "@/types";
+import type { AgentType, McpServerState, Project } from "@/types";
 
 /** Skill ditampilkan terbatas dulu; sisanya lewat "Show more". */
 const SKILL_PREVIEW = 5;
 /** Kotak cari muncul hanya bila skill cukup banyak. */
 const SKILL_SEARCH_THRESHOLD = 8;
 
+/** Hasil per agent; `failed` = agent yang gagal dibaca (yang lain tetap tampil). */
+interface AgentLists<T> {
+  byAgent: Partial<Record<AgentType, T[]>>;
+  failed: { agent: AgentType; message: string }[];
+}
+
 type Load<T> =
   | { phase: "loading" }
   | { phase: "error"; message: string }
   | { phase: "ready"; data: T };
 
-/** Muat satu endpoint list; `reloadKey` berubah -> muat ulang. */
-function useProjectList<T>(url: string, key: string, reloadKey: number): Load<T> {
-  const [state, setState] = useState<Load<T>>({ phase: "loading" });
+/**
+ * Muat satu endpoint list untuk setiap agent (`?agent=`) bersamaan.
+ * Error hanya bila SEMUA agent gagal. `reloadKey` berubah -> muat ulang.
+ */
+function useAgentLists<T>(path: string, key: string, reloadKey: number): Load<AgentLists<T>> {
+  const [state, setState] = useState<Load<AgentLists<T>>>({ phase: "loading" });
   useEffect(() => {
     // `reloadKey` hanya pemicu muat ulang.
     void reloadKey;
     let cancelled = false;
     setState({ phase: "loading" });
-    apiFetch(url)
-      .then(async (res) => {
-        const body = (await res.json()) as Record<string, T>;
-        if (!cancelled) setState({ phase: "ready", data: body[key] as T });
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        setState({ phase: "error", message: e instanceof ApiError ? e.message : "Failed to load" });
+    void Promise.allSettled(
+      AGENT_TYPES.map((a) =>
+        apiFetch(`${path}${agentQuery(a)}`).then(async (res) => {
+          const body = (await res.json()) as Record<string, T[]>;
+          return body[key] ?? [];
+        }),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const data: AgentLists<T> = { byAgent: {}, failed: [] };
+      results.forEach((r, i) => {
+        const agent = AGENT_TYPES[i] as AgentType;
+        if (r.status === "fulfilled") data.byAgent[agent] = r.value;
+        else {
+          const message = r.reason instanceof ApiError ? r.reason.message : "Failed to load";
+          data.failed.push({ agent, message });
+        }
       });
+      if (data.failed.length === AGENT_TYPES.length) {
+        setState({ phase: "error", message: data.failed[0]?.message ?? "Failed to load" });
+      } else {
+        setState({ phase: "ready", data });
+      }
+    });
     return () => {
       cancelled = true;
     };
-  }, [url, key, reloadKey]);
+  }, [path, key, reloadKey]);
   return state;
 }
 
@@ -79,8 +120,8 @@ export interface ProjectSidePanelProps {
 export function ProjectSidePanel({ project, onProjectChange }: ProjectSidePanelProps) {
   const [reloadKey, setReloadKey] = useState(0);
   const reload = useCallback(() => setReloadKey((k) => k + 1), []);
-  const mcp = useProjectList<McpServerInfo[]>(`/api/projects/${project.id}/mcp`, "mcp", reloadKey);
-  const skills = useProjectList<SkillInfo[]>(
+  const mcp = useAgentLists<McpServerInfo>(`/api/projects/${project.id}/mcp`, "mcp", reloadKey);
+  const skills = useAgentLists<SkillInfo>(
     `/api/projects/${project.id}/skills`,
     "skills",
     reloadKey,
@@ -90,8 +131,21 @@ export function ProjectSidePanel({ project, onProjectChange }: ProjectSidePanelP
     <div className="flex flex-col gap-3">
       <ProjectInstructions project={project} onSaved={onProjectChange} />
       <McpSection state={mcp} onReload={reload} />
-      <SkillsSection state={skills} />
+      <SkillsSection state={skills} projectId={project.id} />
     </div>
+  );
+}
+
+/** Catatan kecil bila sebagian agent gagal dibaca. */
+function PartialFailure({ failed }: { failed: AgentLists<unknown>["failed"] }) {
+  if (failed.length === 0) return null;
+  return (
+    <PanelHint>
+      <span className="text-destructive">
+        Couldn't read {failed.map((f) => AGENT_TYPE_LABELS[f.agent]).join(", ")}:{" "}
+        {failed[0]?.message}
+      </span>
+    </PanelHint>
   );
 }
 
@@ -142,33 +196,34 @@ function RowIcon({ children, className }: { children: ReactNode; className?: str
 
 // ---------------------------------------------------------------- MCP ----
 
-/** Yang butuh perhatian di atas: failed -> needs_* -> connected -> sisanya. */
-const MCP_ORDER: Record<McpServerInfo["status"], number> = {
-  failed: 0,
-  needs_auth: 1,
-  needs_client_registration: 1,
-  connected: 2,
-  unknown: 3,
-  disabled: 4,
+/** Warna teks status MCP per agent. */
+const MCP_TEXT: Record<McpServerState["status"], string> = {
+  connected: "text-emerald-700 dark:text-emerald-400",
+  failed: "text-destructive",
+  needs_auth: "text-amber-700 dark:text-amber-400",
+  needs_client_registration: "text-amber-700 dark:text-amber-400",
+  disabled: "text-muted-foreground",
+  unknown: "text-muted-foreground",
 };
 
-const MCP_PILL: Record<McpServerInfo["status"], string> = {
-  connected: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-  failed: "bg-destructive/10 text-destructive",
-  needs_auth: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  needs_client_registration: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  disabled: "bg-muted text-muted-foreground",
-  unknown: "bg-muted text-muted-foreground",
-};
+/**
+ * Label status per agent. `unknown` di Claude Code berarti status belum
+ * pernah dilaporkan proses `claude` (server dibaca dari config).
+ */
+function mcpAgentLabel(agent: AgentType, status: McpServerState["status"]): string {
+  if (agent === "claude-code" && status === "unknown") return "Not checked";
+  return MCP_STATUS_LABEL[status];
+}
 
-function McpSection({ state, onReload }: { state: Load<McpServerInfo[]>; onReload: () => void }) {
-  const sorted = useMemo(
-    () =>
-      state.phase === "ready"
-        ? [...state.data].sort(
-            (a, b) => MCP_ORDER[a.status] - MCP_ORDER[b.status] || a.name.localeCompare(b.name),
-          )
-        : [],
+function McpSection({
+  state,
+  onReload,
+}: {
+  state: Load<AgentLists<McpServerInfo>>;
+  onReload: () => void;
+}) {
+  const entries = useMemo(
+    () => (state.phase === "ready" ? mergeMcpServers(state.data.byAgent) : []),
     [state],
   );
 
@@ -177,7 +232,7 @@ function McpSection({ state, onReload }: { state: Load<McpServerInfo[]>; onReloa
       id="mcp"
       title="MCP servers"
       icon={<PlugIcon />}
-      meta={state.phase === "ready" ? describeMcpSummary(state.data) : undefined}
+      meta={state.phase === "ready" ? describeMcpEntries(entries) : undefined}
       action={
         <Button
           type="button"
@@ -197,50 +252,87 @@ function McpSection({ state, onReload }: { state: Load<McpServerInfo[]>; onReloa
         <ListSkeleton rows={2} />
       ) : state.phase === "error" ? (
         <ErrorBox message={state.message} onRetry={onReload} />
-      ) : sorted.length === 0 ? (
-        <PanelHint>
-          No MCP servers yet. Add them under <code className="font-mono">mcp</code> in
-          opencode.json, then reload.
-        </PanelHint>
       ) : (
-        <PanelList>
-          {sorted.map((server) => (
-            <li key={server.name} className="flex items-start gap-3 px-3.5 py-3">
-              <RowIcon
-                className={cn(
-                  server.status === "connected" &&
-                    "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-                  server.status === "failed" && "bg-destructive/10 text-destructive",
-                )}
-              >
-                <PlugIcon />
-              </RowIcon>
-              <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
-                <div className="flex min-w-0 items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium leading-5">{server.name}</span>
-                  <span
-                    className={cn(
-                      "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium leading-4",
-                      MCP_PILL[server.status],
-                    )}
-                  >
-                    {MCP_STATUS_LABEL[server.status]}
-                  </span>
-                </div>
-                {server.error && (
-                  <p
-                    className="line-clamp-2 font-mono text-[11px] leading-relaxed break-all text-destructive/90"
-                    title={server.error}
-                  >
-                    {server.error}
-                  </p>
-                )}
-              </div>
-            </li>
-          ))}
-        </PanelList>
+        <>
+          {entries.length === 0 ? (
+            <PanelHint>
+              No MCP servers yet. Add them under <code className="font-mono">mcp</code> in
+              opencode.json, or in <code className="font-mono">.mcp.json</code> for Claude Code,
+              then reload.
+            </PanelHint>
+          ) : (
+            <PanelList>
+              {entries.map((entry) => (
+                <McpRow key={entry.name} entry={entry} />
+              ))}
+            </PanelList>
+          )}
+          <PartialFailure failed={state.data.failed} />
+        </>
       )}
     </PanelSection>
+  );
+}
+
+/**
+ * Satu MCP server: ikon (warna = status paling bermasalah), nama, lalu
+ * status per agent sebagai "logo + label" — mis. OpenCode Connected,
+ * Claude Code Not checked. Error tampil di bawahnya per agent.
+ */
+function McpRow({ entry }: { entry: McpServerEntry }) {
+  const errors = entry.agents
+    .map((a) => ({ agent: a, error: entry.byAgent[a]?.error ?? null }))
+    .filter((e): e is { agent: AgentType; error: string } => e.error !== null);
+  return (
+    <li className="flex items-start gap-3 px-3.5 py-3">
+      <RowIcon
+        className={cn(
+          entry.status === "connected" &&
+            "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+          entry.status === "failed" && "bg-destructive/10 text-destructive",
+          (entry.status === "needs_auth" || entry.status === "needs_client_registration") &&
+            "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+        )}
+      >
+        <PlugIcon />
+      </RowIcon>
+      <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
+        <span className="truncate text-sm font-medium leading-5" title={entry.name}>
+          {entry.name}
+        </span>
+        <ul className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Status per agent">
+          {entry.agents.map((a) => {
+            const status = entry.byAgent[a]?.status ?? "unknown";
+            const label = mcpAgentLabel(a, status);
+            return (
+              <li
+                key={a}
+                className={cn("flex items-center gap-1.5 text-xs", MCP_TEXT[status])}
+                title={
+                  a === "claude-code" && status === "unknown"
+                    ? "Configured for Claude Code. Status appears once a Claude Code session runs in this project."
+                    : `${AGENT_TYPE_LABELS[a]}: ${label}`
+                }
+              >
+                <AgentLogo agentType={a} className="size-3" />
+                <span className="sr-only">{AGENT_TYPE_LABELS[a]}:</span>
+                {label}
+              </li>
+            );
+          })}
+        </ul>
+        {errors.map((e) => (
+          <p
+            key={e.agent}
+            className="line-clamp-2 font-mono text-[11px] leading-relaxed break-all text-destructive/90"
+            title={e.error}
+          >
+            {entry.agents.length > 1 && `${AGENT_TYPE_LABELS[e.agent]}: `}
+            {e.error}
+          </p>
+        ))}
+      </div>
+    </li>
   );
 }
 
@@ -248,12 +340,24 @@ function McpSection({ state, onReload }: { state: Load<McpServerInfo[]>; onReloa
 
 type SkillFilter = "all" | SkillSource;
 
-function SkillsSection({ state }: { state: Load<SkillInfo[]> }) {
+function SkillsSection({
+  state,
+  projectId,
+}: {
+  state: Load<AgentLists<SkillInfo>>;
+  projectId: string;
+}) {
+  const { navigate } = useRouter();
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SkillFilter>("all");
   const [expanded, setExpanded] = useState(false);
 
-  const all = state.phase === "ready" ? state.data : [];
+  // Skill yang sama di kedua agent jadi satu baris dengan dua logo.
+  const all = useMemo(
+    () => (state.phase === "ready" ? mergeInstalledSkills(state.data.byAgent) : []),
+    [state],
+  );
+  const browse = () => navigate(skillsPath(projectId));
   // Urutan tampil: Project -> global -> bawaan (paling relevan dulu).
   const ordered = useMemo(() => groupSkills(all).flatMap((g) => g.skills), [all]);
   const sources = useMemo(() => groupSkills(all).map((g) => g.source), [all]);
@@ -279,16 +383,37 @@ function SkillsSection({ state }: { state: Load<SkillInfo[]> }) {
             : `${all.length} available`
           : undefined
       }
+      action={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={browse}
+          aria-label="Browse and install skills for this project"
+          title="Browse skills"
+          className="size-8 text-muted-foreground"
+        >
+          <PlusIcon />
+        </Button>
+      }
     >
       {state.phase === "loading" ? (
         <ListSkeleton rows={3} />
       ) : state.phase === "error" ? (
         <ErrorBox message={state.message} />
       ) : all.length === 0 ? (
-        <PanelHint>
-          No skills found. Add a <code className="font-mono">SKILL.md</code> under{" "}
-          <code className="font-mono">.opencode/skills/</code>.
-        </PanelHint>
+        <>
+          <PanelBody className="flex flex-col items-start gap-2.5">
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              No skills yet. Install one from skills.sh for OpenCode, Claude Code, or both.
+            </p>
+            <Button type="button" variant="outline" size="sm" onClick={browse}>
+              <SparklesIcon data-icon="inline-start" />
+              Browse skills
+            </Button>
+          </PanelBody>
+          <PartialFailure failed={state.data.failed} />
+        </>
       ) : (
         <div className="flex flex-col">
           {(all.length >= SKILL_SEARCH_THRESHOLD || sources.length > 1) && (
@@ -358,6 +483,7 @@ function SkillsSection({ state }: { state: Load<SkillInfo[]> }) {
             </PanelBody>
           )}
 
+          <PartialFailure failed={state.data.failed} />
           {visible.length === 0 ? (
             <PanelHint>No skills match "{query.trim()}".</PanelHint>
           ) : (
@@ -393,7 +519,7 @@ function SkillsSection({ state }: { state: Load<SkillInfo[]> }) {
  * Satu skill: ikon, nama (+ label asal), deskripsi 1 baris. Klik baris untuk
  * membuka deskripsi lengkap dan path SKILL.md.
  */
-function SkillRow({ skill, showSource }: { skill: SkillInfo; showSource: boolean }) {
+function SkillRow({ skill, showSource }: { skill: InstalledSkill; showSource: boolean }) {
   const [open, setOpen] = useState(false);
   const expandable = Boolean(skill.description || skill.location);
   return (
@@ -416,6 +542,9 @@ function SkillRow({ skill, showSource }: { skill: SkillInfo; showSource: boolean
                 {skill.source === "project" ? "Project" : "Built-in"}
               </span>
             )}
+            <span className="ml-auto pl-1">
+              <AgentBadges agents={skill.agents} size="sm" />
+            </span>
           </span>
           {skill.description && (
             <span

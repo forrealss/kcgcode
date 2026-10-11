@@ -8,8 +8,8 @@ import type { Project } from "@/types";
 import {
   formatInstalls,
   githubOwner,
-  installedProjectSkillNames,
-  isInstalled,
+  installedAgentsFor,
+  mergeInstalledSkills,
   resolveSkillsProject,
   visibleInstalledSkills,
 } from "../skills-catalog";
@@ -45,12 +45,40 @@ describe("deteksi terpasang", () => {
     url: "",
   });
 
-  test("hanya skill sumber project yang dihitung, case-insensitive", () => {
-    const names = installedProjectSkillNames(skills);
-    expect([...names]).toEqual(["find-skills"]);
-    expect(isInstalled(reg("FIND-SKILLS"), names)).toBe(true);
-    expect(isInstalled(reg("other", "find-skills"), names)).toBe(true);
-    expect(isInstalled(reg("global-one"), names)).toBe(false);
+  test("mergeInstalledSkills: gabung per source + nama, catat agent", () => {
+    const merged = mergeInstalledSkills({
+      opencode: skills,
+      "claude-code": [
+        {
+          name: "Find-Skills",
+          description: "From CC",
+          location: "/p/.claude/x",
+          source: "project",
+        },
+        { name: "cc-only", description: null, location: "/p/.claude/y", source: "project" },
+      ],
+    });
+    expect(merged.map((s) => [s.name, s.source, s.agents])).toEqual([
+      ["builtin", "builtin", ["opencode"]],
+      ["cc-only", "project", ["claude-code"]],
+      ["find-skills", "project", ["opencode", "claude-code"]],
+      ["Global-One", "global", ["opencode"]],
+    ]);
+    // Deskripsi kosong diisi dari agent lain.
+    expect(merged.find((s) => s.name === "find-skills")?.description).toBe("From CC");
+  });
+
+  test("installedAgentsFor: hanya sumber project, case-insensitive", () => {
+    const merged = mergeInstalledSkills({
+      opencode: skills,
+      "claude-code": [skills[0] as SkillInfo],
+    });
+    expect(installedAgentsFor(reg("FIND-SKILLS"), merged)).toEqual(["opencode", "claude-code"]);
+    expect(installedAgentsFor(reg("other", "find-skills"), merged)).toEqual([
+      "opencode",
+      "claude-code",
+    ]);
+    expect(installedAgentsFor(reg("global-one"), merged)).toEqual([]);
   });
 });
 

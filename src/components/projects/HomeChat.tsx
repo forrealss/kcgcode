@@ -1,6 +1,11 @@
 /**
  * Chat homepage: headline acak + logo, lalu composer. Di bawah kotak input
- * ada baris polos (tanpa border): pemilih Project di kiri, model di kanan.
+ * ada baris polos (tanpa border): pemilih Project di kiri, agent + model di
+ * kanan (satu trigger `ModelPicker` — model bergantung pada agent).
+ *
+ * Tata letak: semuanya di tengah layar. Desktop menampilkan daftar Session
+ * terbaru (`HomeRecentSessions`) di bawah composer; di HP daftar itu
+ * disembunyikan dan logo ditumpuk di atas headline.
  *
  * Kirim = buat Session baru di Project terpilih (`POST /api/sessions`),
  * titipkan teks sebagai prompt tertunda (`lib/pending-prompt.ts`), lalu
@@ -13,7 +18,6 @@
  * Keduanya di-reset saat Project berganti karena daftarnya per Project.
  */
 import {
-  BotIcon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
@@ -21,6 +25,7 @@ import {
   SendHorizontalIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { HomeRecentSessions } from "@/components/projects/HomeRecentSessions";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -42,7 +47,6 @@ import {
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "@/hooks/useRouter";
-import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
 import { pickHeadline } from "@/lib/headlines";
@@ -93,8 +97,9 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Project tersimpan sudah dihapus / belum ada -> pakai yang paling baru aktif.
-  const selected =
-    overviews.find((o) => o.project.id === projectId)?.project ?? overviews[0]?.project ?? null;
+  const selectedOverview =
+    overviews.find((o) => o.project.id === projectId) ?? overviews[0] ?? null;
+  const selected = selectedOverview?.project ?? null;
 
   useEffect(() => {
     textareaRef.current?.focus();
@@ -123,7 +128,8 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     } catch {
       // Penyimpanan tidak tersedia (private mode) — pilihan tetap berlaku.
     }
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    // Tanpa fokus ke textarea: dipanggil dari dialog ModelPicker yang masih
+    // terbuka (fokus terkunci di dialog sampai ditutup).
   };
 
   const canSend = selected !== null && text.trim() !== "" && !sending;
@@ -153,9 +159,13 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 pb-[10dvh]">
-      <div data-vt-name="home-headline" className="flex items-center justify-center gap-3 px-2">
+      {/* HP: logo di atas headline (tengah); desktop: berdampingan. */}
+      <div
+        data-vt-name="home-headline"
+        className="flex flex-col items-center justify-center gap-3 px-2 sm:flex-row"
+      >
         <img src={logo} alt="" aria-hidden className="size-10 shrink-0 sm:size-12" />
-        <h1 className="text-balance text-2xl font-semibold tracking-tight sm:text-3xl">
+        <h1 className="text-balance text-center text-2xl font-semibold tracking-tight sm:text-left sm:text-3xl">
           {headline}
         </h1>
       </div>
@@ -212,72 +222,63 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
             </InputGroupAddon>
           </InputGroup>
 
-          {/* Section 2 — konteks Session baru: Project (kiri) & model (kanan),
-            tanpa latar (hanya border container luar). */}
+          {/* Section 2 — konteks Session baru: Project (kiri) & agent + model
+            (kanan), tanpa latar (hanya border container luar). */}
           <div className="flex min-w-0 items-center justify-between gap-2 px-1.5 py-1">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-9 min-w-0 max-w-[55%] gap-1.5 px-2 font-normal text-muted-foreground hover:text-foreground"
-                  aria-label={`Project: ${selected?.name ?? "none"}. Change project`}
-                  disabled={sending}
-                >
-                  <FolderIcon data-icon="inline-start" />
-                  <span className="truncate">{selected?.name ?? "Select project"}</span>
-                  {agentType === "claude-code" && (
-                    <span className="shrink-0 text-xs text-muted-foreground/80">· Claude Code</span>
-                  )}
-                  <ChevronDownIcon data-icon="inline-end" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="max-h-72 w-64">
-                <DropdownMenuLabel>Project</DropdownMenuLabel>
-                <DropdownMenuGroup>
-                  {overviews.map(({ project }) => (
-                    <DropdownMenuItem key={project.id} onSelect={() => choose(project.id)}>
-                      <FolderIcon />
-                      <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate">{project.name}</span>
-                        <span className="truncate text-xs text-muted-foreground">
-                          {project.path}
+            <div className="flex min-w-0 items-center">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-9 min-w-0 gap-1.5 px-2 font-normal text-muted-foreground hover:text-foreground"
+                    aria-label={`Project: ${selected?.name ?? "none"}. Change project`}
+                    disabled={sending}
+                  >
+                    <FolderIcon data-icon="inline-start" />
+                    <span className="truncate">{selected?.name ?? "Select project"}</span>
+                    <ChevronDownIcon data-icon="inline-end" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="max-h-72 w-64">
+                  <DropdownMenuLabel>Project</DropdownMenuLabel>
+                  <DropdownMenuGroup>
+                    {overviews.map(({ project }) => (
+                      <DropdownMenuItem key={project.id} onSelect={() => choose(project.id)}>
+                        <FolderIcon />
+                        <span className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate">{project.name}</span>
+                          <span className="truncate text-xs text-muted-foreground">
+                            {project.path}
+                          </span>
                         </span>
-                      </span>
-                      {project.id === selected?.id && <CheckIcon />}
+                        {project.id === selected?.id && <CheckIcon />}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuGroup>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuGroup>
+                    <DropdownMenuItem onSelect={onNewProject}>
+                      <FolderPlusIcon />
+                      New project
                     </DropdownMenuItem>
-                  ))}
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuLabel>Agent</DropdownMenuLabel>
-                <DropdownMenuGroup>
-                  {AGENT_TYPES.map((t) => (
-                    <DropdownMenuItem key={t} onSelect={() => chooseAgentType(t)}>
-                      <BotIcon />
-                      <span className="flex-1">{AGENT_TYPE_LABELS[t]}</span>
-                      {t === agentType && <CheckIcon />}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuGroup>
-                <DropdownMenuSeparator />
-                <DropdownMenuGroup>
-                  <DropdownMenuItem onSelect={onNewProject}>
-                    <FolderPlusIcon />
-                    New project
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
 
             {selected && (
-              <div className="flex min-w-0 max-w-[45%] justify-end">
+              <div className="flex max-w-[60%] shrink-0 justify-end">
+                {/* Agent dipilih di dialog yang sama dengan model; trigger
+                    menampilkan logo agent + nama model. */}
                 <ModelPicker
                   projectId={selected.id}
                   agentType={agentType}
                   sessionId={null}
                   model={model}
                   onChanged={setModel}
+                  onAgentTypeChange={chooseAgentType}
                   variant="inline"
                 />
               </div>
@@ -291,6 +292,10 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
           </Alert>
         )}
       </form>
+
+      {selectedOverview && (
+        <HomeRecentSessions overview={selectedOverview} className="hidden sm:mt-6 sm:flex" />
+      )}
     </div>
   );
 }

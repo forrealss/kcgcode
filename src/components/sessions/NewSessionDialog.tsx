@@ -9,6 +9,7 @@
  */
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { AgentLogo } from "@/components/sessions/AgentLogo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -137,6 +138,7 @@ export function NewSessionDialog({
               <SelectContent>
                 {AGENT_TYPES.map((t) => (
                   <SelectItem key={t} value={t}>
+                    <AgentLogo agentType={t} />
                     {AGENT_TYPE_LABELS[t]}
                   </SelectItem>
                 ))}

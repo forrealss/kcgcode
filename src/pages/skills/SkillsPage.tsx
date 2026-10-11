@@ -4,6 +4,9 @@
  * - Header: judul + pemilih Project (pil "Install to"). Project terpilih =
  *   `?project=` (dari sidebar) > pilihan terakhir (localStorage) > satu-
  *   satunya Project. Pilihan memperbarui URL (`replaceState`).
+ * - Skill terpasang dibaca dari KEDUA agent (OpenCode & Claude Code) lalu
+ *   digabung (`mergeInstalledSkills`); tiap kartu menampilkan logo agent
+ *   tempat skill itu terpasang. Agent tujuan dipilih di dialog Install.
  * - Dua tab memakai kolom cari yang sama, tapi query disimpan per tab:
  *   - Browse: hasil skills.sh (debounce, min. 2 karakter); saat kosong
  *     tampil chip saran kata kunci.
@@ -37,6 +40,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "@/hooks/useRouter";
+import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { parseSkillsProject, projectsPath, skillsPath } from "@/lib/routes";
 import {
@@ -47,9 +51,10 @@ import {
   useInstalls,
 } from "@/lib/skill-installs";
 import {
-  installedProjectSkillNames,
-  isInstalled,
+  type InstalledSkill,
+  installedAgentsFor,
   LAST_SKILLS_PROJECT_KEY,
+  mergeInstalledSkills,
   resolveSkillsProject,
   SEARCH_SUGGESTIONS,
   visibleInstalledSkills,
@@ -57,7 +62,9 @@ import {
 import { cn } from "@/lib/utils";
 import type { SkillInfo } from "@/server/services/opencode-client";
 import type { RegistrySkill } from "@/server/services/skills-registry";
-import type { Project } from "@/types";
+import type { AgentType, Project } from "@/types";
+
+const EMPTY_INSTALLED: InstalledSkill[] = [];
 
 /** Jeda ketik sebelum memanggil skills.sh. */
 const SEARCH_DEBOUNCE_MS = 350;
@@ -219,7 +226,9 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
   const [queries, setQueries] = useState<Record<Tab, string>>({ browse: "", installed: "" });
   const query = queries[tab];
   const setQuery = useCallback((q: string) => setQueries((prev) => ({ ...prev, [tab]: q })), [tab]);
-  const [installed, setInstalled] = useState<Load<SkillInfo[]>>({ phase: "idle" });
+  const [installed, setInstalled] = useState<Load<InstalledSkill[]>>({ phase: "idle" });
+  /** Sebagian agent gagal dibaca (daftar tetap tampil dari agent lain). */
+  const [installedWarning, setInstalledWarning] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [results, setResults] = useState<Load<RegistrySkill[]>>({ phase: "idle" });
   /** Permintaan pencarian sedang berjalan (hasil lama tetap tampil). */
@@ -244,22 +253,41 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Skill terpasang (dibaca dari server headless opencode Project).
+  // Skill terpasang dari semua agent (opencode: server headless Project;
+  // Claude Code: `.claude/skills` Project + global), dibaca bersamaan lalu
+  // digabung. Satu agent gagal tidak menggagalkan yang lain.
   useEffect(() => {
     void reloadKey;
     if (!project) return;
     let cancelled = false;
     setInstalled((prev) => (prev.phase === "ready" ? prev : { phase: "loading" }));
-    apiFetch(`/api/projects/${project.id}/skills`)
-      .then((res) => res.json() as Promise<{ skills: SkillInfo[] }>)
-      .then(({ skills }) => {
-        if (!cancelled) setInstalled({ phase: "ready", data: skills });
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setInstalled({ phase: "error", message: errorMessage(e, "Failed to load skills") });
-        }
+    void Promise.allSettled(
+      AGENT_TYPES.map((a) =>
+        apiFetch(`/api/projects/${project.id}/skills${agentQuery(a)}`)
+          .then((res) => res.json() as Promise<{ skills: SkillInfo[] }>)
+          .then(({ skills }) => skills),
+      ),
+    ).then((results) => {
+      if (cancelled) return;
+      const byAgent: Partial<Record<AgentType, SkillInfo[]>> = {};
+      const failed: { agent: AgentType; message: string }[] = [];
+      results.forEach((r, i) => {
+        const agent = AGENT_TYPES[i] as AgentType;
+        if (r.status === "fulfilled") byAgent[agent] = r.value;
+        else failed.push({ agent, message: errorMessage(r.reason, "Failed to load skills") });
       });
+      if (failed.length === AGENT_TYPES.length) {
+        setInstalled({ phase: "error", message: failed[0]?.message ?? "Failed to load skills" });
+        setInstalledWarning(null);
+        return;
+      }
+      setInstalled({ phase: "ready", data: mergeInstalledSkills(byAgent) });
+      setInstalledWarning(
+        failed.length > 0
+          ? `Couldn't read ${failed.map((f) => AGENT_TYPE_LABELS[f.agent]).join(", ")} skills: ${failed[0]?.message}`
+          : null,
+      );
+    });
     return () => {
       cancelled = true;
     };
@@ -298,11 +326,7 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
     };
   }, [browseQuery, canSearch]);
 
-  const installedNames = useMemo(
-    () =>
-      installed.phase === "ready" ? installedProjectSkillNames(installed.data) : new Set<string>(),
-    [installed],
-  );
+  const installedList = installed.phase === "ready" ? installed.data : EMPTY_INSTALLED;
   const installedAll = useMemo(
     () => (installed.phase === "ready" ? visibleInstalledSkills(installed.data, "") : []),
     [installed],
@@ -325,12 +349,12 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
   }, [project]);
 
   /** Mulai job instalasi; progres & output tampil di notifikasi global. */
-  const install = async (skill: RegistrySkill) => {
+  const install = async (skill: RegistrySkill, agents: AgentType[]) => {
     if (!project) return;
     setStarting(true);
     setStartError(null);
     try {
-      await startInstall(project.id, skill.source, skill.skillId);
+      await startInstall(project.id, skill.source, skill.skillId, agents);
       setPending(null);
     } catch (e) {
       // Dialog tetap terbuka agar user melihat alasannya.
@@ -440,7 +464,7 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
                 query={trimmed}
                 canSearch={canSearch}
                 results={results}
-                installedNames={installedNames}
+                installedAgents={(skill) => installedAgentsFor(skill, installedList)}
                 isInstalling={(skill) =>
                   findRunningInstall(installs, project.id, skill.source, skill.skillId)?.job.id ??
                   null
@@ -454,6 +478,7 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
             ) : (
               <InstalledPanel
                 state={installed}
+                warning={installedWarning}
                 skills={installedFiltered}
                 total={installedAll.length}
                 query={trimmed}
@@ -468,6 +493,7 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
           <InstallSkillDialog
             skill={pending}
             projectName={project.name}
+            installedAgents={pending ? installedAgentsFor(pending, installedList) : []}
             starting={starting}
             startError={startError}
             onOpenChange={(open) => {
@@ -476,7 +502,7 @@ function SkillsWorkspace({ project }: SkillsWorkspaceProps) {
                 setStartError(null);
               }
             }}
-            onConfirm={(s) => void install(s)}
+            onConfirm={(s, agents) => void install(s, agents)}
           />
         </>
       )}
@@ -531,7 +557,7 @@ function BrowsePanel({
   query,
   canSearch,
   results,
-  installedNames,
+  installedAgents,
   isInstalling,
   onSuggest,
   onInstall,
@@ -539,7 +565,8 @@ function BrowsePanel({
   query: string;
   canSearch: boolean;
   results: Load<RegistrySkill[]>;
-  installedNames: ReadonlySet<string>;
+  /** Agent yang sudah memuat skill katalog ini dari folder Project. */
+  installedAgents: (skill: RegistrySkill) => AgentType[];
   /** Id job instalasi berjalan untuk skill ini (null bila tidak ada). */
   isInstalling: (skill: RegistrySkill) => string | null;
   onSuggest: (q: string) => void;
@@ -615,7 +642,7 @@ function BrowsePanel({
             <RegistrySkillCard
               key={skill.id}
               skill={skill}
-              installed={isInstalled(skill, installedNames)}
+              installedAgents={installedAgents(skill)}
               installing={jobId !== null}
               onInstall={onInstall}
               onShowProgress={() => {
@@ -631,13 +658,16 @@ function BrowsePanel({
 
 function InstalledPanel({
   state,
+  warning,
   skills,
   total,
   query,
   onBrowse,
 }: {
-  state: Load<SkillInfo[]>;
-  skills: SkillInfo[];
+  state: Load<InstalledSkill[]>;
+  /** Sebagian agent gagal dibaca. */
+  warning: string | null;
+  skills: InstalledSkill[];
   total: number;
   query: string;
   onBrowse: () => void;
@@ -654,25 +684,34 @@ function InstalledPanel({
     );
   }
 
+  const warningNote = warning && (
+    <p role="status" className="mb-3 text-xs text-muted-foreground">
+      {warning}
+    </p>
+  );
+
   if (total === 0) {
     return (
-      <Empty className="border">
-        <EmptyHeader>
-          <EmptyMedia variant="icon">
-            <SparklesIcon />
-          </EmptyMedia>
-          <EmptyTitle>No skills installed yet</EmptyTitle>
-          <EmptyDescription>
-            Browse skills.sh to add your first skill to this project.
-          </EmptyDescription>
-        </EmptyHeader>
-        <EmptyContent>
-          <Button type="button" variant="outline" onClick={onBrowse}>
-            <SearchIcon data-icon="inline-start" />
-            Browse skills
-          </Button>
-        </EmptyContent>
-      </Empty>
+      <>
+        {warningNote}
+        <Empty className="border">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <SparklesIcon />
+            </EmptyMedia>
+            <EmptyTitle>No skills installed yet</EmptyTitle>
+            <EmptyDescription>
+              Browse skills.sh to add your first skill to this project.
+            </EmptyDescription>
+          </EmptyHeader>
+          <EmptyContent>
+            <Button type="button" variant="outline" onClick={onBrowse}>
+              <SearchIcon data-icon="inline-start" />
+              Browse skills
+            </Button>
+          </EmptyContent>
+        </Empty>
+      </>
     );
   }
 
@@ -686,6 +725,11 @@ function InstalledPanel({
 
   return (
     <section aria-label="Installed skills" className="flex flex-col gap-3">
+      {warning && (
+        <p role="status" className="text-xs text-muted-foreground">
+          {warning}
+        </p>
+      )}
       {query !== "" && (
         <p className="text-xs text-muted-foreground" aria-live="polite">
           {skills.length} of {total} installed skills

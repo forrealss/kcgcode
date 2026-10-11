@@ -17,6 +17,7 @@ function job(over: Partial<InstallJob> = {}): InstallJob {
     projectName: "Proj",
     source: "a/b",
     skillId: "c",
+    agentTypes: ["opencode"],
     status: "running",
     error: null,
     refreshed: null,

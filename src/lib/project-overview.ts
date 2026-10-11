@@ -23,11 +23,19 @@ export interface ProjectOverview {
    */
   lastSession: Session | null;
   /**
+   * Hingga `RECENT_SESSION_LIMIT` Session terbaru (`updatedAt` menurun) —
+   * daftar "lanjutkan" di bawah composer homepage.
+   */
+  recentSessions: Session[];
+  /**
    * Waktu aktivitas terakhir: `updatedAt` Session terbaru, atau `createdAt`
    * Project bila belum ada Session. Dipakai untuk urutan daftar.
    */
   lastActivityAt: number;
 }
+
+/** Jumlah Session terbaru yang dibawa tiap `ProjectOverview`. */
+export const RECENT_SESSION_LIMIT = 3;
 
 /**
  * Gabungkan Project dengan Session-nya, terurut dari aktivitas terbaru.
@@ -46,19 +54,17 @@ export function buildProjectOverviews(
 
   const overviews = projects.map((project) => {
     const own = byProject.get(project.id) ?? [];
-    let lastSession: Session | null = null;
-    let runningCount = 0;
-    for (const session of own) {
-      if (session.status === "running") runningCount += 1;
-      if (lastSession === null || session.updatedAt > lastSession.updatedAt) {
-        lastSession = session;
-      }
-    }
+    const runningCount = own.filter((s) => s.status === "running").length;
+    const recentSessions = [...own]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, RECENT_SESSION_LIMIT);
+    const lastSession = recentSessions[0] ?? null;
     return {
       project,
       sessionCount: own.length,
       runningCount,
       lastSession,
+      recentSessions,
       lastActivityAt: lastSession?.updatedAt ?? project.createdAt,
     };
   });

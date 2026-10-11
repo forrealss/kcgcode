@@ -130,7 +130,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
     "/api/projects/:id/mcp": {
       GET: async (req: BunRequest<"/api/projects/:id/mcp">) => {
         try {
-          const res = await sessionManager.listMcp(req.params.id);
+          const res = await sessionManager.listMcp(req.params.id, agentTypeParam(req));
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ mcp: res.data });
         } catch (e) {
@@ -142,7 +142,7 @@ export function projectsRoutes(ctx: ApiRouteContext) {
     "/api/projects/:id/skills": {
       GET: async (req: BunRequest<"/api/projects/:id/skills">) => {
         try {
-          const res = await sessionManager.listSkills(req.params.id);
+          const res = await sessionManager.listSkills(req.params.id, agentTypeParam(req));
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ skills: res.data });
         } catch (e) {

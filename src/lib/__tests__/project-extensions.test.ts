@@ -3,7 +3,13 @@
  */
 import { describe, expect, test } from "bun:test";
 import type { SkillInfo } from "@/server/services/opencode-client";
-import { describeMcpSummary, filterSkills, groupSkills } from "../project-extensions";
+import {
+  describeMcpEntries,
+  describeMcpSummary,
+  filterSkills,
+  groupSkills,
+  mergeMcpServers,
+} from "../project-extensions";
 
 function skill(name: string, source: SkillInfo["source"], description: string | null = null) {
   return { name, description, location: null, source } satisfies SkillInfo;
@@ -22,6 +28,31 @@ describe("describeMcpSummary", () => {
         { name: "c", status: "connected", error: null },
       ]),
     ).toBe("2 of 3 connected");
+  });
+});
+
+describe("mergeMcpServers", () => {
+  test("gabung per nama, catat agent, urut yang bermasalah dulu", () => {
+    const entries = mergeMcpServers({
+      opencode: [
+        { name: "web", status: "connected", error: null },
+        { name: "db", status: "connected", error: null },
+      ],
+      "claude-code": [
+        { name: "web", status: "unknown", error: null },
+        { name: "db", status: "failed", error: "boom" },
+        { name: "cc-only", status: "disabled", error: null },
+      ],
+    });
+    expect(entries.map((e) => [e.name, e.status, e.agents])).toEqual([
+      ["db", "failed", ["opencode", "claude-code"]],
+      ["web", "connected", ["opencode", "claude-code"]],
+      ["cc-only", "disabled", ["claude-code"]],
+    ]);
+    expect(entries[0]?.byAgent["claude-code"]?.error).toBe("boom");
+    // Tersambung di salah satu agent sudah dihitung "connected".
+    expect(describeMcpEntries(entries)).toBe("2 of 3 connected");
+    expect(describeMcpEntries([])).toBe("None configured");
   });
 });
 

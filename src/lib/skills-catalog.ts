@@ -2,9 +2,10 @@
  * Helper tampilan katalog skill (skills.sh) di halaman Skills — logika murni
  * tanpa DOM, dipisah agar dapat diuji `bun test`.
  */
+import { AGENT_TYPES } from "@/lib/agent-types";
 import type { SkillInfo } from "@/server/services/opencode-client";
 import type { AuditStatus, RegistrySkill } from "@/server/services/skills-registry";
-import type { Project } from "@/types";
+import type { AgentType, Project } from "@/types";
 
 /** Kunci localStorage Project terakhir yang dipilih di halaman Skills. */
 export const LAST_SKILLS_PROJECT_KEY = "kcg-skills-project";
@@ -46,13 +47,65 @@ export function githubOwner(source: string): string | null {
   return owner;
 }
 
+/** Skill terpasang + agent yang memuatnya (gabungan daftar per agent). */
+export interface InstalledSkill extends SkillInfo {
+  /** Urut sesuai `AGENT_TYPES`; minimal satu. */
+  agents: AgentType[];
+}
+
+/**
+ * Gabungkan daftar skill per agent menjadi satu daftar: skill dengan asal
+ * (`source`) dan nama (case-insensitive) sama dianggap satu skill yang
+ * dimuat beberapa agent. Deskripsi diambil dari daftar pertama yang punya.
+ */
+export function mergeInstalledSkills(
+  byAgent: Partial<Record<AgentType, readonly SkillInfo[]>>,
+): InstalledSkill[] {
+  const merged = new Map<string, InstalledSkill>();
+  for (const agent of AGENT_TYPES) {
+    for (const skill of byAgent[agent] ?? []) {
+      const key = `${skill.source}:${skill.name.toLowerCase()}`;
+      const hit = merged.get(key);
+      if (!hit) {
+        merged.set(key, { ...skill, agents: [agent] });
+        continue;
+      }
+      if (!hit.agents.includes(agent)) hit.agents.push(agent);
+      if (hit.description === null) hit.description = skill.description;
+    }
+  }
+  return [...merged.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
+ * Agent yang sudah memuat skill katalog ini dari folder Project (cocokkan
+ * nama folder / nama). Skill global sengaja tidak dihitung: instalasi di
+ * halaman ini memasang ke folder Project.
+ */
+export function installedAgentsFor(
+  skill: RegistrySkill,
+  installed: readonly InstalledSkill[],
+): AgentType[] {
+  const names = new Set([skill.skillId.toLowerCase(), skill.name.toLowerCase()]);
+  const agents = new Set<AgentType>();
+  for (const s of installed) {
+    if (s.source === "project" && names.has(s.name.toLowerCase())) {
+      for (const a of s.agents) agents.add(a);
+    }
+  }
+  return AGENT_TYPES.filter((a) => agents.has(a));
+}
+
 /**
  * Skill terpasang yang relevan untuk halaman Skills: tanpa bawaan opencode,
  * Project dulu lalu global, difilter kata kunci (nama / deskripsi).
  */
-export function visibleInstalledSkills(skills: readonly SkillInfo[], query: string): SkillInfo[] {
+export function visibleInstalledSkills<T extends SkillInfo>(
+  skills: readonly T[],
+  query: string,
+): T[] {
   const q = query.trim().toLowerCase();
-  const match = (s: SkillInfo) =>
+  const match = (s: T) =>
     q === "" || s.name.toLowerCase().includes(q) || (s.description ?? "").toLowerCase().includes(q);
   return [
     ...skills.filter((s) => s.source === "project" && match(s)),
@@ -69,20 +122,6 @@ export function formatInstalls(n: number): string {
   };
   if (n < 1_000_000) return fmt(n / 1000, "K");
   return fmt(n / 1_000_000, "M");
-}
-
-/**
- * Nama skill yang sudah terpasang di Project (sumber `project`). Skill global
- * sengaja tidak dihitung: instalasi di halaman ini memasang ke folder Project,
- * jadi skill global bernama sama tetap boleh dipasang per Project.
- */
-export function installedProjectSkillNames(skills: readonly SkillInfo[]): Set<string> {
-  return new Set(skills.filter((s) => s.source === "project").map((s) => s.name.toLowerCase()));
-}
-
-/** Apakah skill katalog sudah terpasang di Project (cocokkan nama folder / nama). */
-export function isInstalled(skill: RegistrySkill, installed: ReadonlySet<string>): boolean {
-  return installed.has(skill.skillId.toLowerCase()) || installed.has(skill.name.toLowerCase());
 }
 
 /** Label & gaya ringkasan audit keamanan. */

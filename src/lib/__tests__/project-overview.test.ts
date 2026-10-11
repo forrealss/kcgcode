@@ -11,6 +11,7 @@ import {
   buildProjectOverviews,
   filterProjectOverviews,
   formatRelativeTime,
+  RECENT_SESSION_LIMIT,
   totalRunningSessions,
 } from "../project-overview";
 
@@ -61,6 +62,20 @@ describe("buildProjectOverviews", () => {
     expect(only?.sessionCount).toBe(0);
     expect(only?.lastSession).toBeNull();
     expect(only?.lastActivityAt).toBe(7_000);
+  });
+
+  test("recentSessions: maksimal RECENT_SESSION_LIMIT, terbaru di depan", () => {
+    const sessions = [
+      session("s1", "p1", "stopped", 1_000),
+      session("s2", "p1", "running", 4_000),
+      session("s3", "p1", "stopped", 2_000),
+      session("s4", "p1", "stopped", 3_000),
+    ];
+    const [only] = buildProjectOverviews([project("p1", "alpha", 0)], sessions);
+    expect(only?.recentSessions.map((s) => s.id)).toEqual(
+      ["s2", "s4", "s3"].slice(0, RECENT_SESSION_LIMIT),
+    );
+    expect(only?.lastSession?.id).toBe("s2");
   });
 
   test("urutan: aktivitas terbaru di atas", () => {

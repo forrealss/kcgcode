@@ -7,6 +7,7 @@
  * saat hover/fokus agar daftar tetap bersih, di layar sentuh selalu tampil.
  */
 import { MoreHorizontalIcon, PlayIcon, SquareIcon, Trash2Icon } from "lucide-react";
+import { AgentLogo } from "@/components/sessions/AgentLogo";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { AGENT_TYPE_LABELS } from "@/lib/agent-types";
 import { formatRelativeTime } from "@/lib/project-overview";
 import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL } from "@/lib/session-status";
 import { describeSessionModel } from "@/lib/session-summary";
@@ -71,10 +73,14 @@ export function SessionRow({ session, busy, onOpen, onStop, onStart, onDelete }:
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-0.5">
           <span className="truncate text-[15px] font-medium leading-snug">{title}</span>
-          <span className="truncate text-xs text-muted-foreground">
-            {session.agentType}
-            <span className="mx-1.5 opacity-50">/</span>
-            {describeSessionModel(session)}
+          {/* Agent sebagai logo + nama ("Claude Code · opus"), bukan id mentah. */}
+          <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+            <AgentLogo agentType={session.agentType} className="size-3" />
+            <span className="truncate">
+              {AGENT_TYPE_LABELS[session.agentType]}
+              <span className="mx-1.5 opacity-50">·</span>
+              {describeSessionModel(session)}
+            </span>
           </span>
         </span>
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">

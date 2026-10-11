@@ -3,21 +3,25 @@
  *
  * - `RegistrySkillCard`: hasil skills.sh — nama (tautan), owner/repo, jumlah
  *   install, tombol Install / "Installing…" (klik = lihat progres) /
- *   status "Installed".
+ *   status "Installed" (bila sudah terpasang untuk semua agent).
  * - `InstalledSkillCard`: skill terpasang — nama, label asal, deskripsi.
+ * - Kedua kartu menampilkan logo agent tempat skill terpasang (`AgentBadges`)
+ *   di pojok kanan atas.
  * - `SkillCardSkeleton`: placeholder saat memuat.
  * Semua kartu setinggi baris grid (`h-full`) agar grid rapi.
  */
 import { CheckIcon, DownloadIcon, ExternalLinkIcon, PlusIcon, SparklesIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { AgentLogo } from "@/components/sessions/AgentLogo";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
 import { SKILL_SOURCE_LABEL } from "@/lib/project-extensions";
-import { formatInstalls, githubOwner } from "@/lib/skills-catalog";
+import { formatInstalls, githubOwner, type InstalledSkill } from "@/lib/skills-catalog";
 import { cn } from "@/lib/utils";
-import type { SkillInfo } from "@/server/services/opencode-client";
 import type { RegistrySkill } from "@/server/services/skills-registry";
+import type { AgentType } from "@/types";
 
 /** Grid kartu: 1 kolom di HP, 2 kolom mulai `md`. */
 export function SkillGrid({ label, children }: { label: string; children: ReactNode }) {
@@ -42,7 +46,7 @@ function CardShell({ className, children }: { className?: string; children: Reac
 }
 
 /** Avatar owner GitHub; jatuh ke ikon bila bukan sumber GitHub / gagal dimuat. */
-function SourceAvatar({ source }: { source: string }) {
+export function SourceAvatar({ source }: { source: string }) {
   const owner = githubOwner(source);
   return (
     <span className="relative flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground">
@@ -63,21 +67,59 @@ function SourceAvatar({ source }: { source: string }) {
   );
 }
 
+/**
+ * Logo agent tempat skill terpasang; kosong -> tidak dirender.
+ * `sm` untuk baris daftar yang rapat (panel samping Project).
+ */
+export function AgentBadges({
+  agents,
+  size = "md",
+}: {
+  agents: readonly AgentType[];
+  size?: "sm" | "md";
+}) {
+  if (agents.length === 0) return null;
+  const label = `Installed for ${agents.map((a) => AGENT_TYPE_LABELS[a]).join(" and ")}`;
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      title={label}
+      className={cn("flex shrink-0 items-center", size === "sm" ? "gap-0.5" : "gap-1")}
+    >
+      {agents.map((a) => (
+        <span
+          key={a}
+          className={cn(
+            "flex items-center justify-center border bg-background text-foreground",
+            size === "sm" ? "size-5 rounded" : "size-6 rounded-md",
+          )}
+        >
+          <AgentLogo agentType={a} className={size === "sm" ? "size-3" : "size-3.5"} />
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function RegistrySkillCard({
   skill,
-  installed,
+  installedAgents,
   installing,
   onInstall,
   onShowProgress,
 }: {
   skill: RegistrySkill;
-  installed: boolean;
+  /** Agent yang sudah memuat skill ini dari folder Project. */
+  installedAgents: readonly AgentType[];
   /** Ada job instalasi berjalan untuk skill ini di Project terpilih. */
   installing: boolean;
   onInstall: (skill: RegistrySkill) => void;
   /** Tampilkan lagi notifikasi progres instalasinya. */
   onShowProgress: () => void;
 }) {
+  // Masih bisa dipasang selama ada agent yang belum memuatnya.
+  const installedEverywhere = installedAgents.length === AGENT_TYPES.length;
   return (
     <CardShell className="hover:border-foreground/20">
       <div className="flex min-w-0 items-start gap-3">
@@ -101,6 +143,7 @@ export function RegistrySkillCard({
             {skill.source}
           </span>
         </div>
+        <AgentBadges agents={installedAgents} />
       </div>
 
       <div className="mt-auto flex items-center justify-between gap-2">
@@ -121,7 +164,7 @@ export function RegistrySkillCard({
             <Spinner data-icon="inline-start" />
             Installing…
           </Button>
-        ) : installed ? (
+        ) : installedEverywhere ? (
           <span className="flex h-8 items-center gap-1 rounded-md bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
             <CheckIcon className="size-3.5" aria-hidden />
             Installed
@@ -143,7 +186,7 @@ export function RegistrySkillCard({
   );
 }
 
-export function InstalledSkillCard({ skill }: { skill: SkillInfo }) {
+export function InstalledSkillCard({ skill }: { skill: InstalledSkill }) {
   const isProject = skill.source === "project";
   return (
     <CardShell>
@@ -180,6 +223,7 @@ export function InstalledSkillCard({ skill }: { skill: SkillInfo }) {
             {skill.description ?? "No description"}
           </p>
         </div>
+        <AgentBadges agents={skill.agents} />
       </div>
     </CardShell>
   );

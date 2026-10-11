@@ -12,6 +12,8 @@ interface Harness {
   release: (res: Result<InstallResult>) => void;
   emit: (line: string) => void;
   refreshCalls: string[];
+  /** Agent yang diteruskan ke `registry.install` per panggilan. */
+  installAgents: (readonly string[] | undefined)[];
 }
 
 /**
@@ -23,11 +25,13 @@ function harness(refreshed = true): Harness {
   let emitFn: (line: string) => void = () => {};
   let releaseFn: (res: Result<InstallResult>) => void = () => {};
   const refreshCalls: string[] = [];
+  const installAgents: (readonly string[] | undefined)[] = [];
   const registry: SkillsRegistry = {
     search: async () => ({ ok: true, data: [] }),
     audit: async () => ({ ok: true, data: { audits: null, overall: null } }),
-    install: (_path, _source, _skill, onLine, signal) =>
+    install: (_path, _source, _skill, onLine, signal, agentTypes) =>
       new Promise((resolve) => {
+        installAgents.push(agentTypes);
         emitFn = (l) => onLine?.(l);
         releaseFn = resolve;
         signal?.addEventListener("abort", () =>
@@ -37,8 +41,8 @@ function harness(refreshed = true): Harness {
   };
   const jobs = createSkillInstallJobs({
     registry,
-    refreshSkills: async (projectId) => {
-      refreshCalls.push(projectId);
+    refreshSkills: async (projectId, agentType) => {
+      refreshCalls.push(agentType === "opencode" ? projectId : `${projectId}:${agentType}`);
       return { ok: true, data: { refreshed } };
     },
     validate: (source, skill) => source === "a/b" && !skill.startsWith("-"),
@@ -52,6 +56,7 @@ function harness(refreshed = true): Harness {
     release: (r) => releaseFn(r),
     emit: (l) => emitFn(l),
     refreshCalls,
+    installAgents,
   };
 }
 
@@ -64,6 +69,20 @@ const input = {
 };
 
 describe("createSkillInstallJobs", () => {
+  test("agentTypes diteruskan ke instalasi & refresh tiap agent (default opencode)", async () => {
+    const h = harness();
+    const a = h.jobs.start({ ...input, agentTypes: ["opencode", "claude-code"] });
+    expect(a.ok && a.data.agentTypes).toEqual(["opencode", "claude-code"]);
+    h.release({ ok: true, data: { name: "c", path: null } });
+    if (a.ok) await h.jobs.settled(a.data.id);
+    const b = h.jobs.start(input);
+    expect(b.ok && b.data.agentTypes).toEqual(["opencode"]);
+    h.release({ ok: true, data: { name: "c", path: null } });
+    if (b.ok) await h.jobs.settled(b.data.id);
+    expect(h.installAgents).toEqual([["opencode", "claude-code"], ["opencode"]]);
+    expect(h.refreshCalls).toEqual(["p1", "p1:claude-code", "p1"]);
+  });
+
   test("job berjalan, log bertahap via from, sukses + refresh", async () => {
     const h = harness();
     const started = h.jobs.start(input);
