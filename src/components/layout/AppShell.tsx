@@ -95,8 +95,9 @@ export function AppShell() {
                              tiap kolom scroll sendiri; lebih sempit: halaman
                              scroll biasa (panel samping ada di Sheet). */
                           "mx-auto w-full max-w-6xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16 lg:h-full lg:pb-0"
-                        : route.name === "skills"
-                          ? /* Skills: grid kartu 2 kolom butuh ruang lebih lebar. */
+                        : route.name === "skills" || route.name === "settings"
+                          ? /* Skills: grid kartu 2 kolom; Settings: daftar navigasi
+                               + isi berdampingan (lg+) — butuh ruang lebih lebar. */
                             "mx-auto w-full max-w-5xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
                           : "mx-auto w-full max-w-3xl px-4 pt-2 pb-12 sm:px-6 sm:pt-4 sm:pb-16"
                   }
@@ -107,7 +108,11 @@ export function AppShell() {
                   )}
                   {route.name === "skills" && <SkillsPage />}
                   {route.name === "settings" && (
-                    <SettingsPage section={route.section} anchor={route.anchor} />
+                    <SettingsPage
+                      section={route.section}
+                      anchor={route.anchor}
+                      root={route.root === true}
+                    />
                   )}
                   {route.name === "not-found" && <NotFoundView />}
                 </div>

@@ -2,8 +2,8 @@
  * Engine halaman daftar Session milik satu Project (`SessionList.tsx`).
  *
  * Mengelola pemuatan daftar (`GET /api/sessions` di-filter per Project),
- * aksi per-Session (stop/start/hapus), serta dialog konfirmasi hapus Project
- * (yang menghapus seluruh Session-nya). Sisa logika form pembuatan Session
+ * aksi per-Session (stop/start/hapus), selection mode untuk hapus massal,
+ * serta dialog konfirmasi hapus Project (yang menghapus seluruh Session-nya). Sisa logika form pembuatan Session
  * baru hidup di `NewSessionDialog`.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -12,6 +12,7 @@ import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { ApiError, apiFetch } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
+import { pluralSessions, pruneSelection, toggleSelection } from "@/lib/session-selection";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
 import type { Session } from "@/types";
 
@@ -42,6 +43,22 @@ export interface SessionListEngine {
   cancelDelete: () => void;
   confirmRemove: () => Promise<void>;
 
+  // Selection mode (hapus massal)
+  selecting: boolean;
+  startSelecting: () => void;
+  stopSelecting: () => void;
+  /** Id Session terpilih (hanya yang masih ada). */
+  selected: ReadonlySet<string>;
+  toggleSelect: (sessionId: string) => void;
+  /** Pilih semua; bila semua sudah terpilih -> kosongkan. */
+  toggleSelectAll: () => void;
+  bulkDeleteOpen: boolean;
+  requestBulkDelete: () => void;
+  cancelBulkDelete: () => void;
+  /** Progres hapus massal; null = tidak berjalan. */
+  bulkProgress: { done: number; total: number } | null;
+  confirmBulkRemove: () => Promise<void>;
+
   // Hapus Project (beserta seluruh Session-nya)
   projectDeleteOpen: boolean;
   openProjectDelete: () => void;
@@ -62,6 +79,10 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   /** Konfirmasi hapus Project (beserta seluruh Session-nya). */
   const [projectDeleteOpen, setProjectDeleteOpen] = useState(false);
   const [deletingProject, setDeletingProject] = useState(false);
+  const [selecting, setSelecting] = useState(false);
+  const [rawSelected, setRawSelected] = useState<ReadonlySet<string>>(() => new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   /** `silent`: muat ulang di latar (tanpa skeleton) — sinkron dari server. */
   const refresh = useCallback(
@@ -125,6 +146,10 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const ordered = useMemo(() => sortSessions(sessions), [sessions]);
   const summary = useMemo(() => summarizeSessions(sessions), [sessions]);
 
+  // Session yang hilang (dihapus di tab/perangkat lain) otomatis tidak
+  // terpilih lagi.
+  const selected = useMemo(() => pruneSelection(rawSelected, sessions), [rawSelected, sessions]);
+
   /** Stop ≠ hapus: POST /stop hanya mengubah status; data tetap ada dan
       bisa dihidupkan kembali lewat aksi Hidupkan (resume). */
   const stop = useCallback(
@@ -187,6 +212,63 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     }
   }, [pendingDelete, refresh]);
 
+  const startSelecting = useCallback(() => {
+    setRawSelected(new Set());
+    setSelecting(true);
+  }, []);
+  const stopSelecting = useCallback(() => {
+    setSelecting(false);
+    setRawSelected(new Set());
+  }, []);
+  const toggleSelect = useCallback(
+    (sessionId: string) => setRawSelected((prev) => toggleSelection(prev, sessionId)),
+    [],
+  );
+  const toggleSelectAll = useCallback(() => {
+    setRawSelected((prev) =>
+      sessions.length > 0 && sessions.every((s) => prev.has(s.id))
+        ? new Set()
+        : new Set(sessions.map((s) => s.id)),
+    );
+  }, [sessions]);
+  const requestBulkDelete = useCallback(() => setBulkDeleteOpen(true), []);
+  const cancelBulkDelete = useCallback(() => setBulkDeleteOpen(false), []);
+
+  /**
+   * Hapus massal Session terpilih — satu per satu (berurutan, agar server
+   * headless tidak dibanjiri), progres tampil di dialog konfirmasi. Yang
+   * gagal tetap terpilih supaya bisa dicoba lagi.
+   */
+  const confirmBulkRemove = useCallback(async () => {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    const failed: string[] = [];
+    setBulkProgress({ done: 0, total: ids.length });
+    for (const [i, id] of ids.entries()) {
+      setDeleting(id);
+      try {
+        await apiFetch(`/api/sessions/${id}`, { method: "DELETE" });
+      } catch {
+        failed.push(id);
+      }
+      setBulkProgress({ done: i + 1, total: ids.length });
+    }
+    setDeleting(null);
+    setBulkProgress(null);
+    setBulkDeleteOpen(false);
+    const removed = ids.length - failed.length;
+    if (failed.length === 0) {
+      toast.success(`Deleted ${pluralSessions(removed)}.`);
+      setSelecting(false);
+      setRawSelected(new Set());
+    } else {
+      toast.error(`Couldn't delete ${failed.length} of ${pluralSessions(ids.length)}.`);
+      setRawSelected(new Set(failed));
+    }
+    await refresh({ silent: true });
+    notifyDataChanged();
+  }, [selected, refresh]);
+
   const openProjectDelete = useCallback(() => setProjectDeleteOpen(true), []);
   const closeProjectDelete = useCallback(() => setProjectDeleteOpen(false), []);
 
@@ -225,6 +307,17 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     requestDelete,
     cancelDelete,
     confirmRemove,
+    selecting,
+    startSelecting,
+    stopSelecting,
+    selected,
+    toggleSelect,
+    toggleSelectAll,
+    bulkDeleteOpen,
+    requestBulkDelete,
+    cancelBulkDelete,
+    bulkProgress,
+    confirmBulkRemove,
     projectDeleteOpen,
     openProjectDelete,
     closeProjectDelete,

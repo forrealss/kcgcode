@@ -20,6 +20,7 @@ import { resolveHostname } from "../server/host";
 import { createAuthService } from "../server/services/auth";
 import type { CliArgs } from "./args";
 import { openBrowser, startDashboard } from "./dashboard";
+import { disabledKeepAwake, startKeepAwake } from "./keep-awake";
 import { c, panel, row, symbols } from "./theme";
 
 const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings", "/settings/*"];
@@ -63,6 +64,9 @@ export async function runStart(args: CliArgs): Promise<void> {
   const resolvedPort = app.server.port ?? port;
   const primaryUrl = `http://${hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname}:${resolvedPort}`;
 
+  const allowSleep = args.allowSleep || process.env.KCG_ALLOW_SLEEP === "1";
+  const keepAwake = allowSleep ? disabledKeepAwake() : await startKeepAwake();
+
   let shuttingDown = false;
   let dash: { stop(): void } | null = null;
 
@@ -70,6 +74,7 @@ export async function runStart(args: CliArgs): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     dash?.stop();
+    keepAwake.stop();
     console.log(`\n${c.dim(`(${reason})`)} ${c.yellow("Saving session state and stopping…")}`);
     try {
       await app.close();
@@ -84,6 +89,7 @@ export async function runStart(args: CliArgs): Promise<void> {
     server: app,
     port: resolvedPort,
     hostname,
+    keepAwake,
     onQuit: (reason) => void shutdown(reason),
     onOpenUrl: () => openBrowser(primaryUrl),
   });

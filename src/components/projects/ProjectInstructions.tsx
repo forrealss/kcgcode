@@ -1,15 +1,16 @@
 /**
- * Custom instruction Project — seksi di panel samping + dialog editor.
+ * Custom instruction Project — grup di panel samping (gaya libadwaita:
+ * judul grup + satu baris yang membuka editor) + dialog editor.
  *
  * Instruksi disimpan lewat `PATCH /api/projects/:id` dan dikirim server
  * sebagai `system` di setiap prompt Session milik Project ini (ditambahkan
  * di atas AGENTS.md / instruksi bawaan opencode). Perubahan langsung berlaku
  * untuk prompt berikutnya, termasuk di Session yang sudah berjalan.
  */
-import { PencilIcon, PlusIcon, ScrollTextIcon } from "lucide-react";
+import { ScrollTextIcon } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
-import { PanelBody, PanelSection } from "@/components/projects/PanelSection";
+import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -41,38 +42,26 @@ export function ProjectInstructions({ project, onSaved }: ProjectInstructionsPro
   const hasInstructions = instructions.length > 0;
 
   return (
-    <PanelSection
-      id="instructions"
-      title="Instructions"
-      icon={<ScrollTextIcon />}
-      meta={hasInstructions ? `${instructions.length.toLocaleString()} characters` : "Not set"}
-    >
-      {hasInstructions ? (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="group flex w-full flex-col gap-2 px-3.5 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none"
-        >
-          <span className="line-clamp-4 text-[13px] leading-relaxed whitespace-pre-line text-foreground/85">
-            {instructions}
-          </span>
-          <span className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground group-hover:text-foreground">
-            <PencilIcon className="size-3.5" aria-hidden />
-            Edit
-          </span>
-        </button>
-      ) : (
-        <PanelBody className="flex flex-col items-start gap-2.5">
-          <p className="text-xs leading-relaxed text-muted-foreground">
-            Tell the agent how to work in this project, like the language to reply in or tools to
-            prefer.
-          </p>
-          <Button type="button" variant="outline" size="sm" onClick={() => setOpen(true)}>
-            <PlusIcon data-icon="inline-start" />
-            Add instructions
-          </Button>
-        </PanelBody>
-      )}
+    <>
+      {/* AdwPreferencesGroup + satu AdwActionRow yang bisa diaktifkan:
+          klik baris membuka editor. */}
+      <PrefsGroup
+        title="Instructions"
+        description="Sent with every prompt in this project, for both OpenCode and Claude Code."
+      >
+        <ActionRow
+          prefix={<ScrollTextIcon className="size-[18px] text-muted-foreground" aria-hidden />}
+          title={hasInstructions ? "Custom instructions" : "Add instructions"}
+          subtitle={
+            hasInstructions ? (
+              <span className="line-clamp-2 whitespace-pre-line">{instructions}</span>
+            ) : (
+              "Like the language to reply in or tools to prefer"
+            )
+          }
+          onActivate={() => setOpen(true)}
+        />
+      </PrefsGroup>
 
       <InstructionsDialog
         open={open}
@@ -83,7 +72,7 @@ export function ProjectInstructions({ project, onSaved }: ProjectInstructionsPro
           setOpen(false);
         }}
       />
-    </PanelSection>
+    </>
   );
 }
 
@@ -138,8 +127,8 @@ function InstructionsDialog({
         <DialogHeader>
           <DialogTitle>Custom instructions</DialogTitle>
           <DialogDescription>
-            Sent to the agent with every prompt in {project.name}, on top of AGENTS.md. Changes
-            apply from the next message.
+            Sent to the agent with every prompt in {project.name}, on top of AGENTS.md / CLAUDE.md.
+            Changes apply from the next message.
           </DialogDescription>
         </DialogHeader>
 

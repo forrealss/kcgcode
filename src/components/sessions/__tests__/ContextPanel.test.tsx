@@ -97,6 +97,42 @@ test("MCP: server bermasalah ditampilkan paling atas", () => {
   expect(out.indexOf("zzz-broken")).toBeLessThan(out.indexOf("aaa-ok"));
 });
 
+test("MCP: banyak yang perlu login dilipat jadi satu baris, yang tersambung tetap tampil", () => {
+  const out = html({
+    ...base,
+    mcp: [
+      { name: "firecrawl", status: "connected", error: null },
+      { name: "claude.ai Asana", status: "needs_auth", error: null },
+      { name: "claude.ai Box", status: "needs_auth", error: null },
+      { name: "claude.ai Canva", status: "needs_client_registration", error: null },
+    ],
+  });
+  expect(out).toContain("firecrawl");
+  expect(out).toContain("3 need sign-in");
+  // Nama di dalam kelompok baru tampil saat dibuka.
+  expect(out).not.toContain("claude.ai Asana");
+  expect(out).toContain('aria-expanded="false"');
+  // Belum login itu normal — ringkasan tidak diberi warna peringatan.
+  expect(out).not.toContain("text-amber-700");
+});
+
+test("MCP: satu server perlu login tetap tampil sebagai baris biasa", () => {
+  const out = html({
+    ...base,
+    mcp: [
+      { name: "firecrawl", status: "connected", error: null },
+      { name: "github", status: "needs_auth", error: null },
+    ],
+  });
+  expect(out).toContain("github");
+  expect(out).not.toContain("need sign-in");
+});
+
+test("MCP: ada yang gagal -> ringkasan diberi warna peringatan", () => {
+  const out = html({ ...base, mcp: [{ name: "x", status: "failed", error: null }] });
+  expect(out).toContain("text-amber-700");
+});
+
 test("MCP kosong: keterangan menyesuaikan status Session", () => {
   expect(html(base)).toContain("No MCP servers configured");
   expect(html({ ...base, live: false })).toContain("Start the session to see MCP servers");

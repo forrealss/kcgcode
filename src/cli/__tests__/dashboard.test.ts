@@ -42,6 +42,28 @@ describe("renderDashboard", () => {
     expect(frame).not.toContain("CONFIG");
   });
 
+  test("baris Awake menampilkan status keep-awake", () => {
+    const on = renderDashboard(
+      makeInfo({
+        keepAwake: { status: () => ({ active: true, method: "systemd-inhibit", error: null }) },
+      }),
+      "0.1.0",
+    );
+    expect(on).toContain("Awake");
+    expect(on).toContain("sleep blocked");
+
+    const off = renderDashboard(
+      makeInfo({
+        keepAwake: {
+          status: () => ({ active: false, method: null, error: "disabled (--allow-sleep)" }),
+        },
+      }),
+      "0.1.0",
+    );
+    expect(off).toContain("off · disabled");
+    expect(renderDashboard(makeInfo(), "0.1.0")).not.toContain("Awake");
+  });
+
   test("stats berubah saat data store berubah (refresh in-place)", () => {
     let sessions: { id: string; status: string; title: string | null }[] = [];
     const info = makeInfo({

@@ -74,22 +74,23 @@ export function ProjectDetailPage({ projectId }: ProjectDetailPageProps) {
           </div>
           <SessionListSkeleton />
         </div>
-        {/* Sama dengan ProjectSidePanel: tumpukan kartu seksi. */}
-        <div className="hidden flex-col gap-3 self-start lg:flex">
-          {[2, 1, 3].map((rows, i) => (
+        {/* Sama dengan ProjectSidePanel: grup (judul + deskripsi) berisi
+            boxed list. */}
+        <div className="hidden flex-col gap-6 self-start lg:flex">
+          {[1, 2, 3].map((rows, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
-            <div key={i} className="overflow-hidden rounded-xl border bg-card">
-              <div className="flex items-center gap-3 px-3.5 py-3">
-                <Skeleton className="size-8 rounded-lg" />
-                <div className="flex flex-1 flex-col gap-1.5">
-                  <Skeleton className="h-3.5 w-24" />
-                  <Skeleton className="h-3 w-16" />
-                </div>
+            <div key={i} className="flex flex-col gap-2.5">
+              <div className="flex flex-col gap-1.5 px-1">
+                <Skeleton className="h-4 w-28" />
+                <Skeleton className="h-3 w-40" />
               </div>
-              <div className="flex flex-col gap-2 border-t px-3.5 py-3">
+              <div className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card">
                 {Array.from({ length: rows }, (_, j) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
-                  <Skeleton key={j} className="h-3.5" style={{ width: `${80 - j * 15}%` }} />
+                  <div key={j} className="flex min-h-14 flex-col justify-center gap-1.5 px-4">
+                    <Skeleton className="h-4" style={{ width: `${60 - j * 12}%` }} />
+                    <Skeleton className="h-3 w-1/3" />
+                  </div>
                 ))}
               </div>
             </div>

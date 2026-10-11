@@ -14,12 +14,21 @@ export type AppRoute =
   | { name: "project"; projectId: string }
   | { name: "session"; projectId: string; sessionId: string }
   | { name: "skills" }
-  | { name: "settings"; section: SettingsSection; anchor?: string }
+  | {
+      name: "settings";
+      section: SettingsSection;
+      anchor?: string;
+      /**
+       * `/settings` tanpa sub-halaman. Layar lebar: tampil sebagai Profile
+       * (daftar navigasi ada di samping); layar sempit: daftar bagian.
+       */
+      root?: true;
+    }
   | { name: "not-found" };
 
 /**
- * Sub-halaman Settings (`/settings/:section`). Tab yang tampil hanya
- * profile/security/workspace/remote; `about` dibuka dari ikon di judul.
+ * Sub-halaman Settings (`/settings/:section`): empat bagian pengaturan +
+ * `about` (tampil terpisah di akhir navigasi, bukan pengaturan).
  */
 export const SETTINGS_SECTIONS = ["profile", "security", "workspace", "remote", "about"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
@@ -84,7 +93,7 @@ export function parseRoute(pathname: string): AppRoute {
   if (segments.length === 0) return { name: "projects" };
   if (segments[0] === "skills" && segments.length === 1) return { name: "skills" };
   if (segments[0] === "settings") {
-    if (segments.length === 1) return { name: "settings", section: "profile" };
+    if (segments.length === 1) return { name: "settings", section: "profile", root: true };
     const section = segments[1];
     if (segments.length === 2 && section !== undefined && isSettingsSection(section)) {
       return { name: "settings", section };

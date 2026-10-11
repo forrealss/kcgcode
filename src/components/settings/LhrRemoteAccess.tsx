@@ -1,11 +1,11 @@
 /**
  * Panel Remote access via localhost.run — tanpa akun, lewat `ssh` bawaan OS.
  *
- * Satu grup ala AdwPreferencesGroup:
+ * Susunan sama dengan penyedia bawaan (satu hal per grup):
  * - AdwSwitchRow "Remote access" (status satu frasa di subjudul),
- * - QR + link saat online (komponen bersama penyedia bawaan),
+ * - grup "Your link" saat online (komponen bersama penyedia bawaan),
+ * - grup "Connection method" (dari pembungkus),
  * - baris expander "Connection log".
- * Catatan alamat yang berubah + tautan ke KCG Code link jadi footer grup.
  */
 import { ChevronDownIcon, GlobeIcon, LockIcon, TerminalSquareIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
@@ -33,8 +33,8 @@ export interface LhrRemoteAccessProps {
   LogPanel: (p: { endpoint?: string }) => ReactNode;
   /** Buka konfirmasi mematikan (halaman bisa terputus bila dibuka lewat link ini). */
   onRequestStop: (stop: () => Promise<void>, viaThisLink: boolean) => void;
-  /** Pindah ke penyedia yang direkomendasikan (KCG Code link). */
-  onUseRecommended: () => void;
+  /** Grup "Connection method" — dirender sebelum log. */
+  methodPicker: ReactNode;
 }
 
 export function LhrRemoteAccess({
@@ -42,7 +42,7 @@ export function LhrRemoteAccess({
   LiveAddress,
   LogPanel,
   onRequestStop,
-  onUseRecommended,
+  methodPicker,
 }: LhrRemoteAccessProps) {
   const { navigate } = useRouter();
   const [s, setS] = useState<LhrStatus | null>(null);
@@ -109,10 +109,10 @@ export function LhrRemoteAccess({
 
   // Subjudul: satu kalimat pendek yang menjelaskan keadaan + apa artinya.
   let tone: RowTone = "muted";
-  let subtitle: ReactNode = "Get a temporary link to open KCG Code on your phone";
+  let subtitle: ReactNode = "Off";
   if (!protectedApp) {
     tone = "warning";
-    subtitle = "Set a PIN or password first to keep others out";
+    subtitle = "Needs a PIN or password first";
   } else if (s.phase === "error") {
     tone = "warning";
     subtitle = (
@@ -124,7 +124,7 @@ export function LhrRemoteAccess({
     );
   } else if (online) {
     tone = "success";
-    subtitle = "On · anyone with the link still needs your PIN or password";
+    subtitle = "On · PIN still required";
   } else if (connecting) {
     tone = "busy";
     subtitle =
@@ -139,7 +139,7 @@ export function LhrRemoteAccess({
   };
 
   return (
-    <section aria-label="localhost.run" className="flex flex-col gap-2">
+    <>
       <PrefsGroup id="remote">
         {/* AdwSwitchRow: judul + status singkat, switch di kanan. */}
         <li>
@@ -181,9 +181,17 @@ export function LhrRemoteAccess({
             onActivate={() => navigate(settingsPath("security"))}
           />
         )}
+      </PrefsGroup>
 
-        {online && s.url && <LiveAddress url={s.url} />}
+      {online && s.url && (
+        <PrefsGroup title="Your link">
+          <LiveAddress url={s.url} />
+        </PrefsGroup>
+      )}
 
+      {methodPicker}
+
+      <PrefsGroup>
         {/* Log teknis dilipat di baris expander (AdwExpanderRow). */}
         <Collapsible asChild open={showLog} onOpenChange={setShowLog}>
           <li>
@@ -216,20 +224,7 @@ export function LhrRemoteAccess({
           </li>
         </Collapsible>
       </PrefsGroup>
-
-      {/* Footer grup: catatan singkat + aksi inline. */}
-      <p className="px-1 text-[12.5px] leading-snug text-muted-foreground">
-        Free addresses change every few hours and after reconnecting.{" "}
-        <button
-          type="button"
-          onClick={onUseRecommended}
-          className="rounded-sm font-medium text-foreground underline-offset-2 outline-none hover:underline focus-visible:underline focus-visible:ring-[3px] focus-visible:ring-ring/40"
-        >
-          Use KCG Code link
-        </button>{" "}
-        for one that stays the same.
-      </p>
-    </section>
+    </>
   );
 }
 

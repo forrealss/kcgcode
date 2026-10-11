@@ -21,25 +21,19 @@
  *   Model bergantung pada agent, jadi keduanya dipilih di satu tempat.
  */
 
-import { ChevronDownIcon, ChevronsUpDownIcon, SparklesIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { ChevronDownIcon, ChevronsUpDownIcon, SparklesIcon } from "lucide-react";
+import { useEffect, useState } from "react";
 import { AgentLogo } from "@/components/sessions/AgentLogo";
 import { ModelSearchList } from "@/components/sessions/ModelSearchList";
+import { AdwDialogContent } from "@/components/ui/adw-dialog";
+import { AdwToggleGroup } from "@/components/ui/adw-toggle-group";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { activeModelLabel, keyOfSessionModel, shortModelName } from "@/lib/model-picker";
-import { cn } from "@/lib/utils";
 import type { ModelOption } from "@/server/services/opencode-client";
 import type { AgentType, SessionModel } from "@/types";
 
@@ -83,7 +77,6 @@ export function ModelPicker({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const contentRef = useRef<HTMLDivElement>(null);
 
   const label = activeModelLabel(model, models ?? []);
   /** Judul header: buang prefiks vendor & potong bila panjang. */
@@ -211,106 +204,43 @@ export function ModelPicker({
         }}
       >
         {/* AdwDialog: header bar (judul + subjudul di tengah, tombol tutup
-            bundar), isi preferensi di bawahnya. Tinggi dipatok agar daftar
-            panjang men-scroll di dalam dialog. Di HP tampil sebagai bottom
-            sheet (perilaku AdwDialog di layar sempit). */}
-        <DialogContent
-          ref={contentRef}
-          showCloseButton={false}
-          onOpenAutoFocus={(e) => {
-            // Desktop: langsung bisa mengetik di kolom cari. HP: jangan
-            // memunculkan keyboard virtual begitu sheet terbuka.
-            e.preventDefault();
-            const wide = window.matchMedia("(min-width: 640px)").matches;
-            const search =
-              contentRef.current?.querySelector<HTMLInputElement>('input[type="search"]');
-            (wide && search ? search : contentRef.current)?.focus();
-          }}
-          onEscapeKeyDown={(e) => {
-            // Esc saat kolom cari berisi: kosongkan cari dulu, jangan tutup.
-            const el = document.activeElement;
-            if (el instanceof HTMLInputElement && el.type === "search" && el.value !== "") {
-              e.preventDefault();
-            }
-          }}
-          className={cn(
-            "flex h-[min(640px,85dvh)] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-md",
-            "max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:h-[85dvh] max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-b-none max-sm:border-x-0 max-sm:border-b-0",
-            "max-sm:data-[state=closed]:slide-out-to-bottom-8 max-sm:data-[state=open]:slide-in-from-bottom-8",
-          )}
+            bundar), isi preferensi di bawahnya; bottom sheet di HP. */}
+        <AdwDialogContent
+          title={onAgentTypeChange ? "Agent & Model" : "Model"}
+          subtitle={sessionId === null ? "For the new session" : "Applies to the next message"}
+          closeDisabled={saving}
         >
-          {/* Pegangan sheet (dekoratif) — hanya di HP. */}
-          <span
-            aria-hidden
-            className="mx-auto mt-2 h-1 w-9 shrink-0 rounded-full bg-muted-foreground/30 sm:hidden"
-          />
-          <DialogHeader className="grid shrink-0 grid-cols-[2rem_1fr_2rem] items-center gap-2 px-3 pt-2.5 pb-2 sm:pt-3">
-            <span aria-hidden />
-            <div className="flex min-w-0 flex-col items-center gap-0.5 text-center">
-              <DialogTitle className="truncate text-[15px] leading-5 font-bold">
-                {onAgentTypeChange ? "Agent & Model" : "Model"}
-              </DialogTitle>
-              <DialogDescription className="truncate text-xs leading-4">
-                {sessionId === null ? "For the new session" : "Applies to the next message"}
-              </DialogDescription>
-            </div>
-            <DialogClose
+          {onAgentTypeChange && (
+            <AdwToggleGroup
+              label="Agent"
+              value={agentType}
+              // Tetap bisa diganti saat daftar dimuat — respons usang dibuang.
               disabled={saving}
-              aria-label="Close"
-              className="flex size-7 items-center justify-center rounded-full bg-black/[0.06] text-foreground/80 transition-colors outline-none hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-50 dark:bg-white/[0.08] dark:hover:bg-white/15"
-            >
-              <XIcon className="size-3.5" strokeWidth={2.5} />
-            </DialogClose>
-          </DialogHeader>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-3 px-4 pt-1 pb-[max(1rem,env(safe-area-inset-bottom))]">
-            {onAgentTypeChange && (
-              // AdwToggleGroup: palung terisi, pilihan aktif "terangkat".
-              // biome-ignore lint/a11y/useSemanticElements: grup tombol segmented, bukan fieldset form.
-              <div
-                role="group"
-                aria-label="Agent"
-                className="grid shrink-0 grid-cols-2 gap-0.5 rounded-[10px] bg-black/[0.06] p-[3px] dark:bg-white/[0.07]"
-              >
-                {AGENT_TYPES.map((t) => (
-                  <button
-                    key={t}
-                    type="button"
-                    aria-pressed={t === agentType}
-                    // Tetap bisa diganti saat daftar dimuat — respons usang dibuang.
-                    disabled={saving}
-                    onClick={() => onAgentTypeChange(t)}
-                    className={cn(
-                      "flex h-8 items-center justify-center gap-2 rounded-[7px] text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:opacity-60",
-                      t === agentType
-                        ? "bg-white text-foreground shadow-sm dark:bg-white/[0.15] dark:shadow-none"
-                        : "text-foreground/70 hover:bg-black/[0.04] hover:text-foreground dark:hover:bg-white/[0.05]",
-                    )}
-                  >
-                    <AgentLogo agentType={t} />
-                    {AGENT_TYPE_LABELS[t]}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {error && (
-              <Alert variant="destructive">
-                <AlertTitle>Failed</AlertTitle>
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            <ModelSearchList
-              models={models}
-              loading={loading}
-              activeKey={keyOfSessionModel(model)}
-              onSelect={(next) => void choose(next)}
-              disabled={saving}
-              className="flex-1"
+              onChange={onAgentTypeChange}
+              options={AGENT_TYPES.map((t) => ({
+                value: t,
+                label: AGENT_TYPE_LABELS[t],
+                icon: <AgentLogo agentType={t} />,
+              }))}
             />
-          </div>
-        </DialogContent>
+          )}
+
+          {error && (
+            <Alert variant="destructive">
+              <AlertTitle>Failed</AlertTitle>
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          <ModelSearchList
+            models={models}
+            loading={loading}
+            activeKey={keyOfSessionModel(model)}
+            onSelect={(next) => void choose(next)}
+            disabled={saving}
+            className="flex-1"
+          />
+        </AdwDialogContent>
       </Dialog>
     </>
   );

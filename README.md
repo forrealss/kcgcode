@@ -155,6 +155,7 @@ Skills run with your agent's full permissions. Review a skill and its audit befo
 | `-H, --host <h>` | Bind host (default `127.0.0.1`, env `KCG_HOST`) |
 | `-c, --config <f>` | Config path (default `~/.kcgcode/config.json`) |
 | `--open` | Open the web app in your browser |
+| `--allow-sleep` | Let the OS sleep while running (by default kcgcode keeps the machine awake so the tunnel stays connected) |
 
 Dashboard keys: `q` quit · `o` open browser · `Ctrl+C` stop.
 
@@ -164,6 +165,7 @@ Dashboard keys: `q` quit · `o` open browser · `Ctrl+C` stop.
 | `KCG_HOST` | Bind host |
 | `KCG_CONFIG_PATH` | Config file path |
 | `KCG_DB_PATH` | SQLite path (default `~/.kcgcode/data/kcg-code.sqlite`) |
+| `KCG_ALLOW_SLEEP=1` | Same as `--allow-sleep` |
 
 ## Config & data location
 

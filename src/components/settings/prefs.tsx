@@ -6,10 +6,12 @@
  *                  diklik (tombol / tautan) dengan chevron seperti GNOME.
  * - `EntryRow`     label kecil di atas input sebaris; tombol ✓ muncul saat
  *                  nilai berubah (seperti AdwEntryRow "apply button").
+ * - `ExpanderRow`  baris yang membuka isi tambahan di bawahnya (seperti
+ *                  AdwExpanderRow): chevron berputar, isi berlatar redup.
  * - `SwitchRow` tidak dibutuhkan saat ini; `ComboRow` diwakili ActionRow +
  *   Select di suffix.
  */
-import { CheckIcon, ChevronRightIcon } from "lucide-react";
+import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
@@ -19,6 +21,7 @@ export function PrefsGroup({
   title,
   description,
   suffix,
+  toolbar,
   children,
 }: {
   id?: string;
@@ -26,6 +29,8 @@ export function PrefsGroup({
   description?: ReactNode;
   /** Aksi kecil di kanan judul grup (mis. tombol). */
   suffix?: ReactNode;
+  /** Kontrol di antara judul & boxed list (mis. kolom cari, filter). */
+  toolbar?: ReactNode;
   children: ReactNode;
 }) {
   const headingId = useId();
@@ -50,6 +55,7 @@ export function PrefsGroup({
           {description && <p className="text-[13px] text-muted-foreground">{description}</p>}
         </div>
       )}
+      {toolbar}
       <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
         <ul className="flex flex-col divide-y">{children}</ul>
       </div>
@@ -238,6 +244,68 @@ export function EntryRow({
           </button>
         )}
       </form>
+    </li>
+  );
+}
+
+/**
+ * Baris ala AdwExpanderRow: judul + subjudul (1 baris), suffix, chevron;
+ * klik membuka `children` di bawahnya (latar redup, dipisah garis). Tanpa
+ * `children` baris tampil biasa (tidak bisa dibuka).
+ */
+export function ExpanderRow({
+  title,
+  subtitle,
+  prefix,
+  suffix,
+  children,
+  className,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  prefix?: ReactNode;
+  suffix?: ReactNode;
+  children?: ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  const expandable = children !== undefined && children !== null && children !== false;
+  return (
+    <li className={className}>
+      <button
+        type="button"
+        onClick={() => expandable && setOpen((v) => !v)}
+        aria-expanded={expandable ? open : undefined}
+        aria-controls={expandable ? contentId : undefined}
+        disabled={!expandable}
+        className="flex min-h-14 w-full items-center gap-3 px-4 py-2.5 text-left transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:ring-inset active:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
+      >
+        {prefix && <span className="flex shrink-0 items-center">{prefix}</span>}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+          <span className="flex min-w-0 items-center gap-2 text-[15px] leading-5">{title}</span>
+          {subtitle && (
+            <span className="truncate text-[13px] leading-snug text-muted-foreground">
+              {subtitle}
+            </span>
+          )}
+        </span>
+        {suffix && <span className="flex shrink-0 items-center gap-2">{suffix}</span>}
+        {expandable && (
+          <ChevronDownIcon
+            className={cn(
+              "size-4 shrink-0 text-muted-foreground transition-transform duration-200",
+              open && "rotate-180",
+            )}
+            aria-hidden
+          />
+        )}
+      </button>
+      {expandable && open && (
+        <div id={contentId} className="border-t bg-muted/30 px-4 py-3">
+          {children}
+        </div>
+      )}
     </li>
   );
 }

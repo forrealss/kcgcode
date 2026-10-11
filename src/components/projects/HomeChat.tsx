@@ -47,6 +47,7 @@ import {
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
 import { useRouter } from "@/hooks/useRouter";
+import { readPreferredAgentType, storePreferredAgentType } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
 import { pickHeadline } from "@/lib/headlines";
@@ -58,7 +59,6 @@ import logo from "@/logo.svg";
 import type { AgentType, Session, SessionModel } from "@/types";
 
 const LAST_PROJECT_KEY = "kcg-home-project";
-const LAST_AGENT_TYPE_KEY = "kcg-home-agent-type";
 
 export interface HomeChatProps {
   /** Project terurut aktivitas terbaru (`buildProjectOverviews`). */
@@ -71,16 +71,6 @@ function readLastProject(): string | null {
   return typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_PROJECT_KEY);
 }
 
-function readLastAgentType(): AgentType {
-  try {
-    const saved =
-      typeof localStorage === "undefined" ? null : localStorage.getItem(LAST_AGENT_TYPE_KEY);
-    return saved === "claude-code" ? "claude-code" : "opencode";
-  } catch {
-    return "opencode";
-  }
-}
-
 export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   const { navigate } = useRouter();
   // Dipilih sekali per kunjungan — tidak berganti saat re-render.
@@ -88,7 +78,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   const [text, setText] = useState("");
   const [projectId, setProjectId] = useState<string | null>(readLastProject);
   /** Backend Session baru (OpenCode / Claude Code), diingat per perangkat. */
-  const [agentType, setAgentType] = useState<AgentType>(readLastAgentType);
+  const [agentType, setAgentType] = useState<AgentType>(readPreferredAgentType);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Model & agent untuk Session baru; null = default opencode. */
@@ -123,11 +113,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       setAgent(null);
     }
     setAgentType(next);
-    try {
-      localStorage.setItem(LAST_AGENT_TYPE_KEY, next);
-    } catch {
-      // Penyimpanan tidak tersedia (private mode) — pilihan tetap berlaku.
-    }
+    storePreferredAgentType(next);
     // Tanpa fokus ke textarea: dipanggil dari dialog ModelPicker yang masih
     // terbuka (fokus terkunci di dialog sampai ditutup).
   };

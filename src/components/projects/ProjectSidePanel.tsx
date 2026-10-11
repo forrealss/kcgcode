@@ -1,40 +1,34 @@
 /**
- * Panel samping halaman Project — gaya Claude Projects: Instructions, MCP
- * server, dan Skills dalam satu kolom di kanan daftar Session.
+ * Panel samping halaman Project — Instructions, MCP server, dan Skills dalam
+ * satu kolom di kanan daftar Session.
  *
- * Tiap seksi bisa dilipat (status diingat). Daftar berupa "grouped list"
- * (kotak berdivider) dengan padding simetris — tanpa margin negatif.
+ * Gaya libadwaita (GNOME Settings), memakai primitif `settings/prefs`:
+ * tiap seksi = AdwPreferencesGroup (judul + deskripsi di luar kotak, aksi
+ * datar di kanan judul) berisi "boxed list". Baris = AdwActionRow /
+ * AdwExpanderRow; kolom cari & filter (GtkSearchEntry, AdwToggleGroup) ada di
+ * antara judul dan kotak.
  *
  * MCP & Skills dibaca dari KEDUA agent (OpenCode & Claude Code) lalu
  * digabung per nama, sama seperti halaman Skills:
- * - MCP: `GET /api/projects/:id/mcp?agent=` — tiap baris menampilkan status
- *   per agent (logo + label); yang bermasalah diurutkan paling atas, error
- *   `failed` tampil inline. Server Claude Code dibaca dari config
- *   (`.mcp.json`, `~/.claude.json`); statusnya "Not checked" sampai ada
- *   Session Claude Code yang berjalan.
- * - Skills: `GET /api/projects/:id/skills?agent=` — pencarian (bila banyak)
- *   + chip asal (All / This project / Global / Built-in); logo agent yang
- *   memuat skill; klik baris untuk deskripsi lengkap. Tombol "+" membuka
- *   halaman Skills untuk Project ini.
- * Satu agent gagal dibaca tidak menggagalkan yang lain (catatan kecil di
- * seksi). Tiap seksi memuat datanya sendiri; tombol reload memuat ulang
- * keduanya.
+ * - MCP: `GET /api/projects/:id/mcp?agent=` — status per agent (logo +
+ *   label) di subjudul; yang bermasalah paling atas, error tampil inline.
+ *   Server Claude Code dibaca dari config (`.mcp.json`, `~/.claude.json`);
+ *   statusnya "Not checked" sampai ada Session Claude Code yang berjalan.
+ * - Skills: `GET /api/projects/:id/skills?agent=` — cari (bila banyak) +
+ *   filter asal; logo agent yang memuat skill; baris dibuka untuk deskripsi
+ *   lengkap & path. Tombol "+" membuka halaman Skills untuk Project ini.
+ * Satu agent gagal dibaca tidak menggagalkan yang lain (baris catatan).
+ * Tiap seksi memuat datanya sendiri; tombol reload memuat ulang keduanya.
  */
-import {
-  ChevronDownIcon,
-  PlugIcon,
-  PlusIcon,
-  RefreshCwIcon,
-  SearchIcon,
-  SparklesIcon,
-  XIcon,
-} from "lucide-react";
+import { PlugIcon, PlusIcon, RefreshCwIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
-import { PanelBody, PanelHint, PanelList, PanelSection } from "@/components/projects/PanelSection";
 import { ProjectInstructions } from "@/components/projects/ProjectInstructions";
 import { AgentLogo } from "@/components/sessions/AgentLogo";
+import { ActionRow, ExpanderRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
 import { AgentBadges } from "@/components/skills/SkillCards";
+import { AdwToggleGroup } from "@/components/ui/adw-toggle-group";
 import { Button } from "@/components/ui/button";
+import { SearchEntry } from "@/components/ui/search-entry";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRouter } from "@/hooks/useRouter";
 import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
@@ -46,7 +40,6 @@ import {
   MCP_STATUS_LABEL,
   type McpServerEntry,
   mergeMcpServers,
-  SKILL_SOURCE_LABEL,
 } from "@/lib/project-extensions";
 import { skillsPath } from "@/lib/routes";
 import { type InstalledSkill, mergeInstalledSkills } from "@/lib/skills-catalog";
@@ -56,7 +49,7 @@ import type { AgentType, McpServerState, Project } from "@/types";
 
 /** Skill ditampilkan terbatas dulu; sisanya lewat "Show more". */
 const SKILL_PREVIEW = 5;
-/** Kotak cari muncul hanya bila skill cukup banyak. */
+/** Kolom cari muncul hanya bila skill cukup banyak. */
 const SKILL_SEARCH_THRESHOLD = 8;
 
 /** Hasil per agent; `failed` = agent yang gagal dibaca (yang lain tetap tampil). */
@@ -128,69 +121,84 @@ export function ProjectSidePanel({ project, onProjectChange }: ProjectSidePanelP
   );
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-6">
       <ProjectInstructions project={project} onSaved={onProjectChange} />
-      <McpSection state={mcp} onReload={reload} />
-      <SkillsSection state={skills} projectId={project.id} />
+      <McpGroup state={mcp} onReload={reload} />
+      <SkillsGroup state={skills} projectId={project.id} />
     </div>
   );
 }
 
-/** Catatan kecil bila sebagian agent gagal dibaca. */
-function PartialFailure({ failed }: { failed: AgentLists<unknown>["failed"] }) {
-  if (failed.length === 0) return null;
-  return (
-    <PanelHint>
-      <span className="text-destructive">
-        Couldn't read {failed.map((f) => AGENT_TYPE_LABELS[f.agent]).join(", ")}:{" "}
-        {failed[0]?.message}
-      </span>
-    </PanelHint>
-  );
-}
+// ------------------------------------------------------------- shared ----
 
-function ListSkeleton({ rows = 3 }: { rows?: number }) {
+/** Tombol datar bundar di kanan judul grup (aksi header AdwPreferencesGroup). */
+function FlatIconButton({
+  label,
+  onClick,
+  disabled,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
   return (
-    <PanelList>
-      {Array.from({ length: rows }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
-        <li key={i} className="flex items-center gap-3 px-3.5 py-3" aria-hidden>
-          <Skeleton className="size-7 shrink-0 rounded-md" />
-          <div className="flex flex-1 flex-col gap-1.5">
-            <Skeleton className="h-3.5" style={{ width: `${75 - i * 15}%` }} />
-            <Skeleton className="h-3 w-1/3" />
-          </div>
-        </li>
-      ))}
-    </PanelList>
-  );
-}
-
-function ErrorBox({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  return (
-    <div className="flex items-center justify-between gap-3 bg-destructive/5 px-3.5 py-3">
-      <p className="min-w-0 text-xs leading-relaxed text-destructive">{message}</p>
-      {onRetry && (
-        <Button type="button" variant="outline" size="xs" onClick={onRetry} className="shrink-0">
-          Retry
-        </Button>
-      )}
-    </div>
-  );
-}
-
-/** Ikon kotak kecil di awal baris daftar. */
-function RowIcon({ children, className }: { children: ReactNode; className?: string }) {
-  return (
-    <span
-      className={cn(
-        "flex size-7 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground [&_svg]:size-3.5",
-        className,
-      )}
-      aria-hidden
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      className="size-8 rounded-full text-foreground/80"
     >
       {children}
-    </span>
+    </Button>
+  );
+}
+
+/** Baris placeholder saat memuat — tinggi sama dengan ActionRow. */
+function SkeletonRows({ rows }: { rows: number }) {
+  return Array.from({ length: rows }, (_, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: placeholder statis
+    <li key={i} className="flex min-h-14 flex-col justify-center gap-1.5 px-4 py-2.5" aria-hidden>
+      <Skeleton className="h-4" style={{ width: `${60 - i * 12}%` }} />
+      <Skeleton className="h-3 w-1/3" />
+    </li>
+  ));
+}
+
+/** Baris error dengan tombol coba lagi. */
+function ErrorRow({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <ActionRow
+      prefix={<TriangleAlertIcon className="size-[18px] text-destructive" aria-hidden />}
+      title="Couldn't load"
+      subtitle={message}
+      suffix={
+        onRetry && (
+          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        )
+      }
+    />
+  );
+}
+
+/** Baris catatan bila sebagian agent gagal dibaca. */
+function PartialFailureRow({ failed }: { failed: AgentLists<unknown>["failed"] }) {
+  if (failed.length === 0) return null;
+  return (
+    <ActionRow
+      prefix={
+        <TriangleAlertIcon className="size-[18px] text-amber-600 dark:text-amber-400" aria-hidden />
+      }
+      title={`Couldn't read ${failed.map((f) => AGENT_TYPE_LABELS[f.agent]).join(", ")}`}
+      subtitle={failed[0]?.message}
+    />
   );
 }
 
@@ -206,6 +214,16 @@ const MCP_TEXT: Record<McpServerState["status"], string> = {
   unknown: "text-muted-foreground",
 };
 
+/** Warna ikon baris = status paling bermasalah. */
+const MCP_ICON: Record<McpServerState["status"], string> = {
+  connected: "text-emerald-600 dark:text-emerald-400",
+  failed: "text-destructive",
+  needs_auth: "text-amber-600 dark:text-amber-400",
+  needs_client_registration: "text-amber-600 dark:text-amber-400",
+  disabled: "text-muted-foreground/60",
+  unknown: "text-muted-foreground",
+};
+
 /**
  * Label status per agent. `unknown` di Claude Code berarti status belum
  * pernah dilaporkan proses `claude` (server dibaca dari config).
@@ -215,7 +233,7 @@ function mcpAgentLabel(agent: AgentType, status: McpServerState["status"]): stri
   return MCP_STATUS_LABEL[status];
 }
 
-function McpSection({
+function McpGroup({
   state,
   onReload,
 }: {
@@ -228,111 +246,94 @@ function McpSection({
   );
 
   return (
-    <PanelSection
-      id="mcp"
+    <PrefsGroup
       title="MCP servers"
-      icon={<PlugIcon />}
-      meta={state.phase === "ready" ? describeMcpEntries(entries) : undefined}
-      action={
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
+      description={state.phase === "ready" ? describeMcpEntries(entries) : "Loading…"}
+      suffix={
+        <FlatIconButton
+          label="Reload MCP servers and skills"
           onClick={onReload}
           disabled={state.phase === "loading"}
-          aria-label="Reload MCP servers and skills"
-          title="Reload"
-          className="size-8 text-muted-foreground"
         >
           <RefreshCwIcon className={cn(state.phase === "loading" && "animate-spin")} />
-        </Button>
+        </FlatIconButton>
       }
     >
       {state.phase === "loading" ? (
-        <ListSkeleton rows={2} />
+        <SkeletonRows rows={2} />
       ) : state.phase === "error" ? (
-        <ErrorBox message={state.message} onRetry={onReload} />
+        <ErrorRow message={state.message} onRetry={onReload} />
       ) : (
         <>
           {entries.length === 0 ? (
-            <PanelHint>
-              No MCP servers yet. Add them under <code className="font-mono">mcp</code> in
-              opencode.json, or in <code className="font-mono">.mcp.json</code> for Claude Code,
-              then reload.
-            </PanelHint>
+            <ActionRow
+              title="No MCP servers"
+              subtitle={
+                <>
+                  Add them under <code className="font-mono">mcp</code> in opencode.json, or in{" "}
+                  <code className="font-mono">.mcp.json</code> for Claude Code, then reload.
+                </>
+              }
+            />
           ) : (
-            <PanelList>
-              {entries.map((entry) => (
-                <McpRow key={entry.name} entry={entry} />
-              ))}
-            </PanelList>
+            entries.map((entry) => <McpRow key={entry.name} entry={entry} />)
           )}
-          <PartialFailure failed={state.data.failed} />
+          <PartialFailureRow failed={state.data.failed} />
         </>
       )}
-    </PanelSection>
+    </PrefsGroup>
   );
 }
 
 /**
- * Satu MCP server: ikon (warna = status paling bermasalah), nama, lalu
- * status per agent sebagai "logo + label" — mis. OpenCode Connected,
- * Claude Code Not checked. Error tampil di bawahnya per agent.
+ * Satu MCP server (AdwActionRow): ikon simbolik berwarna status, nama, lalu
+ * status per agent di subjudul — "logo Label" untuk tiap agent pemakai.
+ * Error tampil di bawahnya per agent.
  */
 function McpRow({ entry }: { entry: McpServerEntry }) {
   const errors = entry.agents
     .map((a) => ({ agent: a, error: entry.byAgent[a]?.error ?? null }))
     .filter((e): e is { agent: AgentType; error: string } => e.error !== null);
   return (
-    <li className="flex items-start gap-3 px-3.5 py-3">
-      <RowIcon
-        className={cn(
-          entry.status === "connected" &&
-            "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-          entry.status === "failed" && "bg-destructive/10 text-destructive",
-          (entry.status === "needs_auth" || entry.status === "needs_client_registration") &&
-            "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-        )}
-      >
-        <PlugIcon />
-      </RowIcon>
-      <div className="flex min-w-0 flex-1 flex-col gap-1 pt-0.5">
-        <span className="truncate text-sm font-medium leading-5" title={entry.name}>
-          {entry.name}
+    <ActionRow
+      prefix={<PlugIcon className={cn("size-[18px]", MCP_ICON[entry.status])} aria-hidden />}
+      title={<span className="block truncate">{entry.name}</span>}
+      subtitle={
+        <span className="flex flex-col gap-1">
+          <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+            {entry.agents.map((a) => {
+              const status = entry.byAgent[a]?.status ?? "unknown";
+              const label = mcpAgentLabel(a, status);
+              return (
+                <span
+                  key={a}
+                  className={cn("inline-flex items-center gap-1.5", MCP_TEXT[status])}
+                  title={
+                    a === "claude-code" && status === "unknown"
+                      ? "Configured for Claude Code. Status appears once a Claude Code session runs in this project."
+                      : `${AGENT_TYPE_LABELS[a]}: ${label}`
+                  }
+                >
+                  <AgentLogo agentType={a} className="size-3" />
+                  <span className="sr-only">{AGENT_TYPE_LABELS[a]}:</span>
+                  {label}
+                </span>
+              );
+            })}
+          </span>
+          {errors.map((e) => (
+            <span
+              key={e.agent}
+              className="line-clamp-2 font-mono text-[11.5px] leading-relaxed break-all text-destructive/90"
+              title={e.error}
+            >
+              {entry.agents.length > 1 && `${AGENT_TYPE_LABELS[e.agent]}: `}
+              {e.error}
+            </span>
+          ))}
         </span>
-        <ul className="flex flex-wrap items-center gap-x-3 gap-y-1" aria-label="Status per agent">
-          {entry.agents.map((a) => {
-            const status = entry.byAgent[a]?.status ?? "unknown";
-            const label = mcpAgentLabel(a, status);
-            return (
-              <li
-                key={a}
-                className={cn("flex items-center gap-1.5 text-xs", MCP_TEXT[status])}
-                title={
-                  a === "claude-code" && status === "unknown"
-                    ? "Configured for Claude Code. Status appears once a Claude Code session runs in this project."
-                    : `${AGENT_TYPE_LABELS[a]}: ${label}`
-                }
-              >
-                <AgentLogo agentType={a} className="size-3" />
-                <span className="sr-only">{AGENT_TYPE_LABELS[a]}:</span>
-                {label}
-              </li>
-            );
-          })}
-        </ul>
-        {errors.map((e) => (
-          <p
-            key={e.agent}
-            className="line-clamp-2 font-mono text-[11px] leading-relaxed break-all text-destructive/90"
-            title={e.error}
-          >
-            {entry.agents.length > 1 && `${AGENT_TYPE_LABELS[e.agent]}: `}
-            {e.error}
-          </p>
-        ))}
-      </div>
-    </li>
+      }
+    />
   );
 }
 
@@ -340,7 +341,14 @@ function McpRow({ entry }: { entry: McpServerEntry }) {
 
 type SkillFilter = "all" | SkillSource;
 
-function SkillsSection({
+const SKILL_FILTER_LABEL: Record<SkillFilter, string> = {
+  all: "All",
+  project: "Project",
+  global: "Global",
+  builtin: "Built-in",
+};
+
+function SkillsGroup({
   state,
   projectId,
 }: {
@@ -357,10 +365,10 @@ function SkillsSection({
     () => (state.phase === "ready" ? mergeInstalledSkills(state.data.byAgent) : []),
     [state],
   );
-  const browse = () => navigate(skillsPath(projectId));
   // Urutan tampil: Project -> global -> bawaan (paling relevan dulu).
-  const ordered = useMemo(() => groupSkills(all).flatMap((g) => g.skills), [all]);
-  const sources = useMemo(() => groupSkills(all).map((g) => g.source), [all]);
+  const groups = useMemo(() => groupSkills(all), [all]);
+  const ordered = useMemo(() => groups.flatMap((g) => g.skills), [groups]);
+  const sources = useMemo(() => groups.map((g) => g.source), [groups]);
   const bySource = useMemo(
     () => (filter === "all" ? ordered : ordered.filter((s) => s.source === filter)),
     [ordered, filter],
@@ -370,208 +378,137 @@ function SkillsSection({
   // Saat mencari, tampilkan semua hasil; selain itu batasi hingga "Show more".
   const visible = searching || expanded ? filtered : filtered.slice(0, SKILL_PREVIEW);
   const hidden = filtered.length - visible.length;
+  const browse = () => navigate(skillsPath(projectId));
+
+  const showSearch = all.length >= SKILL_SEARCH_THRESHOLD;
+  const showFilter = sources.length > 1;
+  const toolbar =
+    state.phase === "ready" && (showSearch || showFilter) ? (
+      <div className="flex flex-col gap-2">
+        {showSearch && (
+          <SearchEntry
+            value={query}
+            onValueChange={setQuery}
+            placeholder={`Search ${all.length} skills`}
+            aria-label="Search skills"
+          />
+        )}
+        {showFilter && (
+          <AdwToggleGroup
+            label="Filter skills by source"
+            value={filter}
+            onChange={(f) => {
+              setFilter(f);
+              setExpanded(false);
+            }}
+            options={(["all", ...sources] as SkillFilter[]).map((f) => {
+              const count = f === "all" ? all.length : all.filter((s) => s.source === f).length;
+              return {
+                value: f,
+                label: SKILL_FILTER_LABEL[f],
+                title: `${SKILL_FILTER_LABEL[f]}: ${count}`,
+                ariaLabel: `${SKILL_FILTER_LABEL[f]}, ${count} skills`,
+              };
+            })}
+            className="[&_button]:text-[13px]"
+          />
+        )}
+      </div>
+    ) : undefined;
 
   return (
-    <PanelSection
-      id="skills"
+    <PrefsGroup
       title="Skills"
-      icon={<SparklesIcon />}
-      meta={
+      description={
         state.phase === "ready"
           ? all.length === 0
-            ? "None found"
-            : `${all.length} available`
-          : undefined
+            ? "None installed"
+            : `${all.length} available${filter !== "all" || searching ? ` · ${filtered.length} shown` : ""}`
+          : "Loading…"
       }
-      action={
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          onClick={browse}
-          aria-label="Browse and install skills for this project"
-          title="Browse skills"
-          className="size-8 text-muted-foreground"
-        >
+      suffix={
+        <FlatIconButton label="Browse and install skills" onClick={browse}>
           <PlusIcon />
-        </Button>
+        </FlatIconButton>
       }
+      toolbar={toolbar}
     >
       {state.phase === "loading" ? (
-        <ListSkeleton rows={3} />
+        <SkeletonRows rows={3} />
       ) : state.phase === "error" ? (
-        <ErrorBox message={state.message} />
-      ) : all.length === 0 ? (
-        <>
-          <PanelBody className="flex flex-col items-start gap-2.5">
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              No skills yet. Install one from skills.sh for OpenCode, Claude Code, or both.
-            </p>
-            <Button type="button" variant="outline" size="sm" onClick={browse}>
-              <SparklesIcon data-icon="inline-start" />
-              Browse skills
-            </Button>
-          </PanelBody>
-          <PartialFailure failed={state.data.failed} />
-        </>
+        <ErrorRow message={state.message} />
       ) : (
-        <div className="flex flex-col">
-          {(all.length >= SKILL_SEARCH_THRESHOLD || sources.length > 1) && (
-            <PanelBody className="flex flex-col gap-2.5 border-b">
-              {all.length >= SKILL_SEARCH_THRESHOLD && (
-                <div className="relative">
-                  <SearchIcon
-                    className="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground"
-                    aria-hidden
-                  />
-                  <input
-                    type="search"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-                    placeholder={`Search ${all.length} skills`}
-                    aria-label="Search skills"
-                    className="h-9 w-full rounded-lg border bg-background pr-8 pl-8.5 text-sm outline-none transition-shadow placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 [&::-webkit-search-cancel-button]:hidden"
-                  />
-                  {query && (
-                    <button
-                      type="button"
-                      onClick={() => setQuery("")}
-                      aria-label="Clear search"
-                      className="absolute top-1/2 right-2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:text-foreground"
-                    >
-                      <XIcon className="size-3.5" />
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {sources.length > 1 && (
-                <fieldset
-                  aria-label="Filter skills by source"
-                  className="m-0 flex flex-wrap gap-1 border-0 p-0"
-                >
-                  {(["all", ...sources] as SkillFilter[]).map((f) => {
-                    const count =
-                      f === "all" ? all.length : all.filter((s) => s.source === f).length;
-                    const active = filter === f;
-                    return (
-                      <button
-                        key={f}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => {
-                          setFilter(f);
-                          setExpanded(false);
-                        }}
-                        className={cn(
-                          "inline-flex h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
-                          active
-                            ? "bg-foreground text-background"
-                            : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                        )}
-                      >
-                        {f === "all" ? "All" : SKILL_SOURCE_LABEL[f]}
-                        <span className={cn("tabular-nums", active ? "opacity-70" : "opacity-60")}>
-                          {count}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </fieldset>
-              )}
-            </PanelBody>
-          )}
-
-          <PartialFailure failed={state.data.failed} />
-          {visible.length === 0 ? (
-            <PanelHint>No skills match "{query.trim()}".</PanelHint>
+        <>
+          {all.length === 0 ? (
+            <ActionRow
+              prefix={<SparklesIcon className="size-[18px] text-muted-foreground" aria-hidden />}
+              title="Browse skills"
+              subtitle="Install one from skills.sh for OpenCode, Claude Code, or both"
+              onActivate={browse}
+            />
+          ) : visible.length === 0 ? (
+            <li className="px-4 py-4 text-center text-[13px] text-muted-foreground">
+              No skills match “{query.trim()}”.
+            </li>
           ) : (
-            <PanelList>
-              {visible.map((s) => (
-                <SkillRow key={`${s.source}:${s.name}`} skill={s} showSource={filter === "all"} />
-              ))}
-              {!searching && filtered.length > SKILL_PREVIEW && (
-                <li>
-                  <button
-                    type="button"
-                    onClick={() => setExpanded((v) => !v)}
-                    aria-expanded={expanded}
-                    className="flex w-full items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:bg-muted/50 focus-visible:outline-none"
-                  >
-                    {expanded ? "Show less" : `Show ${hidden} more`}
-                    <ChevronDownIcon
-                      className={cn("size-3.5 transition-transform", expanded && "rotate-180")}
-                      aria-hidden
-                    />
-                  </button>
-                </li>
-              )}
-            </PanelList>
+            visible.map((s) => (
+              <SkillRow key={`${s.source}:${s.name}`} skill={s} showSource={filter === "all"} />
+            ))
           )}
-        </div>
+          {!searching && filtered.length > SKILL_PREVIEW && (
+            <li>
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                aria-expanded={expanded}
+                className="flex min-h-12 w-full items-center justify-center px-4 text-[15px] transition-colors outline-none hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:ring-inset active:bg-muted"
+              >
+                {expanded ? "Show less" : `Show ${hidden} more`}
+              </button>
+            </li>
+          )}
+          <PartialFailureRow failed={state.data.failed} />
+        </>
       )}
-    </PanelSection>
+    </PrefsGroup>
   );
 }
 
 /**
- * Satu skill: ikon, nama (+ label asal), deskripsi 1 baris. Klik baris untuk
- * membuka deskripsi lengkap dan path SKILL.md.
+ * Satu skill (AdwExpanderRow): nama (+ label asal), deskripsi 1 baris, logo
+ * agent pemakai. Dibuka -> deskripsi lengkap & path SKILL.md.
  */
 function SkillRow({ skill, showSource }: { skill: InstalledSkill; showSource: boolean }) {
-  const [open, setOpen] = useState(false);
-  const expandable = Boolean(skill.description || skill.location);
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => expandable && setOpen((v) => !v)}
-        aria-expanded={expandable ? open : undefined}
-        disabled={!expandable}
-        className="flex w-full items-start gap-3 px-3.5 py-3 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none disabled:cursor-default disabled:hover:bg-transparent"
-      >
-        <RowIcon className={cn(skill.source === "project" && "bg-primary/10 text-primary")}>
-          <SparklesIcon />
-        </RowIcon>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5 pt-0.5">
-          <span className="flex min-w-0 items-center gap-1.5">
-            <span className="truncate text-sm font-medium leading-5">{skill.name}</span>
-            {showSource && skill.source !== "global" && (
-              <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] font-medium leading-4 text-muted-foreground">
-                {skill.source === "project" ? "Project" : "Built-in"}
-              </span>
-            )}
-            <span className="ml-auto pl-1">
-              <AgentBadges agents={skill.agents} size="sm" />
-            </span>
-          </span>
-          {skill.description && (
-            <span
-              className={cn(
-                "text-xs leading-relaxed text-muted-foreground",
-                open ? "whitespace-pre-line" : "line-clamp-1",
-              )}
-            >
-              {skill.description}
-            </span>
-          )}
-          {open && skill.location && (
-            <span className="mt-1 truncate font-mono text-[11px] text-muted-foreground/80">
-              {skill.location}
-            </span>
-          )}
-        </span>
-        {expandable && (
-          <ChevronDownIcon
-            className={cn(
-              "mt-1.5 size-3.5 shrink-0 text-muted-foreground/60 transition-transform",
-              open && "rotate-180",
-            )}
-            aria-hidden
-          />
+  const details =
+    skill.description || skill.location ? (
+      <div className="flex flex-col gap-2">
+        {skill.description && (
+          <p className="text-[13px] leading-relaxed whitespace-pre-line">{skill.description}</p>
         )}
-      </button>
-    </li>
+        {skill.location && (
+          <p
+            className="truncate font-mono text-[11.5px] text-muted-foreground"
+            title={skill.location}
+          >
+            {skill.location}
+          </p>
+        )}
+      </div>
+    ) : undefined;
+  return (
+    <ExpanderRow
+      title={
+        <>
+          <span className="truncate">{skill.name}</span>
+          {showSource && skill.source !== "global" && (
+            <RowBadge>{skill.source === "project" ? "Project" : "Built-in"}</RowBadge>
+          )}
+        </>
+      }
+      subtitle={skill.description ?? undefined}
+      suffix={<AgentBadges agents={skill.agents} size="sm" />}
+    >
+      {details}
+    </ExpanderRow>
   );
 }

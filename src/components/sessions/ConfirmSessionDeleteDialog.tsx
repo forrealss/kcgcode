@@ -1,9 +1,11 @@
 /**
- * Konfirmasi hapus Session permanen (dipakai header chat `SessionView` dan
- * menu baris `SessionList`). Menghapus juga riwayat percakapan di server
- * opencode — tidak bisa dibatalkan.
+ * Konfirmasi hapus Session permanen (dipakai header chat `SessionView`, menu
+ * baris `SessionList`, dan hapus massal selection mode). Menghapus juga
+ * riwayat percakapan di agent (opencode / Claude Code) — tidak bisa
+ * dibatalkan. `count` > 1 = hapus massal; `progress` menampilkan kemajuan.
  */
 
+import { useState } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +17,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Spinner } from "@/components/ui/spinner";
+import { pluralSessions } from "@/lib/session-selection";
 
 export interface ConfirmSessionDeleteDialogProps {
   open: boolean;
@@ -23,6 +26,10 @@ export interface ConfirmSessionDeleteDialogProps {
   deleting: boolean;
   /** Jalankan penghapusan (engine). */
   onConfirm: () => void;
+  /** Jumlah Session yang dihapus (default 1). */
+  count?: number;
+  /** Kemajuan hapus massal. */
+  progress?: { done: number; total: number } | null;
 }
 
 export function ConfirmSessionDeleteDialog({
@@ -30,7 +37,14 @@ export function ConfirmSessionDeleteDialog({
   onOpenChange,
   deleting,
   onConfirm,
+  count = 1,
+  progress = null,
 }: ConfirmSessionDeleteDialogProps) {
+  // Jumlah dibekukan selama animasi tutup: setelah hapus massal pilihan
+  // sudah kosong, tapi teks dialog yang memudar tidak boleh berganti.
+  const [shownCount, setShownCount] = useState(count);
+  if (open && count !== shownCount) setShownCount(count);
+  const many = shownCount > 1;
   return (
     <AlertDialog
       open={open}
@@ -40,10 +54,12 @@ export function ConfirmSessionDeleteDialog({
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete this session?</AlertDialogTitle>
+          <AlertDialogTitle>
+            {many ? `Delete ${pluralSessions(shownCount)}?` : "Delete this session?"}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            The conversation history on the opencode server will also be permanently deleted. This
-            action cannot be undone.
+            {many ? "Their conversation histories" : "The conversation history"} will also be
+            permanently deleted from the agent. This action cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -59,8 +75,12 @@ export function ConfirmSessionDeleteDialog({
             {deleting ? (
               <>
                 <Spinner data-icon="inline-start" />
-                Deleting…
+                {progress && progress.total > 1
+                  ? `Deleting ${Math.min(progress.done + 1, progress.total)} of ${progress.total}…`
+                  : "Deleting…"}
               </>
+            ) : many ? (
+              `Delete ${pluralSessions(shownCount)}`
             ) : (
               "Delete permanently"
             )}

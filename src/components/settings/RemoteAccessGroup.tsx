@@ -8,6 +8,14 @@
  *
  * Bahasa UI sengaja non-teknis (tanpa "tunnel", "secret", "frpc"): istilah
  * teknis & aksi jarang dipakai disimpan di bagian "Advanced" yang tertutup.
+ *
+ * Susunan halaman (satu hal per grup, ringkas di HP):
+ * 1. AdwSwitchRow "Remote access" + status satu frasa.
+ * 2. "Your link" (saat online): QR (desktop), baris link + salin/buka;
+ *    di HP: "Share link" + QR dilipat di baris expander.
+ * 3. Akun Google tertaut.
+ * 4. "Connection method" (pilihan penyedia — jarang diganti, jadi di bawah).
+ * 5. "Advanced options" tertutup.
  */
 import {
   CheckIcon,
@@ -17,7 +25,6 @@ import {
   ExternalLinkIcon,
   GlobeIcon,
   LockIcon,
-  PowerIcon,
   QrCodeIcon,
   RefreshCwIcon,
   Settings2Icon,
@@ -29,7 +36,7 @@ import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } fro
 import { toast } from "sonner";
 import { encode } from "uqr";
 import { LhrRemoteAccess } from "@/components/settings/LhrRemoteAccess";
-import { ActionRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
+import { ActionRow, ExpanderRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -43,6 +50,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { useRouter } from "@/hooks/useRouter";
 import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
@@ -158,14 +166,19 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
     else void applySwitch(next);
   };
 
+  // Pilihan penyedia dirender panel penyedia di posisinya (sebelum Advanced).
+  const methodPicker = (
+    <ProviderPicker
+      value={provider}
+      live={live.provider}
+      disabled={switching}
+      onChange={(p) => void choose(p)}
+    />
+  );
+
   return (
-    <div className="flex flex-col gap-4">
-      <ProviderPicker
-        value={provider}
-        live={live.provider}
-        disabled={switching}
-        onChange={(p) => void choose(p)}
-      />
+    <div className="flex flex-col gap-6">
+      <p className="px-1 text-[13px] leading-snug text-muted-foreground">{DESCRIPTION}</p>
       <SwitchDialog
         to={pendingSwitch}
         viaTunnel={live.url !== null && sameOrigin(live.url)}
@@ -186,10 +199,10 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
           LiveAddress={LiveAddress}
           LogPanel={LogPanel}
           onRequestStop={(run, via) => setLhrStop({ run, via })}
-          onUseRecommended={() => void choose("kcg")}
+          methodPicker={methodPicker}
         />
       ) : (
-        <KcgRemoteAccess protectedApp={protectedApp} />
+        <KcgRemoteAccess protectedApp={protectedApp} methodPicker={methodPicker} />
       )}
       <ConfirmDialog
         kind={lhrStop ? "stop" : null}
@@ -223,13 +236,13 @@ const PROVIDERS: ProviderInfo[] = [
   {
     id: "kcg",
     title: "KCG Code link",
-    subtitle: "Same address every time · sign in with Google once",
+    subtitle: "Recommended · fixed address",
     recommended: true,
   },
   {
     id: "lhr",
     title: "localhost.run",
-    subtitle: "No account needed · address changes every few hours",
+    subtitle: "No account · address changes",
   },
 ];
 
@@ -255,9 +268,8 @@ function ProviderPicker({
     <section aria-labelledby="remote-provider" className="flex flex-col gap-2.5">
       <div className="flex flex-col gap-0.5 px-1">
         <h2 id="remote-provider" className="text-[15px] font-semibold tracking-tight">
-          Remote access
+          Connection method
         </h2>
-        <p className="text-[13px] text-muted-foreground">{DESCRIPTION}</p>
       </div>
       {/* Boxed list ala AdwPreferencesGroup: satu baris radio per penyedia
           (AdwActionRow + GtkCheckButton grup). Radio native di dalam label:
@@ -299,14 +311,7 @@ function ProviderPicker({
                     {selected && <span className="size-1.5 rounded-full bg-primary-foreground" />}
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
-                    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span className="text-[15px] leading-5">{p.title}</span>
-                      {p.recommended && (
-                        <span className="rounded-full bg-primary/12 px-2 py-px text-[11.5px] font-medium leading-4 text-primary">
-                          Recommended
-                        </span>
-                      )}
-                    </span>
+                    <span className="text-[15px] leading-5">{p.title}</span>
                     <span className="text-[13px] leading-snug text-muted-foreground">
                       {p.subtitle}
                     </span>
@@ -378,7 +383,15 @@ function SwitchDialog({
   );
 }
 
-function KcgRemoteAccess({ protectedApp }: { protectedApp: boolean }) {
+function KcgRemoteAccess({
+  protectedApp,
+  methodPicker,
+}: {
+  protectedApp: boolean;
+  /** Grup "Connection method" — dirender sebelum Advanced. */
+  methodPicker: ReactNode;
+}) {
+  const { navigate } = useRouter();
   const [t, setT] = useState<TunnelStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
@@ -426,40 +439,46 @@ function KcgRemoteAccess({ protectedApp }: { protectedApp: boolean }) {
   // ---- API tunnel belum diatur (KCG_TUNNEL_API_URL / build) ----
   if (!t.configured) {
     return (
-      <PrefsGroup id="remote">
-        <ActionRow
-          prefix={<StatusIcon tone="muted" />}
-          title="Not available in this version"
-          subtitle={
-            <>
-              Remote access hasn't been set up for this copy of KCG Code. If you manage it, set{" "}
-              <code className="font-mono text-[12px]">KCG_TUNNEL_API_URL</code> and restart.
-            </>
-          }
-        />
-      </PrefsGroup>
+      <>
+        <PrefsGroup id="remote">
+          <ActionRow
+            prefix={<StatusIcon tone="muted" />}
+            title="Not available in this version"
+            subtitle={
+              <>
+                Remote access hasn't been set up for this copy of KCG Code. If you manage it, set{" "}
+                <code className="font-mono text-[12px]">KCG_TUNNEL_API_URL</code> and restart.
+              </>
+            }
+          />
+        </PrefsGroup>
+        {methodPicker}
+      </>
     );
   }
 
   // ---- belum tersambung ----
   if (!t.account) {
     return (
-      <PrefsGroup id="remote">
-        {t.pairing ? (
-          <PairingRow
-            pairing={t.pairing}
-            busy={busy !== null}
-            onCancel={() => void act("cancel", "/api/tunnel/connect/cancel")}
-          />
-        ) : (
-          <SetupSteps
-            protectedApp={protectedApp}
-            error={t.error}
-            busy={busy}
-            onStart={() => void act("connect", "/api/tunnel/connect")}
-          />
-        )}
-      </PrefsGroup>
+      <>
+        <PrefsGroup id="remote">
+          {t.pairing ? (
+            <PairingRow
+              pairing={t.pairing}
+              busy={busy !== null}
+              onCancel={() => void act("cancel", "/api/tunnel/connect/cancel")}
+            />
+          ) : (
+            <SetupSteps
+              protectedApp={protectedApp}
+              error={t.error}
+              busy={busy}
+              onStart={() => void act("connect", "/api/tunnel/connect")}
+            />
+          )}
+        </PrefsGroup>
+        {methodPicker}
+      </>
     );
   }
 
@@ -476,26 +495,86 @@ function KcgRemoteAccess({ protectedApp }: { protectedApp: boolean }) {
     setConfirm(null);
   };
 
-  // Selalu konfirmasi: mematikan dari HP tidak bisa dinyalakan lagi dari jauh.
-  const turnOff = () => setConfirm("stop");
+  const online = running && t.phase === "online" && protectedApp;
   const account = t.account;
+
+  // Subjudul switch: satu frasa yang menjelaskan keadaan (pola penyedia
+  // localhost.run). Status lama yang memenuhi kartu (ikon besar, kotak QR
+  // kosong, tombol terpisah) dilebur ke sini.
+  let tone: Tone;
+  let subtitle: ReactNode;
+  if (!protectedApp) {
+    tone = "warning";
+    subtitle = "Needs a PIN or password first";
+  } else if (running && t.phase === "error") {
+    tone = "warning";
+    subtitle = (
+      <span className="text-destructive">
+        {t.error ? apiErrorMessage(t.error) : "Couldn't connect. Check your internet."}
+      </span>
+    );
+  } else if (online) {
+    tone = "success";
+    subtitle = "On · PIN still required";
+  } else if (running || busy === "start") {
+    tone = "busy";
+    subtitle = t.phase === "reconnecting" ? "Reconnecting…" : "Turning on…";
+  } else {
+    tone = "muted";
+    subtitle = "Off";
+  }
+
+  // Mematikan selalu dikonfirmasi: dari HP tidak bisa dinyalakan lagi.
+  const toggle = (next: boolean) => {
+    if (next) void act("start", "/api/tunnel/start");
+    else setConfirm("stop");
+  };
 
   return (
     <>
       <PrefsGroup id="remote">
-        {running && <StatusHeader t={t} protectedApp={protectedApp} busy={busy} onStop={turnOff} />}
-        <AddressPanel
-          t={{ ...t, account }}
-          running={running}
-          protectedApp={protectedApp}
-          busy={busy}
-          onStart={() => void act("start", "/api/tunnel/start")}
+        <SwitchRow
+          id="kcg-remote-switch"
+          icon={<StatusIcon tone={tone} />}
+          title="Remote access"
+          subtitle={subtitle}
+          checked={running || busy === "start"}
+          disabled={!protectedApp || busy !== null}
+          busy={busy === "start" || busy === "stop"}
+          onChange={toggle}
         />
+        {!protectedApp && (
+          <ActionRow
+            prefix={<RowGlyph icon={<LockIcon className="size-[18px]" aria-hidden />} />}
+            title="Set up app lock"
+            subtitle="Add a PIN or password in Security"
+            onActivate={() => navigate(settingsPath("security"))}
+          />
+        )}
+        {protectedApp && running && t.phase === "error" && (
+          <ActionRow
+            prefix={<RowGlyph icon={<RefreshCwIcon className="size-[18px]" aria-hidden />} />}
+            title="Try again"
+            disabled={busy !== null}
+            onActivate={() => void act("start", "/api/tunnel/start")}
+          />
+        )}
+      </PrefsGroup>
+
+      {online && (
+        <PrefsGroup title="Your link">
+          <LiveAddress url={account.url} />
+        </PrefsGroup>
+      )}
+
+      <PrefsGroup title="Account">
         <ActionRow
-          title="Linked Google account"
-          subtitle={<span className="break-all">{t.account.email}</span>}
+          title="Google account"
+          subtitle={<span className="break-all">{account.email}</span>}
         />
       </PrefsGroup>
+
+      {methodPicker}
 
       <AdvancedSection
         busy={busy !== null}
@@ -511,6 +590,52 @@ function KcgRemoteAccess({ protectedApp }: { protectedApp: boolean }) {
         onConfirm={(k) => void runConfirmed(k)}
       />
     </>
+  );
+}
+
+/**
+ * AdwSwitchRow: ikon, judul + status di subjudul, switch di kanan. Seluruh
+ * baris adalah label switch (klik di mana saja mengubahnya).
+ */
+function SwitchRow({
+  id,
+  icon,
+  title,
+  subtitle,
+  checked,
+  disabled,
+  busy,
+  onChange,
+}: {
+  id: string;
+  icon: ReactNode;
+  title: string;
+  subtitle: ReactNode;
+  checked: boolean;
+  disabled: boolean;
+  busy: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <li>
+      <label
+        htmlFor={id}
+        className={cn(
+          "flex min-h-14 items-center gap-3 px-4 py-2.5",
+          !disabled && "cursor-pointer",
+        )}
+      >
+        {icon}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+          <span className="text-[15px] leading-5">{title}</span>
+          <span role="status" className="text-[13px] leading-snug text-muted-foreground">
+            {subtitle}
+          </span>
+        </span>
+        {busy && <Spinner className="size-4 text-muted-foreground" aria-hidden />}
+        <Switch id={id} checked={checked} disabled={disabled} onCheckedChange={onChange} />
+      </label>
+    </li>
   );
 }
 
@@ -547,66 +672,6 @@ function StatusIcon({ tone, className }: { tone: Tone; className?: string }) {
         <GlobeIcon className="size-5" aria-hidden />
       )}
     </span>
-  );
-}
-
-/**
- * Baris status di atas kartu, hanya saat remote access menyala (atau sedang
- * menyala). Saat mati, status + tombol "Turn on" ada di `AddressPanel`.
- */
-function StatusHeader({
-  t,
-  protectedApp,
-  busy,
-  onStop,
-}: {
-  t: TunnelStatus;
-  protectedApp: boolean;
-  busy: string | null;
-  onStop: () => void;
-}) {
-  let tone: Tone;
-  let title: string;
-  let body: string;
-  if (!protectedApp || t.phase === "error") {
-    tone = "warning";
-    title = "Couldn't connect";
-    body = !protectedApp
-      ? "Set a PIN or password to keep using remote access."
-      : "Something went wrong. See below for details.";
-  } else if (t.phase === "online") {
-    tone = "success";
-    title = "Remote access is on";
-    body = "Anyone opening your link still needs your PIN or password.";
-  } else {
-    tone = "busy";
-    title = t.phase === "reconnecting" ? "Reconnecting…" : "Turning on…";
-    body = "This usually takes a few seconds.";
-  }
-
-  return (
-    <ActionRow
-      prefix={<StatusIcon tone={tone} />}
-      title={<span className="font-medium">{title}</span>}
-      subtitle={<span role="status">{body}</span>}
-      suffix={
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={busy !== null}
-          onClick={onStop}
-          className="hover:border-destructive/40 hover:bg-destructive/10 hover:text-destructive dark:hover:bg-destructive/15"
-        >
-          {busy === "stop" ? (
-            <Spinner data-icon="inline-start" />
-          ) : (
-            <PowerIcon data-icon="inline-start" />
-          )}
-          Turn off
-        </Button>
-      }
-    />
   );
 }
 
@@ -820,91 +885,15 @@ function QrCode({ value, label, className }: { value: string; label: string; cla
  * placeholder seukuran QR berisi ikon, keterangan, dan aksi utama di tengah
  * (Turn on / Try again / Set up lock) agar tata letak tidak "melompat".
  */
-function AddressPanel({
-  t,
-  running,
-  protectedApp,
-  busy,
-  onStart,
-}: {
-  t: TunnelStatus & { account: NonNullable<TunnelStatus["account"]> };
-  running: boolean;
-  protectedApp: boolean;
-  busy: string | null;
-  onStart: () => void;
-}) {
-  const { navigate } = useRouter();
-
-  if (t.phase === "online" && protectedApp) return <LiveAddress url={t.account.url} />;
-
-  let icon: ReactNode;
-  let title: string;
-  let body: string;
-  let action: ReactNode = null;
-  if (!protectedApp) {
-    icon = <LockIcon className="size-9" aria-hidden />;
-    title = "Set a PIN or password first";
-    body = "For your safety, remote access only works when KCG Code is locked.";
-    action = (
-      <Button type="button" onClick={() => navigate(settingsPath("security"))}>
-        <LockIcon data-icon="inline-start" />
-        Set up lock
-      </Button>
-    );
-  } else if (running && t.phase === "error") {
-    icon = <CircleAlertIcon className="size-9 text-amber-600 dark:text-amber-400" aria-hidden />;
-    title = "Your link isn't working right now";
-    body = t.error ? apiErrorMessage(t.error) : "Check your internet connection and try again.";
-    action = (
-      <Button type="button" disabled={busy !== null} onClick={onStart}>
-        {busy === "start" ? (
-          <Spinner data-icon="inline-start" />
-        ) : (
-          <RefreshCwIcon data-icon="inline-start" />
-        )}
-        Try again
-      </Button>
-    );
-  } else if (running) {
-    icon = <Spinner className="size-9" />;
-    title = "Getting your link ready…";
-    body = "Your QR code and link will appear here in a moment.";
-  } else {
-    icon = <QrCodeIcon className="size-9" aria-hidden />;
-    title = "Remote access is off";
-    body = "Turn it on to get a QR code and link for opening KCG Code on your phone.";
-    action = (
-      <Button type="button" disabled={busy !== null} onClick={onStart}>
-        {busy === "start" ? (
-          <Spinner data-icon="inline-start" />
-        ) : (
-          <PowerIcon data-icon="inline-start" />
-        )}
-        Turn on
-      </Button>
-    );
-  }
-
-  return (
-    <li className="flex flex-col items-center gap-4 px-4 py-6 text-center">
-      <div
-        className="flex size-40 items-center justify-center rounded-xl border-2 border-dashed bg-muted/30 text-muted-foreground"
-        aria-hidden
-      >
-        {icon}
-      </div>
-      <div className="flex max-w-sm flex-col gap-1" role="status">
-        <p className="text-[15px] font-medium">{title}</p>
-        <p className="text-[13px] leading-snug text-muted-foreground">{body}</p>
-      </div>
-      {action}
-    </li>
-  );
-}
-
+/**
+ * Baris "Your link" (dipakai kedua penyedia, di dalam boxed list):
+ * - desktop: QR selalu tampil (cara tercepat pindah ke HP);
+ * - baris link (mono, terpotong) + tombol salin & buka;
+ * - HP: "Share link" (Web Share API) dan QR dilipat di baris expander —
+ *   pengguna sudah di HP, QR jarang dibutuhkan.
+ */
 function LiveAddress({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
-  const [showQr, setShowQr] = useState(false);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(url);
@@ -926,72 +915,58 @@ function LiveAddress({ url }: { url: string }) {
       /* dibatalkan pengguna */
     }
   };
+  const host = url.replace(/^https?:\/\//, "");
 
   return (
-    <li className="flex flex-col gap-4 px-4 py-4">
-      {/* Desktop: QR selalu tampil (cara tercepat pindah ke HP).
-          Mobile: disembunyikan (pengguna sudah di HP) kecuali diminta. */}
-      <div className={cn("justify-center sm:flex", showQr ? "flex" : "hidden")}>
+    <>
+      <li className="hidden justify-center py-5 sm:flex">
         <QrCode value={url} label="QR code of your remote access link" className="size-40" />
-      </div>
-
-      <div className="flex min-w-0 flex-col gap-2">
-        <span className="text-[13px] font-medium">Your link</span>
-        {/* Link + tombol salin menyatu, seperti kolom input read-only. */}
-        <div className="flex items-center gap-1 rounded-lg border bg-muted/40 py-1 pr-1 pl-3">
-          <a
-            href={url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="min-w-0 flex-1 truncate py-1 font-mono text-[13.5px] hover:underline"
-            title={url}
-          >
-            {url.replace(/^https?:\/\//, "")}
+      </li>
+      <li className="flex min-h-14 items-center gap-2 py-2 pr-2 pl-4">
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="min-w-0 flex-1 truncate font-mono text-[14px] hover:underline"
+          title={url}
+        >
+          {host}
+        </a>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          className="rounded-full"
+          aria-label={copied ? "Copied" : "Copy link"}
+          onClick={() => void copy()}
+        >
+          {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
+        </Button>
+        <Button asChild variant="ghost" size="icon-sm" className="rounded-full">
+          <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open link in new tab">
+            <ExternalLinkIcon />
           </a>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={copied ? "Copied" : "Copy link"}
-            onClick={() => void copy()}
-          >
-            {copied ? (
-              <CheckIcon className="text-emerald-600 dark:text-emerald-400" />
-            ) : (
-              <CopyIcon />
-            )}
-          </Button>
-          <Button asChild variant="ghost" size="icon-sm">
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              aria-label="Open link in new tab"
-            >
-              <ExternalLinkIcon />
-            </a>
-          </Button>
+        </Button>
+      </li>
+      {canShare && (
+        <ActionRow
+          className="sm:hidden"
+          prefix={<RowGlyph icon={<Share2Icon className="size-[18px]" aria-hidden />} />}
+          title="Share link"
+          onActivate={() => void share()}
+        />
+      )}
+      <ExpanderRow
+        className="sm:hidden"
+        prefix={<RowGlyph icon={<QrCodeIcon className="size-[18px]" aria-hidden />} />}
+        title="QR code"
+        subtitle="Scan from another device"
+      >
+        <div className="flex justify-center py-2">
+          <QrCode value={url} label="QR code of your remote access link" className="size-44" />
         </div>
-        <div className="flex flex-wrap gap-2 sm:hidden">
-          {canShare && (
-            <Button type="button" size="sm" onClick={() => void share()}>
-              <Share2Icon data-icon="inline-start" />
-              Share link
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            aria-expanded={showQr}
-            onClick={() => setShowQr((v) => !v)}
-          >
-            <QrCodeIcon data-icon="inline-start" />
-            {showQr ? "Hide QR code" : "Show QR code"}
-          </Button>
-        </div>
-      </div>
-    </li>
+      </ExpanderRow>
+    </>
   );
 }
 

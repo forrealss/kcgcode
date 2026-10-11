@@ -18,9 +18,10 @@
  *   `SessionComposer` di folder yang sama.
  * - Drag & drop file: `FileDropOverlay` (portal, menutupi seluruh viewport)
  *   meneruskan file ke composer (`SessionComposerHandle.addFiles`).
- * - Kartu konteks kanan (`ContextPanel`): Environment / MCP / Task list /
- *   Reference, MENGAPUNG di margin kanan — percakapan & input tidak bergeser
- *   saat kartu dibuka/ditutup. Di mobile tampil sebagai bottom sheet.
+ * - Kartu konteks kanan (`ContextPanel`): Environment / Task list / MCP /
+ *   Reference. Desktop: kolom sendiri di kanan (berdampingan) — kolom chat
+ *   menyempit & percakapan tetap terpusat di sisa ruang, tidak tertutup
+ *   kartu. Di bawah `lg` (HP & tablet) tampil sebagai bottom sheet.
  */
 import { useMemo, useRef, useState } from "react";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
@@ -37,7 +38,7 @@ import {
   SessionComposerSkeleton,
   SessionTimelineSkeleton,
 } from "@/components/sessions/SessionTimelineSkeleton";
-import { useIsMobile } from "@/hooks/useMediaQuery";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
 import { CONVERSATION_MAX_W } from "@/lib/layout";
@@ -45,6 +46,9 @@ import { collectReferences } from "@/lib/references";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import { PromptPanel } from "./PromptPanel";
+
+/** Lebar minimum untuk kartu konteks sebagai kolom samping (`lg`). */
+const SIDE_PANEL_QUERY = "(min-width: 1024px)";
 
 export interface SessionViewProps {
   session: Session;
@@ -70,8 +74,9 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const composerRef = useRef<SessionComposerHandle>(null);
   /** Panel konteks kanan; default tertutup agar area chat tetap lega. */
   const [contextOpen, setContextOpen] = useState(false);
-  /** Layar sempit: konteks tampil sebagai bottom sheet, bukan kartu. */
-  const isMobile = useIsMobile();
+  // Kolom konteks berdampingan butuh ruang: di bawah `lg` kolom chat jadi
+  // terlalu sempit, jadi kartu tampil sebagai bottom sheet (seperti HP).
+  const sidePanel = useMediaQuery(SIDE_PANEL_QUERY);
   const sessionCtx = useSessionContext(session.id, contextOpen, chat.generating);
   /**
    * Reference diturunkan dari parts pesan yang sudah ada di timeline
@@ -187,12 +192,11 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
           )}
         </div>
 
-        {/* Tertutup: hanya tombol hamburger. Terbuka: tombol hilang & kartu
-            mengapung di kanan. `absolute` = tidak mengambil ruang layout, jadi
-            percakapan & input tetap di posisinya. Wadah `pointer-events-none`
-            (setinggi area) agar klik di sekitar kartu tetap sampai ke chat. */}
-        {isMobile ? (
-          // Mobile: bottom sheet. Tombol hamburger tetap terlihat — sheet
+        {/* Tertutup: hanya tombol hamburger. Terbuka (desktop): tombol hilang
+            & kartu jadi kolom kanan selebar 17rem yang IKUT tata letak — kolom
+            chat (flex-1) menyempit, jadi pesan & composer tidak tertutup. */}
+        {!sidePanel ? (
+          // HP & tablet: bottom sheet. Tombol hamburger tetap terlihat — sheet
           // menutupi layar & punya penutupnya sendiri (tap luar / geser / Esc).
           <>
             <ContextPanelTrigger onOpen={() => setContextOpen(true)} />
@@ -205,7 +209,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
             />
           </>
         ) : contextOpen ? (
-          <div className="pointer-events-none absolute end-3 top-2 bottom-3 z-20 flex w-[min(15rem,calc(100%-1.5rem))] flex-col sm:end-4">
+          <div className="flex w-[17rem] shrink-0 flex-col pt-2 pe-3 pb-3 sm:pe-4">
             <ContextPanel
               context={sessionCtx.context}
               references={references}

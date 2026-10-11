@@ -1,21 +1,23 @@
 /**
- * Kartu konteks Session — keadaan kerja agent, MENGAPUNG di margin kanan.
- * Tidak mengambil ruang layout, jadi percakapan & input tidak bergeser saat
- * kartu dibuka/ditutup.
+ * Kartu konteks Session — keadaan kerja agent, sebagai kolom di kanan
+ * percakapan (desktop). Kolom ini ikut tata letak: chat menyempit saat kartu
+ * dibuka, sehingga pesan & input tidak pernah tertutup kartu.
  *
  * Susunan (dari yang paling sering dilirik ke yang paling jarang):
  * - **Environment** : perubahan file (+/-), cabang git, status push/pull.
- * - **MCP**         : server MCP Project; ringkasan "x of y connected" di
- *                     judul supaya status terbaca tanpa membuka bagiannya.
  * - **Task list**   : `todowrite` agent + progres "selesai / total".
+ * - **MCP**         : server MCP; ringkasan "x/y connected" di judul. Yang
+ *                     gagal & tersambung tampil per baris; yang perlu login
+ *                     (mis. puluhan konektor claude.ai) dan yang tidak aktif
+ *                     DILIPAT jadi satu baris "N need sign-in" agar tidak
+ *                     menenggelamkan bagian lain.
  * - **Reference**   : file project yang DIBACA agent (bukan yang ditulis),
  *                     terbaru di atas; 8 pertama tampil, sisanya "Show N more".
  *
- * Pola UX:
- * - Tiap bagian = judul yang bisa dilipat + ringkasan di kanan judul, jadi
- *   kartu tetap informatif walau semua bagian dilipat.
- * - Tanpa judul kartu & tanpa kotak di dalam: judul tiap bagian (warna
- *   solid) menjadi penanda, dipisah garis tipis antar bagian.
+ * Pola UX (gaya libadwaita):
+ * - Tiap bagian = judul yang bisa dilipat + ringkasan di kanan judul, isi
+ *   berupa "boxed list" (kartu membulat, baris berpemisah) di atas latar
+ *   kartu yang lebih gelap — seperti AdwPreferencesGroup.
  * - Status diwakili titik berwarna + label, bukan warna saja (a11y).
  * - Buka/tutup: `ContextPanelTrigger` (hamburger) HILANG saat kartu terbuka;
  *   penutupnya tombol X di kartu. Esc juga menutup.
@@ -97,21 +99,16 @@ function ContextSections({
 }: Omit<ContextPanelProps, "onClose"> & { reserveClose?: boolean }) {
   if (loading && context === null) return <CardSkeleton />;
   return (
-    <div
-      className={cn(
-        "flex flex-col divide-y [&>*]:py-2.5 [&>*:first-child]:pt-0 [&>*:last-child]:pb-0.5",
-        reserveClose && "[&>*:first-child>button]:pe-7",
-      )}
-    >
+    <div className={cn("flex flex-col gap-4", reserveClose && "[&>*:first-child>button]:pe-7")}>
       <EnvironmentSection context={context} />
-      <McpSection servers={context?.mcp ?? []} live={context?.live ?? false} />
       <TaskSection todos={context?.todos ?? []} live={context?.live ?? false} />
+      <McpSection servers={context?.mcp ?? []} live={context?.live ?? false} />
       <ReferenceSection references={references} />
     </div>
   );
 }
 
-/** Kartu desktop: mengapung di margin kanan. */
+/** Kartu desktop: kolom kanan, berdampingan dengan percakapan. */
 export function ContextPanel({ context, references, loading, onClose }: ContextPanelProps) {
   // Esc menutup kartu (pola sama dengan popover/sheet aplikasi).
   useEffect(() => {
@@ -128,7 +125,9 @@ export function ContextPanel({ context, references, loading, onClose }: ContextP
       initial={{ opacity: 0, x: 10 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ type: "spring", visualDuration: 0.25, bounce: 0.1 }}
-      className="pointer-events-auto relative flex max-h-full flex-col overflow-hidden rounded-2xl border bg-popover shadow-lg"
+      // Latar kartu = latar jendela (lebih gelap), boxed list di atasnya
+      // memakai `bg-card` — kontras ala AdwPreferencesPage.
+      className="relative flex max-h-full flex-col overflow-hidden rounded-2xl border bg-background shadow-xs"
     >
       {/* Tanpa judul kartu: judul tiap bagian sudah menjadi penanda. Tombol
           tutup mengapung di pojok kanan atas, sejajar judul bagian pertama. */}
@@ -144,7 +143,7 @@ export function ContextPanel({ context, references, loading, onClose }: ContextP
         <XIcon />
       </Button>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-1.5 pb-2 [scrollbar-width:thin]">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pt-2 pb-3 [scrollbar-width:thin]">
         <ContextSections context={context} references={references} loading={loading} reserveClose />
       </div>
     </m.aside>
@@ -224,29 +223,34 @@ function EnvironmentSection({ context }: { context: SessionContext | null }) {
   );
 }
 
-/** Urutan tampil MCP: yang bermasalah dulu agar langsung terlihat. */
-const MCP_ORDER: Record<McpServerState["status"], number> = {
-  failed: 0,
-  needs_auth: 1,
-  needs_client_registration: 2,
-  connected: 3,
-  unknown: 4,
-  disabled: 5,
-};
+/** Status yang "perlu login" — dilipat jadi satu baris bila lebih dari satu. */
+const NEEDS_SIGN_IN: McpServerState["status"][] = ["needs_auth", "needs_client_registration"];
 
 function McpSection({ servers, live }: { servers: McpServerState[]; live: boolean }) {
   const connected = servers.filter((s) => s.status === "connected").length;
-  const hasProblem = servers.some((s) => MCP_ORDER[s.status] <= 2);
-  const sorted = [...servers].sort(
-    (a, b) => MCP_ORDER[a.status] - MCP_ORDER[b.status] || a.name.localeCompare(b.name),
-  );
+  const failed = servers.filter((s) => s.status === "failed").length;
+  const byName = (a: McpServerState, b: McpServerState) => a.name.localeCompare(b.name);
+  const signIn = servers.filter((s) => NEEDS_SIGN_IN.includes(s.status)).sort(byName);
+  const inactive = servers
+    .filter((s) => s.status === "disabled" || s.status === "unknown")
+    .sort(byName);
+  // Baris individual: gagal (paling atas) lalu tersambung. Kelompok berisi
+  // satu server tetap tampil sebagai baris biasa (tidak perlu dilipat).
+  const individual = [
+    ...servers.filter((s) => s.status === "failed").sort(byName),
+    ...servers.filter((s) => s.status === "connected").sort(byName),
+    ...(signIn.length === 1 ? signIn : []),
+    ...(inactive.length === 1 ? inactive : []),
+  ];
 
   return (
     <Section
       title="MCP"
       summary={
         servers.length > 0 ? (
-          <span className={cn(hasProblem && "text-amber-700 dark:text-amber-400")}>
+          // Hanya kegagalan yang diberi warna peringatan — konektor yang
+          // belum login itu normal, bukan masalah.
+          <span className={cn(failed > 0 && "text-amber-700 dark:text-amber-400")}>
             {connected}/{servers.length} connected
           </span>
         ) : undefined
@@ -256,27 +260,101 @@ function McpSection({ servers, live }: { servers: McpServerState[]; live: boolea
         <Empty>{live ? "No MCP servers configured" : "Start the session to see MCP servers"}</Empty>
       ) : (
         <Box>
-          {sorted.map((server) => (
-            <Row
-              key={server.name}
-              icon={<PlugIcon />}
-              label={server.name}
-              // Pesan error lengkap terbaca lewat `title` (tanpa memanjangkan baris).
-              title={server.error ?? undefined}
-              value={
-                <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-                  <span
-                    aria-hidden
-                    className={cn("size-1.5 rounded-full", MCP_STATUS_DOT[server.status])}
-                  />
-                  {MCP_STATUS_LABEL[server.status]}
-                </span>
-              }
-            />
+          {individual.map((server) => (
+            <McpRow key={server.name} server={server} />
           ))}
+          {signIn.length > 1 && (
+            <McpGroupRow
+              label={`${signIn.length} need sign-in`}
+              dotClass={MCP_STATUS_DOT.needs_auth}
+              servers={signIn}
+            />
+          )}
+          {inactive.length > 1 && (
+            <McpGroupRow
+              label={`${inactive.length} inactive`}
+              dotClass={MCP_STATUS_DOT.disabled}
+              servers={inactive}
+            />
+          )}
         </Box>
       )}
     </Section>
+  );
+}
+
+/** Satu server MCP: nama + status (titik + label); error di baris kedua. */
+function McpRow({ server }: { server: McpServerState }) {
+  return (
+    <Row
+      icon={<PlugIcon />}
+      label={server.name}
+      hint={server.error ?? undefined}
+      hintTone={server.error ? "error" : undefined}
+      // Pesan error lengkap terbaca lewat `title` (baris kedua terpotong).
+      title={server.error ?? undefined}
+      value={<StatusText status={server.status} />}
+    />
+  );
+}
+
+function StatusText({ status }: { status: McpServerState["status"] }) {
+  return (
+    <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
+      <span aria-hidden className={cn("size-1.5 rounded-full", MCP_STATUS_DOT[status])} />
+      {MCP_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
+/**
+ * Baris kelompok yang bisa dibuka (AdwExpanderRow): "17 need sign-in" —
+ * isinya nama server, tanpa status berulang (sudah di judul baris).
+ */
+function McpGroupRow({
+  label,
+  dotClass,
+  servers,
+}: {
+  label: string;
+  dotClass: string;
+  servers: McpServerState[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex min-h-9 w-full min-w-0 items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/50"
+      >
+        <span aria-hidden className="flex w-3.5 shrink-0 justify-center">
+          <span className={cn("size-1.5 rounded-full", dotClass)} />
+        </span>
+        <span className="min-w-0 flex-1 truncate leading-5 text-muted-foreground">{label}</span>
+        <ChevronDownIcon
+          aria-hidden
+          className={cn(
+            "size-3.5 shrink-0 text-muted-foreground transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open && (
+        <ul className="border-t bg-muted/30 py-1">
+          {servers.map((s) => (
+            <li
+              key={s.name}
+              title={s.error ?? s.name}
+              className="truncate px-2.5 py-1 ps-8 text-[12px] leading-5 text-muted-foreground"
+            >
+              {s.name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
@@ -357,13 +435,13 @@ function ReferenceSection({ references }: { references: FileReference[] }) {
               type="button"
               onClick={() => setShowAll((v) => !v)}
               aria-expanded={showAll}
-              className="mt-0.5 flex w-full items-center gap-1 rounded-md px-1 py-1 text-left text-[12px] text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
+              className="mt-1.5 flex w-full items-center justify-center gap-1 rounded-lg py-1.5 text-[12px] text-muted-foreground outline-none transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/40"
             >
+              {showAll ? "Show less" : `Show ${hidden} more`}
               <ChevronDownIcon
                 aria-hidden
                 className={cn("size-3 transition-transform duration-200", showAll && "rotate-180")}
               />
-              {showAll ? "Show less" : `Show ${hidden} more`}
             </button>
           )}
         </>
@@ -432,9 +510,13 @@ function Section({
   );
 }
 
-/** Daftar baris polos (tanpa kotak/garis — hemat ruang). */
+/** Boxed list (libadwaita): kartu membulat, baris dipisah garis tipis. */
 function Box({ children }: { children: ReactNode }) {
-  return <ul className="flex flex-col">{children}</ul>;
+  return (
+    <ul className="flex flex-col divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
+      {children}
+    </ul>
+  );
 }
 
 /** Satu baris dalam `Box`: ikon + label (+ petunjuk kecil) + nilai di kanan. */
@@ -442,6 +524,7 @@ function Row({
   icon,
   label,
   hint,
+  hintTone,
   value,
   muted,
   mono,
@@ -450,13 +533,18 @@ function Row({
   icon: ReactNode;
   label: string;
   hint?: string;
+  /** Warna baris kedua (mis. pesan error). */
+  hintTone?: "error";
   value?: ReactNode;
   muted?: boolean;
   mono?: boolean;
   title?: string;
 }) {
   return (
-    <li title={title} className="flex min-h-8 min-w-0 items-center gap-2 px-1 py-1 text-[12.5px]">
+    <li
+      title={title}
+      className="flex min-h-9 min-w-0 items-center gap-2 px-2.5 py-1.5 text-[12.5px]"
+    >
       <span
         aria-hidden
         className="flex shrink-0 items-center text-muted-foreground [&>svg]:size-3.5"
@@ -474,7 +562,14 @@ function Row({
           {label}
         </span>
         {hint && (
-          <span className="truncate text-[11px] leading-4 text-muted-foreground">{hint}</span>
+          <span
+            className={cn(
+              "truncate text-[11px] leading-4",
+              hintTone === "error" ? "text-destructive/90" : "text-muted-foreground",
+            )}
+          >
+            {hint}
+          </span>
         )}
       </span>
       {value !== undefined && <span className="shrink-0">{value}</span>}
@@ -508,7 +603,7 @@ function TodoRow({ todo }: { todo: TodoItem }) {
   const running = status === "in_progress";
 
   return (
-    <li className="flex min-w-0 items-start gap-2 px-1 py-1 text-[12.5px] leading-snug">
+    <li className="flex min-w-0 items-start gap-2 px-2.5 py-2 text-[12.5px] leading-snug">
       {/* Ikon status dekoratif; statusnya dibacakan lewat teks sr-only di
           bawah (aria-label pada span/svg biasa tidak dibaca pembaca layar). */}
       <span aria-hidden className="mt-0.5 flex shrink-0 items-center">
@@ -537,8 +632,13 @@ function TodoRow({ todo }: { todo: TodoItem }) {
   );
 }
 
+/** Keadaan kosong — tetap di dalam boxed list agar bentuk bagian konsisten. */
 function Empty({ children }: { children: ReactNode }) {
-  return <p className="px-1 py-0.5 text-[12px] leading-snug text-muted-foreground">{children}</p>;
+  return (
+    <p className="rounded-xl border border-dashed px-2.5 py-2.5 text-[12px] leading-snug text-muted-foreground">
+      {children}
+    </p>
+  );
 }
 
 function CardSkeleton() {

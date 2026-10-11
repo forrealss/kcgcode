@@ -8,6 +8,7 @@ import { Box, render, renderToString, Text, useInput } from "ink";
 import { type ReactNode, useEffect, useReducer, useRef, useState } from "react";
 import { renderUnicodeCompact } from "uqr";
 import type { KcgServer } from "../server/app";
+import type { KeepAwake } from "./keep-awake";
 import { logoLines, readPackageVersion } from "./theme";
 
 export type TunnelProviderId = "kcg" | "lhr";
@@ -36,6 +37,8 @@ export interface DashboardInfo {
   };
   port: number;
   hostname: string;
+  /** Status pencegah sleep; tidak ada = baris "Awake" disembunyikan. */
+  keepAwake?: Pick<KeepAwake, "status">;
 }
 
 export interface DashboardCallbacks {
@@ -398,6 +401,7 @@ function DashboardUI({ info, version, view = {} }: DashboardUIProps) {
           <Text dimColor>{"Tunnel".padEnd(8)}</Text>
           <Text color={summary.color}>{summary.text}</Text>
         </Box>
+        {info.keepAwake && <KeepAwakeRow keepAwake={info.keepAwake} />}
         <Box gap={1}>
           <Text dimColor>{"PID".padEnd(8)}</Text>
           <Text color="white">{String(process.pid)}</Text>
@@ -463,6 +467,21 @@ function DashboardUI({ info, version, view = {} }: DashboardUIProps) {
       <Box justifyContent="center" height={1}>
         {view.flash ? <Text color="green">✓ {view.flash}</Text> : <Text dimColor> </Text>}
       </Box>
+    </Box>
+  );
+}
+
+function KeepAwakeRow({ keepAwake }: { keepAwake: Pick<KeepAwake, "status"> }) {
+  const st = keepAwake.status();
+  const text = st.active
+    ? `on · sleep blocked (${st.method})`
+    : `off${st.error ? ` · ${st.error}` : ""}`;
+  return (
+    <Box gap={1}>
+      <Text dimColor>{"Awake".padEnd(8)}</Text>
+      <Text color={st.active ? "green" : "yellow"} wrap="truncate-end">
+        {text}
+      </Text>
     </Box>
   );
 }

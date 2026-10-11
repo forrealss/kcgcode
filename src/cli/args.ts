@@ -11,6 +11,8 @@ export interface CliArgs {
   /** Path berkas konfigurasi (override KCG_CONFIG_PATH). */
   config?: string;
   open: boolean;
+  /** Izinkan OS sleep (matikan keep-awake). */
+  allowSleep?: boolean;
   /** Argumen tak dikenal / pesan error. */
   error?: string;
 }
@@ -33,6 +35,7 @@ OPTIONS
   -H, --host <h>    Bind host (default 127.0.0.1 / env KCG_HOST)
   -c, --config <f>  Config path (default ~/.kcgcode/config.json)
   --open            Open the web dashboard in a browser after start
+  --allow-sleep     Let the OS sleep while running (default: keep awake)
   -h, --help        Show help
   -v, --version     Show version
 
@@ -41,6 +44,7 @@ ENV
   KCG_HOST              Bind host
   KCG_CONFIG_PATH       Config file path
   KCG_DB_PATH           SQLite path (default ~/.kcgcode/data/kcg-code.sqlite)
+  KCG_ALLOW_SLEEP=1     Same as --allow-sleep
 
 EXAMPLES
   kcgcode
@@ -98,6 +102,10 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (a === "--open") {
       args.open = true;
+      continue;
+    }
+    if (a === "--allow-sleep") {
+      args.allowSleep = true;
       continue;
     }
     if (a === "-p" || a === "--port") {

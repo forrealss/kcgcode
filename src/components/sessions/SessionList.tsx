@@ -1,19 +1,19 @@
 /**
  * Daftar & pembuatan Session milik sebuah Project (Requirement 1.1, 1.3, 1.5).
  *
- * Halaman detail Project — sengaja minimal: tipografi & ruang kosong yang
- * bekerja, bukan kartu/tile.
- * - Header: nama Project besar, path (salin saat hover), satu baris ringkasan
- *   ("3 sessions · 1 running"). Aksi: "New session" + menu "..." Reload/Delete
- *   (`ProjectMenu`; hapus tetap lewat dialog konfirmasi). Desktop: di
- *   kanan judul. Layar sempit: "New session" jadi tombol melayang kanan-bawah
- *   (area jempol); toolbar di bawah judul berisi "Details" (panel samping)
- *   dan grup Reload/Delete.
+ * Halaman detail Project — gaya libadwaita (GNOME Settings), sama dengan
+ * panel samping: grup berjudul berisi "boxed list" (primitif `settings/prefs`).
+ * - Header: nama Project besar, path (salin saat hover). Aksi: tombol pil
+ *   "New session" + tombol bundar "..." Reload/Delete (`ProjectMenu`; hapus
+ *   tetap lewat dialog konfirmasi). Desktop: di kanan judul. Layar sempit:
+ *   "New session" jadi tombol melayang kanan-bawah (area jempol); toolbar di
+ *   bawah judul berisi "Details" (panel samping) dan menu "...".
  * - Panel samping (`ProjectSidePanel`, gaya Claude Projects): custom
  *   instruction, MCP server, dan skill. Layar `lg`+ = kolom kanan sticky;
  *   lebih sempit = Sheet dari kanan lewat tombol di header.
  *   Tanpa tombol back — navigasi lewat sidebar.
- * - Daftar Session: baris polos dipisah hairline, status lewat titik warna.
+ * - Daftar Session: grup "Sessions" (ringkasan "3 sessions · 1 running"
+ *   sebagai deskripsi) berisi baris AdwActionRow; kosong -> AdwStatusPage.
  *   Urutan dari `sortSessions` (running -> crashed -> stopped, terbaru dulu).
  * - `GET /api/sessions` di-filter per `projectId` (Requirement 1.5).
  *
@@ -26,12 +26,14 @@
 import {
   CheckIcon,
   CopyIcon,
+  ListChecksIcon,
   MessagesSquareIcon,
   MoreHorizontalIcon,
   PanelRightIcon,
   PlusIcon,
   RefreshCwIcon,
   Trash2Icon,
+  TriangleAlertIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -40,7 +42,7 @@ import { ConfirmDeleteProjectDialog } from "@/components/sessions/ConfirmDeleteP
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
 import { NewSessionDialog } from "@/components/sessions/NewSessionDialog";
 import { SessionListSkeleton, SessionRow } from "@/components/sessions/SessionRow";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -60,6 +62,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionList } from "@/hooks/useSessionList";
 import { notifyDataChanged } from "@/lib/data-events";
+import { describeSelection, pluralSessions } from "@/lib/session-selection";
 import { describeSessionSummary } from "@/lib/session-summary";
 import { cn } from "@/lib/utils";
 import type { Project, Session } from "@/types";
@@ -137,12 +140,13 @@ function ProjectMenu({
       <Tooltip>
         <TooltipTrigger asChild>
           <DropdownMenuTrigger asChild>
+            {/* Tombol bundar `.circular` Adwaita: latar terisi, tanpa border. */}
             <Button
               type="button"
-              variant="outline"
+              variant="secondary"
               size="icon"
               aria-label="More project actions"
-              className={cn("rounded-full text-muted-foreground", className)}
+              className={cn("rounded-full", className)}
             >
               <MoreHorizontalIcon />
             </Button>
@@ -166,29 +170,28 @@ function ProjectMenu({
 }
 
 /**
- * Empty state saat Project belum punya Session: kartu bergaris putus-putus
- * (ikon, judul, penjelasan singkat, satu aksi utama).
+ * Empty state saat Project belum punya Session — pola AdwStatusPage: ikon
+ * simbolik besar redup, judul, deskripsi, satu tombol pil aksi utama.
  */
 function EmptySessions({ projectName, onStart }: { projectName: string; onStart: () => void }) {
   return (
-    <div className="flex flex-col items-center gap-6 rounded-2xl border border-dashed bg-muted/20 px-6 py-12 text-center sm:py-16">
-      <span
-        className="flex size-14 items-center justify-center rounded-2xl bg-primary/10 text-primary"
+    <div className="flex flex-col items-center gap-6 px-6 py-12 text-center sm:py-20">
+      <MessagesSquareIcon
+        className="size-16 text-muted-foreground/50"
+        strokeWidth={1.5}
         aria-hidden
-      >
-        <MessagesSquareIcon className="size-7" />
-      </span>
+      />
 
-      <div className="flex max-w-sm flex-col gap-1.5">
-        <h2 className="text-lg font-semibold tracking-tight">Start your first session</h2>
-        <p className="text-sm leading-relaxed text-muted-foreground">
+      <div className="flex max-w-sm flex-col gap-2">
+        <h2 className="text-2xl font-bold tracking-tight">No Sessions Yet</h2>
+        <p className="text-[15px] leading-relaxed text-muted-foreground">
           A session is a conversation with the agent inside{" "}
           <span className="font-medium text-foreground">{projectName}</span>. It can read and edit
           files here for you.
         </p>
       </div>
 
-      <Button type="button" onClick={onStart} className="rounded-full px-5">
+      <Button type="button" onClick={onStart} className="h-10 rounded-full px-6">
         <PlusIcon data-icon="inline-start" />
         New session
       </Button>
@@ -210,6 +213,25 @@ export function SessionList({
   const openForm = () => setFormOpen(true);
 
   const hasSessions = !list.loading && !list.loadError && list.ordered.length > 0;
+  const allSelected =
+    list.sessions.length > 0 && list.sessions.every((s) => list.selected.has(s.id));
+
+  // Esc keluar dari selection mode (kecuali ada dialog terbuka — Esc
+  // miliknya). Daftar kosong (semua terhapus) juga mengakhiri mode ini.
+  const { selecting, stopSelecting, bulkDeleteOpen } = list;
+  useEffect(() => {
+    if (!selecting) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || bulkDeleteOpen || e.defaultPrevented) return;
+      if (document.querySelector("[role=dialog],[role=alertdialog]")) return;
+      stopSelecting();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selecting, stopSelecting, bulkDeleteOpen]);
+  useEffect(() => {
+    if (selecting && !list.loading && list.sessions.length === 0) stopSelecting();
+  }, [selecting, stopSelecting, list.loading, list.sessions.length]);
   /** Layar lebar: panel samping inline. Sempit: panel di Sheet (tombol header). */
   const wide = useMediaQuery(WIDE_QUERY);
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -245,19 +267,13 @@ export function SessionList({
             )}
           </div>
 
-          {/* Satu baris ringkasan — cukup teks, tanpa tile. Disembunyikan saat
-              kosong: empty state di bawah sudah menyampaikannya. */}
-          {!list.loading && !list.loadError && list.summary.total > 0 && (
-            <p className="text-sm text-muted-foreground">{describeSessionSummary(list.summary)}</p>
-          )}
-
           {/* Layar sempit: toolbar aksi sekunder di bawah judul. Aksi utama
               (New session) jadi tombol melayang kanan-bawah — area jempol. */}
           {!wide && (
             <div className="flex items-center justify-between gap-2">
               <Button
                 type="button"
-                variant="outline"
+                variant="secondary"
                 onClick={() => setDetailsOpen(true)}
                 aria-label="Project details: instructions, MCP servers, skills"
                 className="h-10 rounded-full px-3.5"
@@ -283,40 +299,115 @@ export function SessionList({
           {list.loading ? (
             <SessionListSkeleton />
           ) : list.loadError ? (
-            <Alert variant="destructive">
-              <AlertTitle>Failed to load sessions</AlertTitle>
-              <AlertDescription className="flex flex-col items-start gap-3">
-                {list.loadError}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void list.refresh()}
-                >
-                  <RefreshCwIcon data-icon="inline-start" />
-                  Retry
-                </Button>
-              </AlertDescription>
-            </Alert>
+            <PrefsGroup title="Sessions">
+              <ActionRow
+                prefix={<TriangleAlertIcon className="size-[18px] text-destructive" aria-hidden />}
+                title="Failed to load sessions"
+                subtitle={list.loadError}
+                suffix={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void list.refresh()}
+                  >
+                    <RefreshCwIcon data-icon="inline-start" />
+                    Retry
+                  </Button>
+                }
+              />
+            </PrefsGroup>
           ) : hasSessions ? (
-            <ul className="-mx-3 flex flex-col">
-              {list.ordered.map((session) => (
-                <li key={session.id}>
-                  <SessionRow
-                    session={session}
-                    busy={
-                      list.stopping === session.id ||
-                      list.starting === session.id ||
-                      list.deleting === session.id
-                    }
-                    onOpen={() => onOpenSession(session)}
-                    onStop={() => void list.stop(session.id)}
-                    onStart={() => void list.start(session.id)}
-                    onDelete={() => list.requestDelete(session)}
-                  />
-                </li>
-              ))}
-            </ul>
+            <>
+              {/* AdwPreferencesGroup: ringkasan status sebagai deskripsi grup,
+                  Session sebagai boxed list. Tombol "Select" masuk selection
+                  mode (pola Nautilus/Contacts) untuk hapus massal. */}
+              <PrefsGroup
+                title="Sessions"
+                description={
+                  list.selecting
+                    ? describeSelection(list.selected.size, list.sessions.length)
+                    : describeSessionSummary(list.summary)
+                }
+                suffix={
+                  list.selecting ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={list.toggleSelectAll}
+                      disabled={list.bulkProgress !== null}
+                    >
+                      {allSelected ? "Deselect All" : "Select All"}
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={list.startSelecting}
+                      aria-label="Select sessions"
+                    >
+                      <ListChecksIcon data-icon="inline-start" />
+                      Select
+                    </Button>
+                  )
+                }
+              >
+                {list.ordered.map((session) => (
+                  <li key={session.id}>
+                    <SessionRow
+                      session={session}
+                      busy={
+                        list.stopping === session.id ||
+                        list.starting === session.id ||
+                        list.deleting === session.id
+                      }
+                      onOpen={() => onOpenSession(session)}
+                      onStop={() => void list.stop(session.id)}
+                      onStart={() => void list.start(session.id)}
+                      onDelete={() => list.requestDelete(session)}
+                      selectionMode={list.selecting}
+                      selected={list.selected.has(session.id)}
+                      onToggleSelect={() => list.toggleSelect(session.id)}
+                    />
+                  </li>
+                ))}
+              </PrefsGroup>
+
+              {/* Action bar selection mode (GtkActionBar): melayang di dasar
+                  area scroll — jumlah terpilih, Cancel, Delete (destruktif). */}
+              {list.selecting && (
+                <div className="sticky bottom-[max(1rem,env(safe-area-inset-bottom))] z-20 mt-4 flex items-center gap-2 rounded-2xl border bg-popover py-2 pr-2 pl-4 shadow-lg">
+                  <span className="min-w-0 truncate text-sm font-medium" aria-live="polite">
+                    {list.selected.size === 0
+                      ? "None selected"
+                      : `${pluralSessions(list.selected.size)} selected`}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto"
+                    onClick={list.stopSelecting}
+                    disabled={list.bulkProgress !== null}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="sm"
+                    className="rounded-full px-3.5"
+                    onClick={list.requestBulkDelete}
+                    disabled={list.selected.size === 0 || list.bulkProgress !== null}
+                  >
+                    <Trash2Icon data-icon="inline-start" />
+                    Delete
+                  </Button>
+                </div>
+              )}
+            </>
           ) : (
             <EmptySessions projectName={project.name} onStart={openForm} />
           )}
@@ -350,7 +441,8 @@ export function SessionList({
       {/* Mobile/tablet: aksi utama melayang di kanan-bawah (jangkauan jempol,
           selalu terlihat saat scroll). Label teks tetap ada agar jelas —
           bukan ikon "+" tanpa arti. Safe-area iOS dihormati. */}
-      {!wide && (
+      {/* Disembunyikan saat selection mode: tempatnya dipakai action bar. */}
+      {!wide && !list.selecting && (
         <Button
           type="button"
           onClick={openForm}
@@ -366,9 +458,12 @@ export function SessionList({
         open={formOpen}
         onOpenChange={setFormOpen}
         projectId={project.id}
-        onCreated={() => {
+        projectName={project.name}
+        onCreated={(session) => {
           void list.refresh();
           notifyDataChanged();
+          // Session baru langsung dibuka — siap menerima prompt pertama.
+          onOpenSession(session);
         }}
       />
 
@@ -380,6 +475,18 @@ export function SessionList({
         }}
         deleting={list.deleting !== null}
         onConfirm={() => void list.confirmRemove()}
+      />
+
+      {/* Konfirmasi hapus massal (selection mode) — progres di tombol. */}
+      <ConfirmSessionDeleteDialog
+        open={list.bulkDeleteOpen}
+        onOpenChange={(open) => {
+          if (!open) list.cancelBulkDelete();
+        }}
+        count={list.selected.size}
+        deleting={list.bulkProgress !== null}
+        progress={list.bulkProgress}
+        onConfirm={() => void list.confirmBulkRemove()}
       />
 
       {/* Konfirmasi hapus Project (beserta seluruh Session-nya) */}
