@@ -3,7 +3,8 @@
 // - Network-only (pass-through) untuk `/api/*` dan koneksi WebSocket `/ws`,
 //   agar kontrol CLI_Agent tidak pernah disajikan dari cache basi.
 
-const CACHE_NAME = "kcg-code-v1";
+// Naikkan versi bila strategi cache berubah — cache lama dihapus saat activate.
+const CACHE_NAME = "kcg-code-v2";
 const PRECACHE = ["/", "/manifest.json", "/logo.svg"];
 
 self.addEventListener("install", (event) => {
@@ -33,7 +34,24 @@ self.addEventListener("fetch", (event) => {
   // Network-only untuk API dan WebSocket.
   if (url.pathname.startsWith("/api/") || url.pathname === "/ws") return;
 
-  // Cache-first untuk asset statis.
+  // Network-first untuk halaman: shell HTML lama (chunk usang) tidak boleh
+  // terjebak di cache setelah update. Cache hanya dipakai saat offline.
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request).then((cached) => cached ?? caches.match("/"))),
+    );
+    return;
+  }
+
+  // Cache-first untuk asset statis (chunk ber-hash).
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

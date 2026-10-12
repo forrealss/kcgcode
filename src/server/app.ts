@@ -114,6 +114,11 @@ export interface KcgServerOptions {
    * (`src/index.ts`) persis seperti daftar rute SPA kcgcode; path lain 404.
    */
   spaPaths?: string[];
+  /**
+   * Asset frontend hasil build (`dist/web`) per path URL — dipakai binary
+   * global sebagai pengganti bundling HTML saat runtime.
+   */
+  assets?: Record<string, () => Response>;
 }
 
 export interface KcgServer {
@@ -321,6 +326,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     hostname,
     port,
     routes: {
+      // ---- Chunk frontend prebuilt (bila ada); rute eksplisit di bawah menang ----
+      ...opts.assets,
+
       // ---- Asset statis PWA dari root paket (bukan cwd) — aman utk global install ----
       "/manifest.json": () =>
         staticFile(path.join(PUBLIC_DIR, "manifest.json"), "application/manifest+json"),

@@ -69,6 +69,28 @@ export function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
 
+/** Lebar tampilan satu baris (tanpa kode warna). */
+export function visibleWidth(s: string): number {
+  return [...stripAnsi(s)].length;
+}
+
+/**
+ * Tengahkan blok teks secara horizontal di terminal — dipakai untuk pesan
+ * setelah dashboard Ink ditutup, agar posisinya sama dengan dashboard.
+ * Baris di dalam blok tetap rata kiri satu sama lain (panel tidak pecah).
+ * Non-TTY dikembalikan apa adanya.
+ */
+export function centerBlock(
+  text: string,
+  columns: number | undefined = process.stdout.isTTY ? process.stdout.columns : undefined,
+): string {
+  if (!columns) return text;
+  const lines = text.split("\n");
+  const width = Math.max(...lines.map(visibleWidth));
+  const pad = " ".repeat(Math.max(0, Math.floor((columns - width) / 2)));
+  return lines.map((line) => (line ? pad + line : line)).join("\n");
+}
+
 /** Render panel berborder. Lebar menyesuaikan isi. */
 export function panel(title: string | null, lines: string[], minWidth = 48): string {
   const contentW = Math.max(

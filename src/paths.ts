@@ -20,6 +20,9 @@ export const PACKAGE_ROOT = path.resolve(import.meta.dir, "..");
 /** Direktori asset statis PWA di dalam paket. */
 export const PUBLIC_DIR = path.join(PACKAGE_ROOT, "public");
 
+/** Frontend hasil build yang ikut paket npm (`build.ts --outdir dist/web`, saat prepack). */
+export const WEB_DIST_DIR = path.join(PACKAGE_ROOT, "dist", "web");
+
 /** Direktori aplikasi milik user: `~/.kcgcode`. */
 export const KCG_HOME = path.join(homedir(), ".kcgcode");
 

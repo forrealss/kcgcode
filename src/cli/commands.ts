@@ -3,7 +3,7 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { resolveConfig } from "../config";
+import { resolveConfig, saveConfigPort } from "../config";
 import { openSessionStore } from "../db";
 import spa from "../index.html";
 import {
@@ -13,15 +13,32 @@ import {
   resolveEffectiveConfigPath,
   resolveEffectiveDbPath,
   resolveEffectiveUploadsDir,
+  WEB_DIST_DIR,
 } from "../paths";
 import { isCliMode } from "../runtime";
 import { createKcgServer } from "../server/app";
 import { resolveHostname } from "../server/host";
+import { loadPrebuiltWeb } from "../server/prebuilt-web";
 import { createAuthService } from "../server/services/auth";
 import type { CliArgs } from "./args";
-import { openBrowser, startDashboard } from "./dashboard";
+import { attachToDaemon } from "./attach";
+import {
+  clearDaemonState,
+  daemonLogPath,
+  isDaemonChild,
+  printAlreadyRunning,
+  printStarted,
+  runningDaemon,
+  startDetached,
+  writeDaemonState,
+} from "./daemon";
+import { type DashboardInfo, openBrowser, startDashboard, takeSnapshot } from "./dashboard";
 import { disabledKeepAwake, startKeepAwake } from "./keep-awake";
-import { c, panel, row, symbols } from "./theme";
+import { choosePort, portIsFree, requestedPort } from "./port";
+import { c, centerBlock, panel, row, symbols } from "./theme";
+
+/** Interval daemon menulis state + snapshot dashboard. */
+const DAEMON_STATE_MS = 2000;
 
 const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings", "/settings/*"];
 
@@ -44,58 +61,199 @@ export async function runStart(args: CliArgs): Promise<void> {
   if (process.env.NODE_ENV === undefined) {
     process.env.NODE_ENV = "production";
   }
+  // Baca KCG_PORT sebelum di-override `--port`, untuk membedakan asal port.
+  const envPort = process.env.KCG_PORT;
   applyEnvOverrides(args);
 
   const cfg = resolveConfig();
   if (!cfg.ok) failConfig(cfg.error);
+  const config = cfg.data;
 
-  const port = args.port ?? Number(process.env.KCG_PORT ?? 3000);
+  const daemonChild = isDaemonChild();
+  // Port daemon yang dipindah ke terminal ini ("Run in foreground").
+  let takeoverPort: number | undefined;
+  if (!daemonChild) {
+    const existing = await runningDaemon();
+    if (existing) {
+      if (args.detach || !process.stdout.isTTY) {
+        printAlreadyRunning(existing);
+        process.exit(1);
+      }
+      // Sudah jalan di background → buka dashboard untuk daemon tersebut.
+      takeoverPort = await attachToDaemon(args, config.configPath, existing);
+    }
+  }
+
   const hostname = args.host ?? resolveHostname();
-
-  const app = createKcgServer({
-    config: cfg.data,
-    spa,
-    spaPaths: SPA_PATHS,
-    port,
+  const choice = await choosePort(
     hostname,
-    uploadsRoot: resolveEffectiveUploadsDir(),
-  });
+    takeoverPort !== undefined
+      ? { port: takeoverPort, source: "config" }
+      : requestedPort({ flag: args.port, env: envPort, config: config.port }),
+  );
+  if (!choice.ok) {
+    console.error(`${c.redBright(symbols.cross)} ${choice.error}`);
+    console.error(`  ${c.dim("Pick another with")} ${c.cyan("--port <n>")}`);
+    process.exit(1);
+  }
+  const portNote = choice.fallbackFrom ? `${choice.fallbackFrom} in use` : null;
 
-  const resolvedPort = app.server.port ?? port;
-  const primaryUrl = `http://${hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname}:${resolvedPort}`;
+  if (args.detach && !daemonChild) {
+    if (portNote) console.log(`${c.yellow(symbols.warn)} Port ${portNote} — using ${choice.port}.`);
+    try {
+      // Port final dikirim eksplisit agar anak tidak memilih ulang.
+      const state = await startDetached({ ...args, port: choice.port });
+      printStarted(state);
+      if (args.open) await openBrowser(state.localUrl);
+    } catch (err) {
+      console.error(`${c.redBright(symbols.cross)} ${(err as Error).message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  // Paket npm membawa frontend prebuilt; checkout git jatuh ke bundling runtime.
+  const web = loadPrebuiltWeb(WEB_DIST_DIR);
+  const boot = (port: number) =>
+    createKcgServer({
+      config,
+      spa: web?.spa ?? spa,
+      assets: web?.assets,
+      spaPaths: SPA_PATHS,
+      port,
+      hostname,
+      uploadsRoot: resolveEffectiveUploadsDir(),
+    });
+  const localUrl = (port: number) =>
+    `http://${hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname}:${port}`;
+
+  let app = boot(choice.port);
+  const info: DashboardInfo = {
+    server: app,
+    port: app.server.port ?? choice.port,
+    hostname,
+    portNote,
+    startedAt: Date.now(),
+  };
 
   const allowSleep = args.allowSleep || process.env.KCG_ALLOW_SLEEP === "1";
   const keepAwake = allowSleep ? disabledKeepAwake() : await startKeepAwake();
+  info.keepAwake = keepAwake;
 
   let shuttingDown = false;
   let dash: { stop(): void } | null = null;
+  let stateTimer: ReturnType<typeof setInterval> | null = null;
 
   async function shutdown(reason: string): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     dash?.stop();
+    if (stateTimer) clearInterval(stateTimer);
+    if (daemonChild) clearDaemonState(process.pid);
     keepAwake.stop();
-    console.log(`\n${c.dim(`(${reason})`)} ${c.yellow("Saving session state and stopping…")}`);
+    // Keluar dari dashboard → pesan ditengahkan seperti dashboard; log daemon tetap polos.
+    const say = (line: string) => console.log(dash ? centerBlock(line) : line);
+    say(`\n${c.dim(`(${reason})`)} ${c.yellow("Saving session state and stopping…")}`);
     try {
       await app.close();
     } catch (err) {
       console.error(c.red("Shutdown error:"), err);
     }
-    console.log(c.greenBright(`${symbols.check} KCG Code stopped.`));
+    say(c.greenBright(`${symbols.check} KCG Code stopped.`));
     process.exit(0);
   }
 
-  dash = await startDashboard({
-    server: app,
-    port: resolvedPort,
-    hostname,
-    keepAwake,
-    onQuit: (reason) => void shutdown(reason),
-    onOpenUrl: () => openBrowser(primaryUrl),
-  });
+  /** Simpan port ke config lalu restart server di port tersebut. Null = sukses. */
+  async function changePort(next: number): Promise<string | null> {
+    if (next !== info.port && !(await portIsFree(hostname, next))) {
+      return `Port ${next} is already in use`;
+    }
+    const saved = saveConfigPort(config.configPath, next);
+    if (!saved.ok) return saved.error;
+    if (next === info.port) {
+      info.portNote = null;
+      return null;
+    }
 
-  if (args.open) {
-    void openBrowser(primaryUrl);
+    info.restarting = true;
+    const prev = info.port;
+    try {
+      await app.close();
+      try {
+        app = boot(next);
+      } catch (err) {
+        // Gagal bind di port baru → kembali ke port lama agar server tetap hidup.
+        app = boot(prev);
+        info.server = app;
+        return `Cannot start on port ${next}: ${(err as Error).message}`;
+      }
+      info.server = app;
+      info.port = app.server.port ?? next;
+      info.portNote = null;
+      return null;
+    } finally {
+      info.restarting = false;
+    }
+  }
+
+  /** Pindahkan server ke daemon: tutup server foreground, spawn ulang di background. */
+  async function moveToBackground(): Promise<void> {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    dash?.stop();
+    keepAwake.stop();
+    console.log(centerBlock(c.yellow("Moving kcgcode to background…")));
+    try {
+      await app.close();
+      const state = await startDetached({ ...args, port: info.port, detach: true });
+      printStarted(state, { center: true });
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        centerBlock(
+          [
+            `${c.redBright(symbols.cross)} ${(err as Error).message}`,
+            `  ${c.dim("Server is stopped. Run")} ${c.cyan("kcgcode")} ${c.dim("to start again.")}`,
+          ].join("\n"),
+        ),
+      );
+      process.exit(1);
+    }
+  }
+
+  if (daemonChild) {
+    // Tanpa dashboard: tulis state + snapshot dashboard berkala untuk
+    // `status`/`stop` dan dashboard yang memantau daemon (`kcgcode`).
+    const writeState = () => {
+      const snapshot = takeSnapshot(info, "background");
+      return writeDaemonState({
+        pid: process.pid,
+        port: info.port,
+        hostname,
+        localUrl: localUrl(info.port),
+        publicUrl: snapshot.publicUrl,
+        startedAt: snapshot.startedAt,
+        logFile: daemonLogPath(),
+        snapshot,
+      });
+    };
+    await writeState();
+    stateTimer = setInterval(() => void writeState(), DAEMON_STATE_MS);
+    // Terminal asal ditutup tidak boleh menghentikan server.
+    process.on("SIGHUP", () => {});
+    console.log(`kcgcode running in background · pid ${process.pid} · ${localUrl(info.port)}`);
+  } else {
+    // `info` dimutasi saat restart port; dashboard membacanya ulang tiap render.
+    dash = await startDashboard(() => takeSnapshot(info), {
+      onQuit: (reason) => void shutdown(reason),
+      onOpenUrl: () => openBrowser(localUrl(info.port)),
+      onChangePort: changePort,
+      onBackground: () => void moveToBackground(),
+    });
+
+    if (args.open) {
+      void openBrowser(localUrl(info.port));
+    }
   }
 
   process.on("SIGINT", () => void shutdown("SIGINT"));

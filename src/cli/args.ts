@@ -5,7 +5,16 @@
 import { c } from "./theme";
 
 export interface CliArgs {
-  command: "start" | "init" | "reset-lock" | "help" | "version" | "invalid";
+  command:
+    | "start"
+    | "stop"
+    | "status"
+    | "logs"
+    | "init"
+    | "reset-lock"
+    | "help"
+    | "version"
+    | "invalid";
   port?: number;
   host?: string;
   /** Path berkas konfigurasi (override KCG_CONFIG_PATH). */
@@ -13,6 +22,12 @@ export interface CliArgs {
   open: boolean;
   /** Izinkan OS sleep (matikan keep-awake). */
   allowSleep?: boolean;
+  /** Jalankan di background (lepas dari terminal). */
+  detach?: boolean;
+  /** `logs`: ikuti log baru. */
+  follow?: boolean;
+  /** `logs`: jumlah baris terakhir. */
+  lines?: number;
   /** Argumen tak dikenal / pesan error. */
   error?: string;
 }
@@ -21,20 +36,30 @@ const HELP_TEXT = `kcgcode — control CLI AI agents from your phone
 
 USAGE
   kcgcode [start] [options]
+  kcgcode start -d [options]
+  kcgcode stop | status | logs [-f]
   kcgcode init [options]
   kcgcode help | --help | -h
   kcgcode version | --version | -v
 
 COMMANDS
-  start (default)   Run server + terminal dashboard
+  start (default)   Run server + terminal dashboard; if it already runs
+                    in background, open its dashboard instead
+  stop              Stop the background server
+  status            Show background server status
+  logs              Show background server log (-f to follow)
   init              Create kcg-code.config.json & local sandbox folder
   reset-lock        Remove the app lock (forgot PIN/password) & sign out all devices
 
 OPTIONS
-  -p, --port <n>    HTTP port (default 3000 / env KCG_PORT)
+  -p, --port <n>    HTTP port (default: config "port" or 3000; a busy
+                    default is swapped for the next free port)
   -H, --host <h>    Bind host (default 127.0.0.1 / env KCG_HOST)
   -c, --config <f>  Config path (default ~/.kcgcode/config.json)
+  -d, --detach      Run in background (keeps running after terminal closes)
   --open            Open the web dashboard in a browser after start
+  -f, --follow      logs: keep printing new lines
+  -n, --lines <n>   logs: number of lines to show (default 50)
   --allow-sleep     Let the OS sleep while running (default: keep awake)
   -h, --help        Show help
   -v, --version     Show version
@@ -50,6 +75,7 @@ EXAMPLES
   kcgcode
   kcgcode init
   kcgcode start --port 4000 --open
+  kcgcode start -d && kcgcode logs -f
   kcgcode init --config ~/.kcgcode/config.json
 `;
 
@@ -79,8 +105,8 @@ export function parseArgs(argv: string[]): CliArgs {
   } else if (first === "reset-lock") {
     args.command = "reset-lock";
     rest.shift();
-  } else if (first === "start") {
-    args.command = "start";
+  } else if (first === "start" || first === "stop" || first === "status" || first === "logs") {
+    args.command = first;
     rest.shift();
   } else if (first === "help") {
     args.command = "help";
@@ -102,6 +128,23 @@ export function parseArgs(argv: string[]): CliArgs {
     }
     if (a === "--open") {
       args.open = true;
+      continue;
+    }
+    if (a === "-d" || a === "--detach") {
+      args.detach = true;
+      continue;
+    }
+    if (a === "-f" || a === "--follow") {
+      args.follow = true;
+      continue;
+    }
+    if (a === "-n" || a === "--lines") {
+      const raw = rest[++i];
+      const n = Number(raw);
+      if (raw === undefined || !Number.isInteger(n) || n <= 0) {
+        return { ...args, command: "invalid", error: `Invalid value for ${a}` };
+      }
+      args.lines = n;
       continue;
     }
     if (a === "--allow-sleep") {

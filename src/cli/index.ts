@@ -3,6 +3,7 @@
  */
 import { type CliArgs, helpText, parseArgs } from "./args";
 import { runInit, runResetLock, runStart } from "./commands";
+import { runLogs, runStatus, runStop } from "./daemon";
 import { c, readPackageVersion, symbols } from "./theme";
 
 export async function runCli(argv: string[]): Promise<void> {
@@ -30,6 +31,15 @@ export async function runCli(argv: string[]): Promise<void> {
       return;
     case "start":
       await runStart(args);
+      return;
+    case "stop":
+      await runStop();
+      return;
+    case "status":
+      await runStatus();
+      return;
+    case "logs":
+      await runLogs(args);
       return;
   }
 }

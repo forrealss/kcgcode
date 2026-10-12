@@ -4,7 +4,10 @@ import {
   bestUrl,
   type DashboardInfo,
   menuItems,
+  portInputError,
   renderDashboard,
+  renderSnapshot,
+  takeSnapshot,
 } from "../dashboard";
 
 function makeInfo(overrides: Partial<DashboardInfo> = {}): DashboardInfo {
@@ -32,13 +35,12 @@ describe("renderDashboard", () => {
     expect(frame).toContain("v0.1.0");
     expect(frame).toContain("██╗");
     expect(frame).toContain("Running");
-    expect(frame).toContain("URL");
+    expect(frame).toContain("Local");
     expect(frame).toContain("PID");
-    expect(frame).toContain("Memory");
-    expect(frame).toContain("Uptime");
+    expect(frame).toContain("up 0s");
     expect(frame).toContain("Tunnel");
     expect(frame).toContain("Open in browser");
-    expect(frame).toContain("↑/↓ navigate");
+    expect(frame).toContain("↑↓ move");
     expect(frame).not.toContain("CONFIG");
   });
 
@@ -113,7 +115,15 @@ describe("renderDashboard", () => {
 
     expect(activeProvider(info)).toBe("lhr");
     expect(bestUrl(info)).toEqual({ label: "public (lhr)", url: "https://abc.lhr.life" });
-    expect(menuItems({}).map((m) => m.id)).toEqual(["open", "copy", "qr", "detail", "quit"]);
+    expect(menuItems({}).map((m) => m.id)).toEqual([
+      "open",
+      "copy",
+      "qr",
+      "detail",
+      "port",
+      "background",
+      "quit",
+    ]);
 
     const frame = renderDashboard(info, "0.1.0", { showQr: true, showDetail: true, menuIndex: 2 });
     expect(frame).toContain("Running");
@@ -122,5 +132,93 @@ describe("renderDashboard", () => {
     expect(frame).toContain("lhr");
     expect(frame).toContain("https://abc.lhr.life");
     expect(frame).toContain("Hide phone QR");
+  });
+
+  test("URL publik punya baris sendiri", () => {
+    const info = makeInfo({
+      server: {
+        store: { listProjects: () => [], listSessions: () => [] },
+        tunnel: {
+          status: () => ({
+            phase: "online",
+            account: { url: "https://me.example.com" },
+            error: null,
+          }),
+        },
+      } as unknown as DashboardInfo["server"],
+    });
+    const frame = renderDashboard(info, "0.1.0");
+    expect(frame).toMatch(/Public\s+https:\/\/me\.example\.com/);
+    expect(frame).toContain("kcg · online");
+  });
+
+  test("konfirmasi quit saat ada session running", () => {
+    const frame = renderDashboard(makeInfo(), "0.1.0", { confirm: "quit" });
+    expect(frame).toContain("press q again");
+    expect(renderDashboard(makeInfo(), "0.1.0")).not.toContain("press q again");
+  });
+
+  test("form ganti port + catatan port fallback", () => {
+    const info = makeInfo({ portNote: "3000 in use", port: 3001 });
+    const frame = renderDashboard(info, "0.1.0", {
+      portInput: "40",
+      portError: "Enter a port number",
+    });
+    expect(frame).toContain("CHANGE PORT");
+    expect(frame).toContain("current 3001");
+    expect(frame).toContain("› 40");
+    expect(frame).toContain("Enter a port number");
+    expect(frame).toContain("(3000 in use)");
+    expect(frame).toContain("esc cancel");
+    expect(renderDashboard(makeInfo(), "0.1.0")).not.toContain("CHANGE PORT");
+  });
+
+  test("status Restarting saat ganti port", () => {
+    expect(renderDashboard(makeInfo({ restarting: true }), "0.1.0")).toContain("Restarting");
+  });
+});
+
+describe("portInputError", () => {
+  test("validasi input port", () => {
+    expect(portInputError("")).not.toBeNull();
+    expect(portInputError("0")).not.toBeNull();
+    expect(portInputError("70000")).not.toBeNull();
+    expect(portInputError("80")).toContain("1024");
+    expect(portInputError("4000")).toBeNull();
+  });
+});
+
+describe("mode background (dashboard untuk daemon)", () => {
+  test("menu Stop / Run in foreground / Close dashboard", () => {
+    expect(menuItems({}, "background").map((m) => m.id)).toEqual([
+      "open",
+      "copy",
+      "qr",
+      "detail",
+      "port",
+      "foreground",
+      "stop",
+      "quit",
+    ]);
+  });
+
+  test("render snapshot daemon", () => {
+    const snap = { ...takeSnapshot(makeInfo()), mode: "background" as const, pid: 4242 };
+    const frame = renderSnapshot(snap, "0.1.0");
+    expect(frame).toContain("Running in background");
+    expect(frame).toContain("PID 4242");
+    expect(frame).toContain("Stop server");
+    expect(frame).toContain("Close dashboard");
+    expect(frame).toContain("server keeps running");
+    expect(frame).toContain("q close");
+    expect(frame).not.toContain("Run in background");
+
+    const busy = renderSnapshot({ ...snap, restarting: true, busyLabel: "Stopping…" }, "0.1.0");
+    expect(busy).toContain("Stopping…");
+  });
+
+  test("snapshot bisa diserialisasi ke daemon.json", () => {
+    const snap = takeSnapshot(makeInfo(), "background");
+    expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);
   });
 });

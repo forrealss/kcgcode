@@ -1,6 +1,6 @@
 {
   "name": "kcg-code",
-  "version": "0.1.0",
+  "version": "0.2.2",
   "description": "Control CLI AI agents (OpenCode / Claude Code) from your phone — mobile PWA + local headless bridge.",
   "license": "MIT",
   "type": "module",
@@ -11,6 +11,7 @@
     "bin",
     "src",
     "public",
+    "dist/web",
     "styles",
     "bun-env.d.ts",
     "tsconfig.json",
@@ -40,8 +41,8 @@
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit",
-    "prepack": "bun scripts/stamp-build-config.ts",
-    "postpack": "bun scripts/stamp-build-config.ts --reset"
+    "prepack": "bun scripts/stamp-build-config.ts && bun run build.ts --outdir dist/web --no-sourcemap",
+    "postpack": "bun scripts/stamp-build-config.ts --reset && bun -e \"require('node:fs').rmSync('dist/web', { recursive: true, force: true })\""
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.296",

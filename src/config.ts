@@ -2,14 +2,14 @@
  * Config_File & validasi Sandbox_Root saat startup.
  * Sesuai `design.md` — `config.ts`.
  *
- * Skema minimal: `{ "sandboxRoot": "/abs/path" }`.
+ * Skema minimal: `{ "sandboxRoot": "/abs/path" }`, opsional `"port": 3000`.
  * Path default mengikuti mode runtime (`src/runtime.ts`):
  * - **cli** (`kcgcode`): `~/.kcgcode/config.json`
  * - **dev** (`bun dev`): `./kcg-code.config.json` bila ada, else user config
  * `loadConfig()` keluar dengan kode error bila `sandboxRoot` tidak diatur
  * atau direktori yang ditunjuk tidak ditemukan (Requirement 10.1).
  */
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { DEFAULT_CONFIG_PATH, resolveEffectiveConfigPath } from "./paths";
 import type { Result } from "./server/result";
 
@@ -20,6 +20,12 @@ export interface AppConfig {
   sandboxRoot: string;
   /** Path berkas konfigurasi yang dibaca. */
   configPath: string;
+  /** Port HTTP pilihan user (diatur lewat menu CLI); kosong = default. */
+  port?: number;
+}
+
+export function isValidPort(n: unknown): n is number {
+  return typeof n === "number" && Number.isInteger(n) && n > 0 && n <= 65535;
 }
 
 /**
@@ -68,7 +74,30 @@ export function resolveConfig(configPath?: string): Result<AppConfig> {
     };
   }
 
-  return { ok: true, data: { sandboxRoot: resolved, configPath: file } };
+  const port = obj.port;
+  if (port !== undefined && !isValidPort(port)) {
+    return {
+      ok: false,
+      error: `[config] "port" must be an integer 1-65535 in "${file}" (got ${JSON.stringify(port)})`,
+    };
+  }
+
+  return {
+    ok: true,
+    data: { sandboxRoot: resolved, configPath: file, ...(port !== undefined && { port }) },
+  };
+}
+
+/** Simpan `port` ke Config_File; key lain dipertahankan apa adanya. */
+export function saveConfigPort(configPath: string, port: number): Result<void> {
+  try {
+    const obj = JSON.parse(readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    obj.port = port;
+    writeFileSync(configPath, `${JSON.stringify(obj, null, 2)}\n`, "utf8");
+    return { ok: true, data: undefined };
+  } catch (err) {
+    return { ok: false, error: `cannot save port to "${configPath}": ${(err as Error).message}` };
+  }
 }
 
 /**
