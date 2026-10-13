@@ -8,6 +8,9 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { captureInstallPrompt, isEphemeralHost } from "./lib/pwa";
+
+captureInstallPrompt();
 
 const elem = document.getElementById("root");
 if (!elem) {
@@ -38,10 +41,14 @@ if (import.meta.hot) {
   // route server.
   createRoot(elem).render(app);
 
-  const manifestLink = document.createElement("link");
-  manifestLink.rel = "manifest";
-  manifestLink.href = "/manifest.json";
-  document.head.appendChild(manifestLink);
+  // Alamat localhost.run berganti-ganti: tanpa manifest, Chrome tidak
+  // menawarkan Install untuk app yang akan basi saat alamatnya berubah.
+  if (!isEphemeralHost(window.location.hostname)) {
+    const manifestLink = document.createElement("link");
+    manifestLink.rel = "manifest";
+    manifestLink.href = "/manifest.json";
+    document.head.appendChild(manifestLink);
+  }
 
   // iOS mengabaikan icon di manifest untuk Add to Home Screen.
   const appleIconLink = document.createElement("link");

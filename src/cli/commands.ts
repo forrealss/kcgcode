@@ -35,6 +35,7 @@ import {
 import { type DashboardInfo, openBrowser, startDashboard, takeSnapshot } from "./dashboard";
 import { disabledKeepAwake, startKeepAwake } from "./keep-awake";
 import { choosePort, portIsFree, requestedPort } from "./port";
+import { runSetup, type SetupOutcome, type SetupState } from "./setup";
 import { c, centerBlock, panel, row, symbols } from "./theme";
 
 /** Interval daemon menulis state + snapshot dashboard. */
@@ -56,6 +57,34 @@ function failConfig(message: string): never {
   process.exit(1);
 }
 
+/** Layar setup: config hilang → tawarkan init; config rusak → tampilkan errornya. */
+async function setupInteractive(args: CliArgs, error: string): Promise<SetupOutcome> {
+  const configPath = resolveEffectiveConfigPath();
+  const initial: SetupState = existsSync(configPath)
+    ? { kind: "invalid", configPath, error }
+    : { kind: "missing", configPath };
+  let initialized = false;
+  const outcome = await runSetup(initial, () => {
+    try {
+      const result = initConfig(args);
+      initialized = true;
+      return { kind: "ready", ...result };
+    } catch (err) {
+      return { kind: "failed", configPath, error: (err as Error).message };
+    }
+  });
+  if (outcome === "quit" && initial.kind === "missing") {
+    console.log(
+      centerBlock(
+        initialized
+          ? `${c.greenBright(symbols.check)} Config created — run ${c.cyan("kcgcode")} to start.`
+          : `${c.dim("Setup skipped — run")} ${c.cyan("kcgcode init")} ${c.dim("when ready.")}`,
+      ),
+    );
+  }
+  return outcome;
+}
+
 export async function runStart(args: CliArgs): Promise<void> {
   // CLI global = mode produksi: matikan HMR dev yang noisy di luar repo.
   if (process.env.NODE_ENV === undefined) {
@@ -65,11 +94,17 @@ export async function runStart(args: CliArgs): Promise<void> {
   const envPort = process.env.KCG_PORT;
   applyEnvOverrides(args);
 
-  const cfg = resolveConfig();
-  if (!cfg.ok) failConfig(cfg.error);
+  const daemonChild = isDaemonChild();
+  let cfg = resolveConfig();
+  if (!cfg.ok) {
+    // Terminal interaktif → layar setup dengan tombol init, bukan error mentah.
+    if (daemonChild || !process.stdin.isTTY || !process.stdout.isTTY) failConfig(cfg.error);
+    if ((await setupInteractive(args, cfg.error)) === "quit") process.exit(0);
+    cfg = resolveConfig();
+    if (!cfg.ok) failConfig(cfg.error);
+  }
   const config = cfg.data;
 
-  const daemonChild = isDaemonChild();
   // Port daemon yang dipindah ke terminal ini ("Run in foreground").
   let takeoverPort: number | undefined;
   if (!daemonChild) {
@@ -260,7 +295,15 @@ export async function runStart(args: CliArgs): Promise<void> {
   process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
 
-export function runInit(args: CliArgs): void {
+export interface InitResult {
+  created: boolean;
+  configPath: string;
+  sandboxPath: string;
+  dataDir: string;
+}
+
+/** Scaffold config + folder sandbox/data. Config yang sudah ada tidak ditimpa. */
+export function initConfig(args: Pick<CliArgs, "config">): InitResult {
   if (isCliMode()) ensureKcgHome();
 
   const configPath = resolveEffectiveConfigPath(args.config);
@@ -269,7 +312,20 @@ export function runInit(args: CliArgs): void {
     : defaultSandboxDir();
   const dataDir = path.dirname(resolveEffectiveDbPath());
 
-  if (existsSync(configPath)) {
+  if (existsSync(configPath)) return { created: false, configPath, sandboxPath, dataDir };
+
+  mkdirSync(path.dirname(configPath), { recursive: true });
+  mkdirSync(sandboxPath, { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+  const body = `${JSON.stringify({ sandboxRoot: sandboxPath }, null, 2)}\n`;
+  writeFileSync(configPath, body, "utf8");
+  return { created: true, configPath, sandboxPath, dataDir };
+}
+
+export function runInit(args: CliArgs): void {
+  const { created, configPath, sandboxPath, dataDir } = initConfig(args);
+
+  if (!created) {
     console.log(
       panel("INIT", [
         row("Config", c.yellow("already exists — skipped")),
@@ -282,12 +338,6 @@ export function runInit(args: CliArgs): void {
     );
     return;
   }
-
-  mkdirSync(path.dirname(configPath), { recursive: true });
-  mkdirSync(sandboxPath, { recursive: true });
-  mkdirSync(dataDir, { recursive: true });
-  const body = `${JSON.stringify({ sandboxRoot: sandboxPath }, null, 2)}\n`;
-  writeFileSync(configPath, body, "utf8");
 
   console.log(
     panel("INIT", [

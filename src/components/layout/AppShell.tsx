@@ -15,6 +15,7 @@
  */
 
 import { AppSidebar } from "@/components/layout/AppSidebar";
+import { InstallAppBanner } from "@/components/layout/InstallAppBanner";
 import { InstallNotifications } from "@/components/skills/InstallNotifications";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -65,6 +66,9 @@ export function AppShell() {
                 </span>
               </header>
             )}
+
+            {/* Ajakan install PWA (HP saja) — cukup di beranda agar tidak mengganggu. */}
+            {isHome && <InstallAppBanner />}
 
             {/* Konten per URL */}
             {route.name === "session" ? (

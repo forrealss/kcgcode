@@ -184,7 +184,10 @@ export function LhrRemoteAccess({
       </PrefsGroup>
 
       {online && s.url && (
-        <PrefsGroup title="Your link">
+        <PrefsGroup
+          title="Your link"
+          description="This address changes when it reconnects, so it can't be installed as an app on your phone. For that, use KCG Code link — its address stays the same."
+        >
           <LiveAddress url={s.url} />
         </PrefsGroup>
       )}

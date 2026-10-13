@@ -17,7 +17,8 @@
       "!.claude",
       "!.agents",
       "!.firecrawl",
-      "!reverse-proxy"
+      "!reverse-proxy",
+      "!kcgcode-video"
     ]
   },
   "formatter": {

@@ -410,7 +410,7 @@ function Card({
   );
 }
 
-function Brand({ version, compact }: { version: string; compact?: boolean }) {
+export function Brand({ version, compact }: { version: string; compact?: boolean }) {
   const logos = logoLines();
   if (compact) {
     return (
