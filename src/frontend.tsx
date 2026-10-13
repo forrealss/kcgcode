@@ -43,6 +43,12 @@ if (import.meta.hot) {
   manifestLink.href = "/manifest.json";
   document.head.appendChild(manifestLink);
 
+  // iOS mengabaikan icon di manifest untuk Add to Home Screen.
+  const appleIconLink = document.createElement("link");
+  appleIconLink.rel = "apple-touch-icon";
+  appleIconLink.href = "/icons/apple-touch-icon.png";
+  document.head.appendChild(appleIconLink);
+
   if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
     navigator.serviceWorker.register("/sw.js").catch(() => {
       // Gagal registrasi SW tidak menghalangi aplikasi.

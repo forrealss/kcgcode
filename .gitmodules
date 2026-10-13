@@ -1,3 +1,6 @@
 [submodule "reverse-proxy"]
 	path = reverse-proxy
 	url = git@github.com:irsyadulibad/kcgcode-rp
+[submodule "kcgcode-video"]
+	path = kcgcode-video
+	url = git@github.com:forrealss/kcgcode-video

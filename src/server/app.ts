@@ -18,7 +18,7 @@
  */
 
 import path from "node:path";
-import { type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
+import { type BunRequest, type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
 import { type AppConfig, loadConfig } from "../config";
 import { openSessionStore, type SessionStore } from "../db";
 import {
@@ -334,6 +334,12 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
         staticFile(path.join(PUBLIC_DIR, "manifest.json"), "application/manifest+json"),
       "/sw.js": () => staticFile(path.join(PUBLIC_DIR, "sw.js"), "text/javascript"),
       "/logo.svg": () => staticFile(path.join(PUBLIC_DIR, "logo.svg"), "image/svg+xml"),
+      "/icons/:name": (req: BunRequest<"/icons/:name">) => {
+        const name = req.params.name;
+        // Whitelist nama file agar tidak bisa path traversal keluar dari public/icons.
+        if (!/^[a-z0-9-]+\.png$/.test(name)) return new Response("Not Found", { status: 404 });
+        return staticFile(path.join(PUBLIC_DIR, "icons", name), "image/png");
+      },
 
       // ---- Rute API per fitur (pola kcgcode: tabel rute terpisah) ----
       // Seluruh `/api/*` dijaga kunci aplikasi (kecuali status/login/avatar).

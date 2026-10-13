@@ -4,8 +4,15 @@
 //   agar kontrol CLI_Agent tidak pernah disajikan dari cache basi.
 
 // Naikkan versi bila strategi cache berubah — cache lama dihapus saat activate.
-const CACHE_NAME = "kcg-code-v2";
-const PRECACHE = ["/", "/manifest.json", "/logo.svg"];
+const CACHE_NAME = "kcg-code-v3";
+const PRECACHE = [
+  "/",
+  "/manifest.json",
+  "/logo.svg",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/icon-maskable-512.png",
+];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
