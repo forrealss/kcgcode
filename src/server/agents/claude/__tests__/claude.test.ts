@@ -9,12 +9,10 @@ import { pathToFileURL } from "node:url";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { todosFromInput } from "../../todos";
 import { AGENT_REQUEST_GONE, type AgentEvent } from "../../types";
-import {
-  CLAUDE_PROVIDER_ID,
-  type ClaudeQueryLike,
-  createClaudeClient,
-  slashCommandInfo,
-} from "../client";
+import { slashCommandInfo } from "../catalog";
+import { createClaudeClient } from "../client";
+import { CLAUDE_PROVIDER_ID } from "../constants";
+import type { ClaudeQueryLike } from "../sdk";
 import { ClaudeTurnTranslator, normalizeToolInput, permissionName, toolName } from "../translate";
 
 const SID = "11111111-1111-4111-8111-111111111111";
