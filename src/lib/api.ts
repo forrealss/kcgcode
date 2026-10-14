@@ -58,6 +58,14 @@ export function apiErrorMessage(code: string): string {
   if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
     return "Couldn't reach skills.sh. Check your connection and try again.";
   }
+  // Aksi MCP: pesan agent (mis. "Executable not found in $PATH") paling berguna.
+  if (code.startsWith("CC_MCP_FAILED") || code.startsWith("AGENT_MCP_FAILED")) {
+    const detail = code.slice(code.indexOf(":") + 1).trim();
+    return detail && detail !== code ? detail : "The agent couldn't update the MCP server.";
+  }
+  if (code.startsWith("CC_RELOAD_FAILED") || code.startsWith("AGENT_RELOAD_FAILED")) {
+    return "The agent couldn't reload its skills.";
+  }
   if (code.startsWith("AGENT_PERMISSION_MODE_FAILED")) {
     return "The agent could not switch to that permission mode.";
   }
@@ -104,6 +112,8 @@ export function apiErrorMessage(code: string): string {
       return "Type at least 2 characters to search.";
     case "INVALID_SKILL_ID":
       return "That skill identifier is not valid.";
+    case "INVALID_MCP_SERVER":
+      return "That MCP server name is not valid.";
     case "SKILLS_RATE_LIMITED":
       return "skills.sh is rate limiting requests. Wait a moment and try again.";
     case "SKILL_INSTALL_IN_PROGRESS":

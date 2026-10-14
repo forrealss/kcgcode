@@ -1754,6 +1754,40 @@ test("listMcp / listSkills -> diteruskan ke server Project (skills menerima path
   }
 });
 
+test("setMcpEnabled / reconnectMcp -> diteruskan ke client agent Project", async () => {
+  const h = freshHarness();
+  try {
+    expect(await h.sm.setMcpEnabled("p1", "broken", false)).toEqual({ ok: true });
+    expect(await h.sm.reconnectMcp("p1", "context7")).toEqual({ ok: true });
+    expect(clientOf(h).calls).toEqual(
+      expect.arrayContaining(["mcp.setEnabled:broken:false", "mcp.reconnect:context7"]),
+    );
+    const mcp = await h.sm.listMcp("p1");
+    expect(mcp.ok && mcp.data.map((m) => [m.name, m.status])).toEqual([
+      ["context7", "connected"],
+      ["broken", "disabled"],
+    ]);
+
+    // Kegagalan agent diteruskan apa adanya.
+    clientOf(h).mcpActionResult = { ok: false, error: "AGENT_MCP_FAILED: spawn ENOENT" };
+    expect(await h.sm.reconnectMcp("p1", "broken")).toEqual({
+      ok: false,
+      error: "AGENT_MCP_FAILED: spawn ENOENT",
+    });
+
+    expect(await h.sm.setMcpEnabled("p1", " ", true)).toEqual({
+      ok: false,
+      error: "INVALID_MCP_SERVER",
+    });
+    expect(await h.sm.reconnectMcp("nope", "x")).toEqual({
+      ok: false,
+      error: "PROJECT_NOT_FOUND",
+    });
+  } finally {
+    h.close();
+  }
+});
+
 test("refreshSkills: server belum hidup -> tanpa dispose; Project tak dikenal -> error", async () => {
   const h = freshHarness();
   try {
@@ -3156,6 +3190,20 @@ function modeHarness() {
   };
   return { h, claude, client, changes };
 }
+
+test("refreshSkills agent tanpa penundaan (Claude Code): reload langsung walau ada turn", async () => {
+  const { h, client } = modeHarness();
+  try {
+    const sid = await createSession(h, "claude-code");
+    await h.sm.sendFreeTextInput(sid, "halo");
+    const res = await h.sm.refreshSkills("p1", "claude-code");
+    expect(res.ok && res.data.refreshed).toBe(true);
+    expect(client().calls).toContain("location.reload");
+    expect(h.sm.hasPendingSkillRefresh("p1")).toBe(false);
+  } finally {
+    h.close();
+  }
+});
 
 test("createSession: permissionMode divalidasi terhadap capability agent", async () => {
   const { h } = modeHarness();

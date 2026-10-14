@@ -12,9 +12,10 @@
  * `<config>` = `CLAUDE_CONFIG_DIR` bila diset, selain itu `HOME` dari env
  * proses `claude` (fallback home user OS).
  *
- * Server `.mcp.json` yang ditolak user (`disabledMcpjsonServers`) bertanda
- * `disabled`; lainnya `unknown` sampai status live tersedia
- * (`mergeClaudeMcp`).
+ * Server yang dinonaktifkan untuk Project (`disabledMcpServers` — ditulis CLI
+ * saat `/mcp` atau `toggleMcpServer` SDK mematikannya) dan server `.mcp.json`
+ * yang ditolak user (`disabledMcpjsonServers`) bertanda `disabled`; lainnya
+ * `unknown` sampai status live tersedia (`mergeClaudeMcp`).
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ export type ClaudeMcpScope = "project" | "local" | "user";
 export interface ClaudeMcpConfigEntry {
   name: string;
   scope: ClaudeMcpScope;
-  /** Server `.mcp.json` yang ditolak user di Claude Code. */
+  /** Server dinonaktifkan untuk Project / `.mcp.json` yang ditolak user. */
   disabled: boolean;
 }
 
@@ -61,15 +62,18 @@ export function parseClaudeMcpConfig(
   };
   const projectState = (root.projects?.[projectPath.replace(/\/+$/, "")] ?? {}) as {
     mcpServers?: unknown;
+    disabledMcpServers?: unknown;
     disabledMcpjsonServers?: unknown;
   };
+  const off = stringList(projectState.disabledMcpServers);
   const rejected = stringList(projectState.disabledMcpjsonServers);
 
   const byName = new Map<string, ClaudeMcpConfigEntry>();
   const add = (names: string[], scope: ClaudeMcpScope) => {
     for (const name of names) {
       if (!byName.has(name)) {
-        byName.set(name, { name, scope, disabled: scope === "project" && rejected.has(name) });
+        const disabled = off.has(name) || (scope === "project" && rejected.has(name));
+        byName.set(name, { name, scope, disabled });
       }
     }
   };

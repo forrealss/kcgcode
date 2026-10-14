@@ -250,7 +250,11 @@ export type AgentPermissionDecision = "once" | "always" | "reject";
  * dideklarasikan di sini, bukan dipetakan ke konsep opencode.
  */
 export interface AgentCapabilities {
-  /** Daftar skill perlu di-refresh (cache sisi agent) setelah skill dipasang. */
+  /**
+   * Refresh skill (`location.reload`) mengganggu turn yang berjalan, jadi
+   * ditunda sampai Project idle (opencode me-reload instance). `false` = aman
+   * dijalankan kapan saja (Claude Code `reloadSkills`).
+   */
   skillReload: boolean;
   /** Permission mode yang ditawarkan; kosong = agent tidak punya konsep ini. */
   permissionModes: PermissionModeOption[];
@@ -328,14 +332,33 @@ export interface AgentClient {
   };
   model: { list(): Promise<Result<ModelOption[]>> };
   agent: { list(): Promise<Result<AgentOption[]>> };
-  mcp: { list(): Promise<Result<McpServerInfo[]>> };
+  mcp: {
+    list(): Promise<Result<McpServerInfo[]>>;
+    /**
+     * Aktifkan / nonaktifkan MCP server. Claude Code menyimpannya di config
+     * Project (`disabledMcpServers`, sama dengan `/mcp` CLI) dan menerapkannya
+     * ke proses `claude` yang hidup; opencode menyambung / memutus server di
+     * service (berlaku sampai service restart). Server yang diaktifkan tapi
+     * gagal tersambung -> error, statusnya menjadi `failed`.
+     */
+    setEnabled(name: string, enabled: boolean): Promise<SimpleResult>;
+    /**
+     * Sambungkan ulang server (mis. setelah gagal). Server nonaktif diaktifkan
+     * dulu lewat `setEnabled` (Claude Code menolak reconnect-nya).
+     */
+    reconnect(name: string): Promise<SimpleResult>;
+  };
   skill: { list(): Promise<Result<SkillInfo[]>> };
   /** Slash command yang bisa dijalankan lewat prompt `/nama args`. */
   command: { list(): Promise<Result<SlashCommandInfo[]>> };
   file: { find(query: string): Promise<Result<string[]>> };
   vcs: { status(): Promise<Result<FileChange[]>> };
   location: {
-    /** Muat ulang config/skill agent untuk direktori ini. */
+    /**
+     * Muat ulang config/skill agent untuk direktori ini. Claude Code memuat
+     * ulang skill di proses `claude` yang hidup (`reloadSkills`) tanpa
+     * restart; opencode me-reload instance direktori.
+     */
     reload(): Promise<SimpleResult>;
   };
   event: {

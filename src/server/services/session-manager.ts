@@ -239,6 +239,19 @@ export interface SessionManager {
   listAgents(projectId: string, agentType?: AgentType): Promise<Result<AgentOption[]>>;
   /** Status MCP server yang terkonfigurasi untuk Project. */
   listMcp(projectId: string, agentType?: AgentType): Promise<Result<McpServerInfo[]>>;
+  /**
+   * Aktifkan / nonaktifkan MCP server Project di agent (Claude Code
+   * menyimpannya di config Project; opencode sampai service restart).
+   * Berlaku SEGERA, juga untuk Session yang sedang berjalan.
+   */
+  setMcpEnabled(
+    projectId: string,
+    name: string,
+    enabled: boolean,
+    agentType?: AgentType,
+  ): Promise<SimpleResult>;
+  /** Sambungkan ulang MCP server Project (mis. setelah gagal). */
+  reconnectMcp(projectId: string, name: string, agentType?: AgentType): Promise<SimpleResult>;
   /** Skill yang terdaftar untuk Project (global, folder Project, bawaan). */
   listSkills(projectId: string, agentType?: AgentType): Promise<Result<SkillInfo[]>>;
   /**
@@ -762,6 +775,27 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     return client.ok ? client.data.mcp.list() : client;
   }
 
+  async function setMcpEnabled(
+    projectId: string,
+    name: string,
+    enabled: boolean,
+    agentType: AgentType = "opencode",
+  ): Promise<SimpleResult> {
+    if (name.trim() === "") return { ok: false, error: "INVALID_MCP_SERVER" };
+    const client = await projectClient(projectId, agentType);
+    return client.ok ? client.data.mcp.setEnabled(name, enabled) : client;
+  }
+
+  async function reconnectMcp(
+    projectId: string,
+    name: string,
+    agentType: AgentType = "opencode",
+  ): Promise<SimpleResult> {
+    if (name.trim() === "") return { ok: false, error: "INVALID_MCP_SERVER" };
+    const client = await projectClient(projectId, agentType);
+    return client.ok ? client.data.mcp.reconnect(name) : client;
+  }
+
   /**
    * Skill yang terdaftar untuk Project. Skill di dalam folder Project
    * ditandai `project` sehingga UI dapat membedakannya dari skill global.
@@ -839,10 +873,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (agentType === "opencode") pendingSkillRefresh.delete(projectId);
       return { ok: true, data: { refreshed: true } };
     }
-    // Agent yang memuat skill langsung dari disk (Claude Code: tiap proses
-    // `claude` baru) tidak punya cache yang perlu ditunggu.
+    // Agent yang bisa memuat ulang skill di tengah turn (Claude Code
+    // `reloadSkills`) tidak perlu menunggu Project idle. Gagal pun skill
+    // tetap terbaca oleh proses `claude` berikutnya.
     if (!client.capabilities.skillReload) {
-      await client.location.reload();
+      const res = await client.location.reload();
+      if (!res.ok) console.warn(`[kcg-code] reload skill Project ${projectId} gagal:`, res.error);
       return { ok: true, data: { refreshed: true } };
     }
     if (projectBusy(projectId)) {
@@ -1350,6 +1386,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     listModels,
     listAgents,
     listMcp,
+    setMcpEnabled,
+    reconnectMcp,
     listSkills,
     listCommands,
     refreshSkills,

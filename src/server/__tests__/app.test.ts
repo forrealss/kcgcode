@@ -579,6 +579,30 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/mcp`)).status).toBe(404);
     expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/skills`)).status).toBe(404);
 
+    // ---- kendali MCP: balasan membawa daftar terbaru ----
+    const post = (sub: string, body: unknown) =>
+      fetch(`${baseUrl()}/api/projects/${proj.project.id}/${sub}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const off = await post("mcp/toggle", { name: "context7", enabled: false });
+    expect(off.status).toBe(200);
+    expect(await off.json()).toEqual({
+      ok: true,
+      mcp: [{ name: "context7", status: "disabled", error: null }],
+    });
+    expect((await post("mcp/reconnect", { name: "context7" })).status).toBe(200);
+    const bad = await post("mcp/toggle", { name: "context7" });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: string }).error).toBe("INVALID_MCP_SERVER");
+    expect((await post("mcp/reconnect", {})).status).toBe(400);
+
+    // ---- reload skill di agent ----
+    const reload = await post("skills/reload", {});
+    expect(reload.status).toBe(200);
+    expect(await reload.json()).toEqual({ refreshed: true });
+
     // ---- slash command (autocomplete `/` composer) ----
     const cmdRes = await fetch(`${baseUrl()}/api/projects/${proj.project.id}/commands`);
     expect(cmdRes.status).toBe(200);

@@ -36,6 +36,7 @@ export function errorStatus(code: string): number {
     case "INSTRUCTIONS_TOO_LONG":
     case "INVALID_SKILL_QUERY":
     case "INVALID_SKILL_ID":
+    case "INVALID_MCP_SERVER":
     case "PIN_DIGITS_ONLY":
     case "PIN_LENGTH":
     case "PIN_TOO_SIMPLE":

@@ -1,6 +1,6 @@
 /**
- * Helper tampilan panel samping halaman Project (MCP & skill) — logika murni
- * tanpa DOM, dipisah agar dapat diuji `bun test`.
+ * Helper tampilan MCP & skill (panel samping halaman Project, kartu konteks
+ * Session) — logika murni tanpa DOM, dipisah agar dapat diuji `bun test`.
  */
 import { AGENT_TYPES } from "@/lib/agent-types";
 import type { AgentType, McpServerInfo, McpStatus, SkillInfo, SkillSource } from "@/types";
@@ -8,6 +8,7 @@ import type { AgentType, McpServerInfo, McpStatus, SkillInfo, SkillSource } from
 /** Label status MCP untuk UI. */
 export const MCP_STATUS_LABEL: Record<McpStatus, string> = {
   connected: "Connected",
+  pending: "Connecting",
   disabled: "Disabled",
   failed: "Failed",
   needs_auth: "Needs auth",
@@ -18,6 +19,7 @@ export const MCP_STATUS_LABEL: Record<McpStatus, string> = {
 /** Warna titik status MCP (sepadan dengan titik status Session). */
 export const MCP_STATUS_DOT: Record<McpStatus, string> = {
   connected: "bg-emerald-500",
+  pending: "bg-sky-500",
   disabled: "bg-muted-foreground/40",
   failed: "bg-destructive",
   needs_auth: "bg-amber-500",
@@ -37,9 +39,10 @@ const MCP_ATTENTION: Record<McpStatus, number> = {
   failed: 0,
   needs_auth: 1,
   needs_client_registration: 1,
-  connected: 2,
-  unknown: 3,
-  disabled: 4,
+  pending: 2,
+  connected: 3,
+  unknown: 4,
+  disabled: 5,
 };
 
 /** Satu MCP server (per nama) beserta statusnya di tiap agent yang memakainya. */
@@ -90,6 +93,39 @@ export function describeMcpEntries(entries: readonly McpServerEntry[]): string {
     Object.values(e.byAgent).some((s) => s?.status === "connected"),
   ).length;
   return `${connected} of ${entries.length} connected`;
+}
+
+/** Aksi pada satu MCP server (`POST /api/projects/:id/mcp/{toggle,reconnect}`). */
+export type McpAction = "enable" | "disable" | "reconnect";
+
+export const MCP_ACTION_LABEL: Record<McpAction, string> = {
+  enable: "Enable",
+  disable: "Disable",
+  reconnect: "Reconnect",
+};
+
+/** Label selama aksi berjalan. */
+export const MCP_ACTION_PROGRESS: Record<McpAction, string> = {
+  enable: "Enabling…",
+  disable: "Disabling…",
+  reconnect: "Reconnecting…",
+};
+
+/** Pesan sukses aksi ("Disabled context7"). */
+export const MCP_ACTION_DONE: Record<McpAction, string> = {
+  enable: "Enabled",
+  disable: "Disabled",
+  reconnect: "Reconnected",
+};
+
+/**
+ * Aksi yang masuk akal untuk status server. Server nonaktif hanya bisa
+ * diaktifkan (reconnect-nya ditolak agent); lainnya bisa disambung ulang —
+ * juga yang belum dicek (Claude Code menguji koneksinya) — atau dimatikan.
+ * Murni — diuji.
+ */
+export function mcpActionsFor(status: McpStatus): McpAction[] {
+  return status === "disabled" ? ["enable"] : ["reconnect", "disable"];
 }
 
 /** Label asal skill. */

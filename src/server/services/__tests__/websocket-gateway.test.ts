@@ -153,6 +153,12 @@ function makeFakeSessionManager(): FakeSessionManager {
     async listMcp() {
       return { ok: false, error: "not-used" };
     },
+    async setMcpEnabled() {
+      return { ok: false, error: "not-used" };
+    },
+    async reconnectMcp() {
+      return { ok: false, error: "not-used" };
+    },
     async listSkills() {
       return { ok: false, error: "not-used" };
     },

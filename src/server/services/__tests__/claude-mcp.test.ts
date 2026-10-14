@@ -37,6 +37,22 @@ describe("parseClaudeMcpConfig", () => {
     expect(parseClaudeMcpConfig("/p", null, "x")).toEqual([]);
     expect(parseClaudeMcpConfig("/p", { mcpServers: [] }, { mcpServers: 1 })).toEqual([]);
   });
+
+  test("disabledMcpServers Project (toggle /mcp) -> disabled di scope mana pun", () => {
+    const entries = parseClaudeMcpConfig(
+      "/p",
+      { mcpServers: { proj: {} } },
+      {
+        mcpServers: { mine: {}, other: {} },
+        projects: { "/p": { disabledMcpServers: ["mine", "proj", 3] } },
+      },
+    );
+    expect(entries.map((e) => [e.name, e.disabled])).toEqual([
+      ["mine", true],
+      ["other", false],
+      ["proj", true],
+    ]);
+  });
 });
 
 describe("mergeClaudeMcp", () => {

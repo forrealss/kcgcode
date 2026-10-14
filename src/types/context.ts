@@ -46,8 +46,10 @@ export interface GitState {
 /** Satu MCP server Project (subset status opencode `GET /mcp`). */
 export interface McpServerState {
   name: string;
+  /** `pending` = sedang menyambung (mis. tepat setelah diaktifkan / reconnect). */
   status:
     | "connected"
+    | "pending"
     | "disabled"
     | "failed"
     | "needs_auth"

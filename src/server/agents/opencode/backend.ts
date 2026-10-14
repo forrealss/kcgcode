@@ -68,7 +68,11 @@ export interface OpencodeApi {
   };
   provider: { list(input: Record<string, unknown>): Promise<unknown> };
   agent: { list(input: Record<string, unknown>): Promise<unknown> };
-  mcp: { list(input: Record<string, unknown>): Promise<unknown> };
+  mcp: {
+    list(input: Record<string, unknown>): Promise<unknown>;
+    connect(input: Record<string, unknown>): Promise<unknown>;
+    disconnect(input: Record<string, unknown>): Promise<unknown>;
+  };
   skill: { list(input: Record<string, unknown>): Promise<unknown> };
   command: { list(input: Record<string, unknown>): Promise<unknown> };
   file: { find(input: Record<string, unknown>): Promise<unknown> };
@@ -179,6 +183,7 @@ const GONE_ERRORS = new Set([
 
 const MCP_STATUSES = new Set<McpServerInfo["status"]>([
   "connected",
+  "pending",
   "disabled",
   "failed",
   "needs_auth",
@@ -691,6 +696,20 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
             out.push({ name, status, error: str(st.error) });
           }
           return { ok: true, data: out.sort((x, y) => x.name.localeCompare(y.name)) };
+        },
+        // Disconnect = status `disabled` di service (tidak menulis config).
+        async setEnabled(name, enabled) {
+          const input = { ...location, server: name };
+          return ok(
+            await call("AGENT_MCP_FAILED", (a) =>
+              enabled ? a.mcp.connect(input) : a.mcp.disconnect(input),
+            ),
+          );
+        },
+        async reconnect(name) {
+          return ok(
+            await call("AGENT_MCP_FAILED", (a) => a.mcp.connect({ ...location, server: name })),
+          );
         },
       },
       skill: {

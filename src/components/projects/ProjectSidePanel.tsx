@@ -14,22 +14,37 @@
  *   label) di subjudul; yang bermasalah paling atas, error tampil inline.
  *   Server Claude Code dibaca dari config (`.mcp.json`, `~/.claude.json`);
  *   statusnya "Not checked" sampai ada Session Claude Code yang berjalan.
+ *   Tombol "⋯" per server: Reconnect / Enable / Disable per agent (Claude
+ *   Code menyimpan Enable/Disable di config Project, seperti `/mcp` CLI).
  * - Skills: `GET /api/projects/:id/skills?agent=` — cari (bila banyak) +
  *   filter asal; logo agent yang memuat skill; baris dibuka untuk deskripsi
- *   lengkap & path. Tombol "+" membuka halaman Skills untuk Project ini.
+ *   lengkap & path. Tombol "+" membuka halaman Skills untuk Project ini;
+ *   tombol reload memuat ulang skill di agent tanpa restart
+ *   (`POST /api/projects/:id/skills/reload?agent=`).
  * Satu agent gagal dibaca tidak menggagalkan yang lain (baris catatan).
- * Tiap seksi memuat datanya sendiri; tombol reload memuat ulang keduanya.
+ * Tiap seksi memuat & memuat ulang datanya sendiri.
  */
-import { PlugIcon, PlusIcon, RefreshCwIcon, SparklesIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  MoreHorizontalIcon,
+  PlugIcon,
+  PlusIcon,
+  RefreshCwIcon,
+  SparklesIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { ProjectInstructions } from "@/components/projects/ProjectInstructions";
 import { AgentLogo } from "@/components/sessions/AgentLogo";
+import { McpServerMenu } from "@/components/sessions/McpServerMenu";
 import { ActionRow, ExpanderRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
 import { AgentBadges } from "@/components/skills/SkillCards";
 import { AdwToggleGroup } from "@/components/ui/adw-toggle-group";
 import { Button } from "@/components/ui/button";
 import { SearchEntry } from "@/components/ui/search-entry";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { type UseMcpActionsResult, useMcpActions } from "@/hooks/useMcpActions";
 import { useRouter } from "@/hooks/useRouter";
 import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -37,6 +52,7 @@ import {
   describeMcpEntries,
   filterSkills,
   groupSkills,
+  MCP_ACTION_PROGRESS,
   MCP_STATUS_LABEL,
   type McpServerEntry,
   mergeMcpServers,
@@ -72,8 +88,14 @@ type Load<T> =
 /**
  * Muat satu endpoint list untuk setiap agent (`?agent=`) bersamaan.
  * Error hanya bila SEMUA agent gagal. `reloadKey` berubah -> muat ulang.
+ * Fungsi kedua mengganti daftar satu agent di tempat (hasil aksi) tanpa
+ * memuat ulang semuanya.
  */
-function useAgentLists<T>(path: string, key: string, reloadKey: number): Load<AgentLists<T>> {
+function useAgentLists<T>(
+  path: string,
+  key: string,
+  reloadKey: number,
+): [Load<AgentLists<T>>, (agent: AgentType, items: T[]) => void] {
   const [state, setState] = useState<Load<AgentLists<T>>>({ phase: "loading" });
   useEffect(() => {
     // `reloadKey` hanya pemicu muat ulang.
@@ -108,7 +130,20 @@ function useAgentLists<T>(path: string, key: string, reloadKey: number): Load<Ag
       cancelled = true;
     };
   }, [path, key, reloadKey]);
-  return state;
+  const setList = useCallback((agent: AgentType, items: T[]) => {
+    setState((cur) =>
+      cur.phase === "ready"
+        ? {
+            phase: "ready",
+            data: {
+              byAgent: { ...cur.data.byAgent, [agent]: items },
+              failed: cur.data.failed.filter((f) => f.agent !== agent),
+            },
+          }
+        : cur,
+    );
+  }, []);
+  return [state, setList];
 }
 
 export interface ProjectSidePanelProps {
@@ -117,20 +152,30 @@ export interface ProjectSidePanelProps {
 }
 
 export function ProjectSidePanel({ project, onProjectChange }: ProjectSidePanelProps) {
-  const [reloadKey, setReloadKey] = useState(0);
-  const reload = useCallback(() => setReloadKey((k) => k + 1), []);
-  const mcp = useAgentLists<McpServerInfo>(`/api/projects/${project.id}/mcp`, "mcp", reloadKey);
-  const skills = useAgentLists<SkillInfo>(
+  const [mcpKey, setMcpKey] = useState(0);
+  const [skillsKey, setSkillsKey] = useState(0);
+  const reloadMcp = useCallback(() => setMcpKey((k) => k + 1), []);
+  const reloadSkills = useCallback(() => setSkillsKey((k) => k + 1), []);
+  const [mcp, setMcpList] = useAgentLists<McpServerInfo>(
+    `/api/projects/${project.id}/mcp`,
+    "mcp",
+    mcpKey,
+  );
+  const [skills] = useAgentLists<SkillInfo>(
     `/api/projects/${project.id}/skills`,
     "skills",
-    reloadKey,
+    skillsKey,
+  );
+  // Aksi MCP membalas daftar terbaru agent itu; tidak terbaca -> muat ulang.
+  const mcpActions = useMcpActions(project.id, (agent, servers) =>
+    servers ? setMcpList(agent, servers) : reloadMcp(),
   );
 
   return (
     <div className="flex flex-col gap-6">
       <ProjectInstructions project={project} onSaved={onProjectChange} />
-      <McpGroup state={mcp} onReload={reload} />
-      <SkillsGroup state={skills} projectId={project.id} />
+      <McpGroup state={mcp} onReload={reloadMcp} actions={mcpActions} />
+      <SkillsGroup state={skills} projectId={project.id} onReloaded={reloadSkills} />
     </div>
   );
 }
@@ -213,6 +258,7 @@ function PartialFailureRow({ failed }: { failed: AgentLists<unknown>["failed"] }
 /** Warna teks status MCP per agent. */
 const MCP_TEXT: Record<McpServerState["status"], string> = {
   connected: "text-emerald-700 dark:text-emerald-400",
+  pending: "text-sky-700 dark:text-sky-400",
   failed: "text-destructive",
   needs_auth: "text-amber-700 dark:text-amber-400",
   needs_client_registration: "text-amber-700 dark:text-amber-400",
@@ -223,6 +269,7 @@ const MCP_TEXT: Record<McpServerState["status"], string> = {
 /** Warna ikon baris = status paling bermasalah. */
 const MCP_ICON: Record<McpServerState["status"], string> = {
   connected: "text-emerald-600 dark:text-emerald-400",
+  pending: "text-sky-600 dark:text-sky-400",
   failed: "text-destructive",
   needs_auth: "text-amber-600 dark:text-amber-400",
   needs_client_registration: "text-amber-600 dark:text-amber-400",
@@ -242,9 +289,11 @@ function mcpAgentLabel(agent: AgentType, status: McpServerState["status"]): stri
 function McpGroup({
   state,
   onReload,
+  actions,
 }: {
   state: Load<AgentLists<McpServerInfo>>;
   onReload: () => void;
+  actions: UseMcpActionsResult;
 }) {
   const entries = useMemo(
     () => (state.phase === "ready" ? mergeMcpServers(state.data.byAgent) : []),
@@ -257,7 +306,7 @@ function McpGroup({
       description={state.phase === "ready" ? describeMcpEntries(entries) : "Loading…"}
       suffix={
         <FlatIconButton
-          label="Reload MCP servers and skills"
+          label="Refresh MCP status"
           onClick={onReload}
           disabled={state.phase === "loading"}
         >
@@ -282,7 +331,7 @@ function McpGroup({
               }
             />
           ) : (
-            entries.map((entry) => <McpRow key={entry.name} entry={entry} />)
+            entries.map((entry) => <McpRow key={entry.name} entry={entry} actions={actions} />)
           )}
           <PartialFailureRow failed={state.data.failed} />
         </>
@@ -294,9 +343,16 @@ function McpGroup({
 /**
  * Satu MCP server (AdwActionRow): ikon simbolik berwarna status, nama, lalu
  * status per agent di subjudul — "logo Label" untuk tiap agent pemakai.
- * Error tampil di bawahnya per agent.
+ * Error tampil di bawahnya per agent. Tombol "⋯" membuka menu aksi; selama
+ * aksi berjalan, label agent itu menjadi "Reconnecting…" dsb.
  */
-function McpRow({ entry }: { entry: McpServerEntry }) {
+function McpRow({ entry, actions }: { entry: McpServerEntry; actions: UseMcpActionsResult }) {
+  const targets = entry.agents.map((agent) => ({
+    agent,
+    status: entry.byAgent[agent]?.status ?? ("unknown" as const),
+    busy: actions.busy(agent, entry.name),
+  }));
+  const anyBusy = targets.some((t) => t.busy !== undefined);
   const errors = entry.agents
     .map((a) => ({ agent: a, error: entry.byAgent[a]?.error ?? null }))
     .filter((e): e is { agent: AgentType; error: string } => e.error !== null);
@@ -307,20 +363,26 @@ function McpRow({ entry }: { entry: McpServerEntry }) {
       subtitle={
         <span className="flex flex-col gap-1">
           <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
-            {entry.agents.map((a) => {
-              const status = entry.byAgent[a]?.status ?? "unknown";
-              const label = mcpAgentLabel(a, status);
+            {targets.map(({ agent: a, status, busy }) => {
+              const label = busy ? MCP_ACTION_PROGRESS[busy] : mcpAgentLabel(a, status);
               return (
                 <span
                   key={a}
-                  className={cn("inline-flex items-center gap-1.5", MCP_TEXT[status])}
+                  className={cn(
+                    "inline-flex items-center gap-1.5",
+                    busy ? "text-muted-foreground" : MCP_TEXT[status],
+                  )}
                   title={
-                    a === "claude-code" && status === "unknown"
-                      ? "Configured for Claude Code. Status appears once a Claude Code session runs in this project."
+                    a === "claude-code" && status === "unknown" && !busy
+                      ? "Configured for Claude Code. Status appears once a Claude Code session runs in this project — or use Reconnect to check it now."
                       : `${AGENT_TYPE_LABELS[a]}: ${label}`
                   }
                 >
-                  <AgentLogo agentType={a} className="size-3" />
+                  {busy ? (
+                    <Spinner className="size-3" aria-hidden />
+                  ) : (
+                    <AgentLogo agentType={a} className="size-3" />
+                  )}
                   <span className="sr-only">{AGENT_TYPE_LABELS[a]}:</span>
                   {label}
                 </span>
@@ -339,6 +401,24 @@ function McpRow({ entry }: { entry: McpServerEntry }) {
           ))}
         </span>
       }
+      suffix={
+        <McpServerMenu
+          name={entry.name}
+          targets={targets}
+          onAction={(agent, action) => void actions.run(agent, entry.name, action)}
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label={`Actions for ${entry.name}`}
+            title="Reconnect, enable, or disable"
+            className="size-8 rounded-full text-muted-foreground"
+          >
+            {anyBusy ? <Spinner /> : <MoreHorizontalIcon />}
+          </Button>
+        </McpServerMenu>
+      }
     />
   );
 }
@@ -354,14 +434,52 @@ const SKILL_FILTER_LABEL: Record<SkillFilter, string> = {
   builtin: "Built-in",
 };
 
+/**
+ * Muat ulang skill di tiap agent tanpa restart (Claude Code `reloadSkills`
+ * di proses yang hidup; opencode me-reload instance — ditunda selama ada
+ * balasan berjalan). `deferred` = agent yang reload-nya ditunda.
+ */
+async function reloadAgentSkills(projectId: string): Promise<{ deferred: AgentType[] }> {
+  const results = await Promise.all(
+    AGENT_TYPES.map(async (agent) => {
+      const res = await apiFetch(`/api/projects/${projectId}/skills/reload${agentQuery(agent)}`, {
+        method: "POST",
+      });
+      const body = (await res.json()) as { refreshed?: boolean };
+      return { agent, refreshed: body.refreshed !== false };
+    }),
+  );
+  return { deferred: results.filter((r) => !r.refreshed).map((r) => r.agent) };
+}
+
 function SkillsGroup({
   state,
   projectId,
+  onReloaded,
 }: {
   state: Load<AgentLists<SkillInfo>>;
   projectId: string;
+  /** Skill dimuat ulang di agent -> muat ulang daftar. */
+  onReloaded: () => void;
 }) {
   const { navigate } = useRouter();
+  const [reloading, setReloading] = useState(false);
+  const reload = async () => {
+    setReloading(true);
+    try {
+      const { deferred } = await reloadAgentSkills(projectId);
+      toast.success(
+        deferred.length === 0
+          ? "Skills reloaded"
+          : `Skills reloaded. ${deferred.map((a) => AGENT_TYPE_LABELS[a]).join(", ")} picks them up after the current reply.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof ApiError ? e.message : "Couldn't reload skills.");
+    } finally {
+      setReloading(false);
+      onReloaded();
+    }
+  };
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SkillFilter>("all");
   const [expanded, setExpanded] = useState(false);
@@ -433,9 +551,18 @@ function SkillsGroup({
           : "Loading…"
       }
       suffix={
-        <FlatIconButton label="Browse and install skills" onClick={browse}>
-          <PlusIcon />
-        </FlatIconButton>
+        <div className="flex items-center">
+          <FlatIconButton
+            label="Reload skills"
+            onClick={() => void reload()}
+            disabled={reloading || state.phase === "loading"}
+          >
+            <RefreshCwIcon className={cn(reloading && "animate-spin")} />
+          </FlatIconButton>
+          <FlatIconButton label="Browse and install skills" onClick={browse}>
+            <PlusIcon />
+          </FlatIconButton>
+        </div>
       }
       toolbar={toolbar}
     >

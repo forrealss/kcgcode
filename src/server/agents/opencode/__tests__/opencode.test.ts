@@ -188,6 +188,8 @@ function fakeApi(pid = 100) {
           { name: "p", status: { status: "pending" } },
         ],
       }),
+      connect: rec("mcp.connect"),
+      disconnect: rec("mcp.disconnect"),
     },
     skill: {
       list: rec("skill.list", (input: unknown) => {
@@ -596,7 +598,7 @@ describe("createOpencodeBackend", () => {
       ok: true,
       data: [
         { name: "a", status: "connected", error: null },
-        { name: "p", status: "unknown", error: null },
+        { name: "p", status: "pending", error: null },
         { name: "z", status: "failed", error: "boom" },
       ],
     });
@@ -610,6 +612,27 @@ describe("createOpencodeBackend", () => {
     expect(await c.vcs.status()).toEqual({
       ok: true,
       data: [{ path: "src/a.ts", added: 3, removed: 1, status: "modified" }],
+    });
+  });
+
+  test("MCP: aktif/reconnect = connect, nonaktif = disconnect; gagal -> AGENT_MCP_FAILED", async () => {
+    const { backend, apis } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    const c = r.data;
+    expect(await c.mcp.setEnabled("ctx", false)).toEqual({ ok: true });
+    expect(await c.mcp.setEnabled("ctx", true)).toEqual({ ok: true });
+    expect(await c.mcp.reconnect("ctx")).toEqual({ ok: true });
+    const input = { location: { directory: PROJ }, server: "ctx" };
+    expect(apis[0]?.calls.filter(([n]) => n.startsWith("mcp.") && n !== "mcp.list")).toEqual([
+      ["mcp.disconnect", input],
+      ["mcp.connect", input],
+      ["mcp.connect", input],
+    ]);
+    apis[0]?.errors.set("mcp.connect", new Error("spawn ENOENT"));
+    expect(await c.mcp.reconnect("ctx")).toEqual({
+      ok: false,
+      error: "AGENT_MCP_FAILED: spawn ENOENT",
     });
   });
 

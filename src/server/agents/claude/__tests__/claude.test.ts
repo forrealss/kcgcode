@@ -253,7 +253,9 @@ describe("ClaudeTurnTranslator", () => {
 });
 
 /** `query()` palsu: mencatat input & opsi, pesan SDK didorong dari test. */
-function fakeQuery() {
+function fakeQuery(
+  mcp: { name: string; status: string }[] = [{ name: "fs", status: "connected" }],
+) {
   const calls: { options: Options; inputs: SDKUserMessage[]; query: FakeQ }[] = [];
   type FakeQ = ClaudeQueryLike & {
     push(m: Record<string, unknown>): void;
@@ -265,6 +267,12 @@ function fakeQuery() {
     usageCalls: number;
     modes: string[];
     closed: boolean;
+    /** Request kontrol MCP/skill (`toggle:<nama>:<on>`, `reconnect:<nama>`, `reloadSkills`). */
+    controls: string[];
+    /** Status MCP yang dilaporkan `mcpServerStatus` (diubah oleh toggle). */
+    mcp: { name: string; status: string; error?: string }[];
+    /** Error yang dilempar request kontrol MCP berikutnya. */
+    mcpError: Error | null;
   };
   const fn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => {
     const inputs: SDKUserMessage[] = [];
@@ -281,6 +289,9 @@ function fakeQuery() {
       usageCalls: 0,
       modes: [],
       closed: false,
+      controls: [],
+      mcp: mcp.map((s) => ({ ...s })),
+      mcpError: null,
       push(m) {
         queue.push(m as unknown as SDKMessage);
         wake?.();
@@ -354,7 +365,22 @@ function fakeQuery() {
         ];
       },
       async mcpServerStatus() {
-        return [{ name: "fs", status: "connected" }];
+        return q.mcp as Awaited<ReturnType<ClaudeQueryLike["mcpServerStatus"]>>;
+      },
+      async toggleMcpServer(name, enabled) {
+        q.controls.push(`toggle:${name}:${enabled}`);
+        q.mcp = q.mcp.map((s) =>
+          s.name === name ? { name, status: enabled ? "connected" : "disabled" } : s,
+        );
+        if (q.mcpError) throw q.mcpError;
+      },
+      async reconnectMcpServer(name) {
+        q.controls.push(`reconnect:${name}`);
+        if (q.mcpError) throw q.mcpError;
+      },
+      async reloadSkills() {
+        q.controls.push("reloadSkills");
+        return { skills: [] };
       },
       close() {
         q.closed = true;
@@ -383,8 +409,8 @@ function fakeQuery() {
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 
-function setup(existing: string[] = []) {
-  const { fn, calls } = fakeQuery();
+function setup(existing: string[] = [], mcp?: Parameters<typeof fakeQuery>[0]) {
+  const { fn, calls } = fakeQuery(mcp);
   const removed: string[] = [];
   const client = createClaudeClient("/proj", {
     query: fn,
@@ -1121,6 +1147,81 @@ describe("slash command Claude Code", () => {
     expect(
       slashCommandInfo({ name: "focus", description: "", argumentHint: "", builtin: true }),
     ).toBeNull();
+  });
+});
+
+describe("MCP & skill Claude Code", () => {
+  const SID2 = "22222222-2222-4222-8222-222222222222";
+
+  test("tanpa proses: toggle lewat query sementara; hanya status server itu yang disimpan", async () => {
+    const { client, calls } = setup(
+      [],
+      [
+        { name: "fs", status: "connected" },
+        // Masih menyambung saat proses sementara ditutup — jangan disimpan.
+        { name: "slow", status: "pending" },
+      ],
+    );
+    expect(await client.mcp.setEnabled("fs", false)).toEqual({ ok: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.options.persistSession).toBe(false);
+    expect(calls[0]?.query.controls).toEqual(["toggle:fs:false"]);
+    expect(calls[0]?.query.closed).toBe(true);
+    expect(await client.mcp.list()).toEqual({
+      ok: true,
+      data: [{ name: "fs", status: "disabled", error: null }],
+    });
+  });
+
+  test("toggle & reconnect dikirim ke SEMUA proses yang hidup, tanpa query sementara", async () => {
+    const { client, calls } = setup();
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await client.session.prompt({ sessionID: SID2, text: "b" });
+    await tick();
+    expect(await client.mcp.setEnabled("fs", true)).toEqual({ ok: true });
+    expect(await client.mcp.reconnect("fs")).toEqual({ ok: true });
+    expect(calls).toHaveLength(2);
+    for (const c of calls) expect(c.query.controls).toEqual(["toggle:fs:true", "reconnect:fs"]);
+  });
+
+  test("gagal di satu proses -> CC_MCP_FAILED, proses lain tetap menerima request", async () => {
+    const { client, calls } = setup();
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await client.session.prompt({ sessionID: SID2, text: "b" });
+    await tick();
+    const first = calls[0]?.query;
+    if (first) first.mcpError = new Error('Executable not found in $PATH: "npx"');
+    expect(await client.mcp.reconnect("fs")).toEqual({
+      ok: false,
+      error: 'CC_MCP_FAILED: Executable not found in $PATH: "npx"',
+    });
+    expect(calls[1]?.query.controls).toEqual(["reconnect:fs"]);
+  });
+
+  test("status `pending` (sedang menyambung) diteruskan", async () => {
+    const { client, calls } = setup();
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    const q = calls[0]?.query;
+    if (q) q.mcp = [{ name: "slow", status: "pending" }];
+    expect(await client.mcp.list()).toEqual({
+      ok: true,
+      data: [{ name: "slow", status: "pending", error: null }],
+    });
+  });
+
+  test("reload: reloadSkills di proses yang hidup (tanpa restart); tanpa proses tidak spawn", async () => {
+    const { client, calls } = setup();
+    expect(await client.location.reload()).toEqual({ ok: true });
+    expect(calls).toHaveLength(0);
+
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    const q = calls[0]?.query;
+    expect(await client.location.reload()).toEqual({ ok: true });
+    expect(q?.controls).toEqual(["reloadSkills"]);
+    expect(q?.closed).toBe(false);
+    expect(calls).toHaveLength(1);
   });
 });
 

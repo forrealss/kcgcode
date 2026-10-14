@@ -39,6 +39,7 @@ import {
   SessionComposerSkeleton,
   SessionTimelineSkeleton,
 } from "@/components/sessions/SessionTimelineSkeleton";
+import { useMcpActions } from "@/hooks/useMcpActions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
@@ -87,12 +88,18 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   useEffect(() => {
     if (!chat.generating) refreshContext();
   }, [chat.generating, refreshContext]);
-  /** Ringkas riwayat = slash command `/compact` lewat jalur input biasa. */
-  const compactProps = {
+  /** Aksi MCP server agent Session; status baru dibaca ulang lewat konteks. */
+  const mcpActions = useMcpActions(session.projectId, refreshContext);
+  /**
+   * Aksi kartu konteks. Ringkas riwayat = slash command `/compact` lewat
+   * jalur input biasa.
+   */
+  const panelActions = {
     onCompact: () =>
       chat.send({ type: "input", sessionId: session.id, text: "/compact", files: [], images: [] }),
     canCompact: chat.canInput,
     compacting: chat.compacting,
+    mcpActions: { ...mcpActions, agent: session.agentType },
   };
   /**
    * Reference diturunkan dari parts pesan yang sudah ada di timeline
@@ -235,7 +242,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               context={sessionCtx.context}
               references={references}
               loading={sessionCtx.loading}
-              {...compactProps}
+              {...panelActions}
             />
           </>
         ) : contextOpen ? (
@@ -245,7 +252,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               references={references}
               loading={sessionCtx.loading}
               onClose={() => setContextOpen(false)}
-              {...compactProps}
+              {...panelActions}
             />
           </div>
         ) : (

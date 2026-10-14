@@ -10,10 +10,11 @@
  * - **Environment** : perubahan file (+/-), cabang git, status push/pull.
  * - **Task list**   : `todowrite` agent + progres "selesai / total".
  * - **MCP**         : server MCP; ringkasan "x/y connected" di judul. Yang
- *                     gagal & tersambung tampil per baris; yang perlu login
- *                     (mis. puluhan konektor claude.ai) dan yang tidak aktif
- *                     DILIPAT jadi satu baris "N need sign-in" agar tidak
- *                     menenggelamkan bagian lain.
+ *                     gagal, sedang menyambung & tersambung tampil per baris;
+ *                     yang perlu login (mis. puluhan konektor claude.ai) dan
+ *                     yang tidak aktif DILIPAT jadi satu baris "N need
+ *                     sign-in" agar tidak menenggelamkan bagian lain. Ketuk
+ *                     server -> menu Reconnect / Enable / Disable.
  * - **Reference**   : file project yang DIBACA agent (bukan yang ditulis),
  *                     terbaru di atas; 8 pertama tampil, sisanya "Show N more".
  *
@@ -26,9 +27,9 @@
  *   penutupnya tombol X di kartu. Esc juga menutup.
  * - Mobile: isi yang sama tampil sebagai bottom sheet (`ContextSheet`).
  *
- * Selain tombol compact, kartu ini hanya informasi (belum ada aksi git):
- * barisnya tidak dibuat seperti tombol supaya tidak menyiratkan aksi yang
- * belum ada.
+ * Aksi hanya ada di tombol compact dan baris MCP (menu aksi server). Baris
+ * lain hanya informasi (belum ada aksi git): tidak dibuat seperti tombol
+ * supaya tidak menyiratkan aksi yang belum ada.
  */
 import {
   CheckIcon,
@@ -41,12 +42,14 @@ import {
   GitBranchIcon,
   LoaderIcon,
   MenuIcon,
+  MoreHorizontalIcon,
   PlugIcon,
   UploadIcon,
   XIcon,
 } from "lucide-react";
 import * as m from "motion/react-m";
 import { type ReactNode, useEffect, useState } from "react";
+import { McpServerMenu } from "@/components/sessions/McpServerMenu";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -58,11 +61,17 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import type { UseMcpActionsResult } from "@/hooks/useMcpActions";
 import { formatTokens, usageLevel } from "@/lib/context-usage";
-import { MCP_STATUS_DOT, MCP_STATUS_LABEL } from "@/lib/project-extensions";
+import {
+  MCP_ACTION_PROGRESS,
+  MCP_STATUS_DOT,
+  MCP_STATUS_LABEL,
+  type McpAction,
+} from "@/lib/project-extensions";
 import { baseName, type FileReference } from "@/lib/references";
 import { cn } from "@/lib/utils";
-import type { ContextUsage, McpServerState, SessionContext, TodoItem } from "@/types";
+import type { AgentType, ContextUsage, McpServerState, SessionContext, TodoItem } from "@/types";
 
 // ----------------------------------------------------------- trigger ----
 
@@ -97,7 +106,12 @@ export interface ContextPanelProps {
   canCompact?: boolean;
   /** Agent sedang compact (WS — lebih segar daripada `context.compacting`). */
   compacting?: boolean;
+  /** Kendali MCP server; tanpa nilai = baris MCP hanya informasi. */
+  mcpActions?: McpPanelActions;
 }
+
+/** Aksi MCP (`useMcpActions`) untuk agent Session. */
+export type McpPanelActions = UseMcpActionsResult & { agent: AgentType };
 
 /**
  * Isi kartu (keempat bagian) — dipakai bersama oleh kartu desktop
@@ -111,6 +125,7 @@ function ContextSections({
   onCompact,
   canCompact = false,
   compacting = false,
+  mcpActions,
   /** Cadangkan ruang tombol X di judul bagian pertama (kartu desktop). */
   reserveClose = false,
 }: Omit<ContextPanelProps, "onClose"> & { reserveClose?: boolean }) {
@@ -126,7 +141,7 @@ function ContextSections({
       />
       <EnvironmentSection context={context} />
       <TaskSection todos={context?.todos ?? []} live={context?.live ?? false} />
-      <McpSection servers={context?.mcp ?? []} live={context?.live ?? false} />
+      <McpSection servers={context?.mcp ?? []} live={context?.live ?? false} actions={mcpActions} />
       <ReferenceSection references={references} />
     </div>
   );
@@ -404,7 +419,15 @@ function EnvironmentSection({ context }: { context: SessionContext | null }) {
 /** Status yang "perlu login" — dilipat jadi satu baris bila lebih dari satu. */
 const NEEDS_SIGN_IN: McpServerState["status"][] = ["needs_auth", "needs_client_registration"];
 
-function McpSection({ servers, live }: { servers: McpServerState[]; live: boolean }) {
+function McpSection({
+  servers,
+  live,
+  actions,
+}: {
+  servers: McpServerState[];
+  live: boolean;
+  actions?: McpPanelActions;
+}) {
   const connected = servers.filter((s) => s.status === "connected").length;
   const failed = servers.filter((s) => s.status === "failed").length;
   const byName = (a: McpServerState, b: McpServerState) => a.name.localeCompare(b.name);
@@ -412,10 +435,12 @@ function McpSection({ servers, live }: { servers: McpServerState[]; live: boolea
   const inactive = servers
     .filter((s) => s.status === "disabled" || s.status === "unknown")
     .sort(byName);
-  // Baris individual: gagal (paling atas) lalu tersambung. Kelompok berisi
-  // satu server tetap tampil sebagai baris biasa (tidak perlu dilipat).
+  // Baris individual: gagal (paling atas), sedang menyambung, lalu
+  // tersambung. Kelompok berisi satu server tetap tampil sebagai baris biasa
+  // (tidak perlu dilipat).
   const individual = [
     ...servers.filter((s) => s.status === "failed").sort(byName),
+    ...servers.filter((s) => s.status === "pending").sort(byName),
     ...servers.filter((s) => s.status === "connected").sort(byName),
     ...(signIn.length === 1 ? signIn : []),
     ...(inactive.length === 1 ? inactive : []),
@@ -439,13 +464,14 @@ function McpSection({ servers, live }: { servers: McpServerState[]; live: boolea
       ) : (
         <Box>
           {individual.map((server) => (
-            <McpRow key={server.name} server={server} />
+            <McpRow key={server.name} server={server} actions={actions} />
           ))}
           {signIn.length > 1 && (
             <McpGroupRow
               label={`${signIn.length} need sign-in`}
               dotClass={MCP_STATUS_DOT.needs_auth}
               servers={signIn}
+              actions={actions}
             />
           )}
           {inactive.length > 1 && (
@@ -453,6 +479,7 @@ function McpSection({ servers, live }: { servers: McpServerState[]; live: boolea
               label={`${inactive.length} inactive`}
               dotClass={MCP_STATUS_DOT.disabled}
               servers={inactive}
+              actions={actions}
             />
           )}
         </Box>
@@ -461,26 +488,85 @@ function McpSection({ servers, live }: { servers: McpServerState[]; live: boolea
   );
 }
 
-/** Satu server MCP: nama + status (titik + label); error di baris kedua. */
-function McpRow({ server }: { server: McpServerState }) {
+/** Gaya pemicu menu aksi MCP (baris / item kelompok). */
+const MCP_TRIGGER =
+  "w-full text-left outline-none transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 data-[state=open]:bg-muted/50";
+
+/** Pembungkus menu aksi satu server (agent Session). */
+function McpMenu({
+  server,
+  actions,
+  busy,
+  children,
+}: {
+  server: McpServerState;
+  actions: McpPanelActions;
+  busy: McpAction | undefined;
+  children: ReactNode;
+}) {
   return (
-    <Row
+    <McpServerMenu
+      name={server.name}
+      targets={[{ agent: actions.agent, status: server.status, busy }]}
+      onAction={(agent, action) => void actions.run(agent, server.name, action)}
+    >
+      {children}
+    </McpServerMenu>
+  );
+}
+
+/**
+ * Satu server MCP: nama + status (titik + label); error di baris kedua.
+ * Dengan `actions`, seluruh baris membuka menu aksi server.
+ */
+function McpRow({ server, actions }: { server: McpServerState; actions?: McpPanelActions }) {
+  const busy = actions?.busy(actions.agent, server.name);
+  const content = (
+    <RowContent
       icon={<PlugIcon />}
       label={server.name}
       hint={server.error ?? undefined}
       hintTone={server.error ? "error" : undefined}
-      // Pesan error lengkap terbaca lewat `title` (baris kedua terpotong).
-      title={server.error ?? undefined}
-      value={<StatusText status={server.status} />}
+      value={<StatusText status={server.status} busy={busy} />}
     />
+  );
+  // Pesan error lengkap terbaca lewat `title` (baris kedua terpotong).
+  const title = server.error ?? undefined;
+  if (!actions) {
+    return (
+      <li title={title} className={ROW}>
+        {content}
+      </li>
+    );
+  }
+  return (
+    <li>
+      <McpMenu server={server} actions={actions} busy={busy}>
+        <button type="button" title={title} className={cn(ROW, MCP_TRIGGER)}>
+          {content}
+          <MoreHorizontalIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      </McpMenu>
+    </li>
   );
 }
 
-function StatusText({ status }: { status: McpServerState["status"] }) {
+function StatusText({
+  status,
+  busy,
+}: {
+  status: McpServerState["status"];
+  /** Aksi berjalan -> spinner + "Reconnecting…" menggantikan status. */
+  busy?: McpAction;
+}) {
   return (
     <span className="flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-      <span aria-hidden className={cn("size-1.5 rounded-full", MCP_STATUS_DOT[status])} />
-      {MCP_STATUS_LABEL[status]}
+      {busy ? (
+        <Spinner className="size-3" aria-hidden />
+      ) : (
+        <span aria-hidden className={cn("size-1.5 rounded-full", MCP_STATUS_DOT[status])} />
+      )}
+      {busy ? MCP_ACTION_PROGRESS[busy] : MCP_STATUS_LABEL[status]}
     </span>
   );
 }
@@ -493,10 +579,12 @@ function McpGroupRow({
   label,
   dotClass,
   servers,
+  actions,
 }: {
   label: string;
   dotClass: string;
   servers: McpServerState[];
+  actions?: McpPanelActions;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -522,16 +610,41 @@ function McpGroupRow({
       {open && (
         <ul className="border-t bg-muted/30 py-1">
           {servers.map((s) => (
-            <li
-              key={s.name}
-              title={s.error ?? s.name}
-              className="truncate px-2.5 py-1 ps-8 text-[12px] leading-5 text-muted-foreground"
-            >
-              {s.name}
-            </li>
+            <McpGroupItem key={s.name} server={s} actions={actions} />
           ))}
         </ul>
       )}
+    </li>
+  );
+}
+
+/** Satu server di kelompok yang dibuka: nama saja (status sudah di judul). */
+function McpGroupItem({ server, actions }: { server: McpServerState; actions?: McpPanelActions }) {
+  const busy = actions?.busy(actions.agent, server.name);
+  const item = "px-2.5 py-1 ps-8 text-[12px] leading-5 text-muted-foreground";
+  if (!actions) {
+    return (
+      <li title={server.error ?? server.name} className={cn("truncate", item)}>
+        {server.name}
+      </li>
+    );
+  }
+  return (
+    <li>
+      <McpMenu server={server} actions={actions} busy={busy}>
+        <button
+          type="button"
+          title={server.error ?? server.name}
+          className={cn("flex items-center gap-2", item, MCP_TRIGGER)}
+        >
+          <span className="min-w-0 flex-1 truncate">{server.name}</span>
+          {busy ? (
+            <Spinner className="size-3" aria-hidden />
+          ) : (
+            <MoreHorizontalIcon aria-hidden className="size-3.5 shrink-0" />
+          )}
+        </button>
+      </McpMenu>
     </li>
   );
 }
@@ -697,17 +810,10 @@ function Box({ children }: { children: ReactNode }) {
   );
 }
 
-/** Satu baris dalam `Box`: ikon + label (+ petunjuk kecil) + nilai di kanan. */
-function Row({
-  icon,
-  label,
-  hint,
-  hintTone,
-  value,
-  muted,
-  mono,
-  title,
-}: {
+/** Tata letak satu baris `Box` (juga dipakai baris yang bisa diketuk). */
+const ROW = "flex min-h-9 min-w-0 items-center gap-2 px-2.5 py-1.5 text-[12.5px]";
+
+interface RowContentProps {
   icon: ReactNode;
   label: string;
   hint?: string;
@@ -716,13 +822,20 @@ function Row({
   value?: ReactNode;
   muted?: boolean;
   mono?: boolean;
-  title?: string;
-}) {
+}
+
+/** Satu baris dalam `Box`: ikon + label (+ petunjuk kecil) + nilai di kanan. */
+function Row({ title, ...props }: RowContentProps & { title?: string }) {
   return (
-    <li
-      title={title}
-      className="flex min-h-9 min-w-0 items-center gap-2 px-2.5 py-1.5 text-[12.5px]"
-    >
+    <li title={title} className={ROW}>
+      <RowContent {...props} />
+    </li>
+  );
+}
+
+function RowContent({ icon, label, hint, hintTone, value, muted, mono }: RowContentProps) {
+  return (
+    <>
       <span
         aria-hidden
         className="flex shrink-0 items-center text-muted-foreground [&>svg]:size-3.5"
@@ -751,7 +864,7 @@ function Row({
         )}
       </span>
       {value !== undefined && <span className="shrink-0">{value}</span>}
-    </li>
+    </>
   );
 }
 
