@@ -8,6 +8,7 @@ import { Box, render, renderToString, Text, useInput } from "ink";
 import type { ReactNode } from "react";
 import { renderUnicodeCompact } from "uqr";
 import type { KcgServer } from "../server/app";
+import { isUpdateInstalled, type UpdateInfo } from "../server/services/update-check";
 import { InkReact } from "./ink-react";
 import type { KeepAwake } from "./keep-awake";
 import { logoLines, readPackageVersion } from "./theme";
@@ -89,6 +90,8 @@ export interface DashboardSnapshot {
   restarting: boolean;
   /** Teks status selama `restarting`, mis. "Stopping…". Default "Restarting…". */
   busyLabel?: string | null;
+  /** Versi baru di npm (opsional: state daemon versi lama tidak membawanya). */
+  update?: UpdateInfo | null;
 }
 
 export interface DashboardCallbacks {
@@ -265,6 +268,14 @@ function activityStats(app: KcgServer) {
   }
 }
 
+function availableUpdate(app: KcgServer): UpdateInfo | null {
+  try {
+    return app.updates?.available() ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function formatMemory(): string {
   const rss = process.memoryUsage().rss / 1024 / 1024;
   if (rss >= 1024) return `${(rss / 1024).toFixed(1)} GB`;
@@ -343,6 +354,7 @@ export function takeSnapshot(
     projects,
     portNote: info.portNote ?? null,
     restarting: Boolean(info.restarting),
+    update: availableUpdate(info.server),
   };
 }
 
@@ -593,6 +605,7 @@ function DashboardUI({ snap, version, view = {} }: DashboardUIProps) {
             <Text dimColor>·</Text>
             <Text color="white">{snap.memory}</Text>
           </InfoRow>
+          {snap.update && <UpdateRow update={snap.update} installed={version} />}
         </Box>
 
         {view.showQr && <QrCard target={target} width={cardWidth} />}
@@ -664,6 +677,34 @@ function DashboardUI({ snap, version, view = {} }: DashboardUIProps) {
         </Box>
       </Box>
     </Box>
+  );
+}
+
+/**
+ * Versi baru di npm. Dashboard yang memantau daemon bisa berasal dari paket
+ * yang sudah diperbarui (`installed`) sementara daemon masih versi lama —
+ * cukup restart, tidak perlu install lagi.
+ */
+function UpdateRow({ update, installed }: { update: UpdateInfo; installed: string }) {
+  const pendingRestart = isUpdateInstalled(update, installed);
+  return (
+    <InfoRow label="Update">
+      <Text color={pendingRestart ? "green" : "yellow"} bold>
+        v{update.latest}
+      </Text>
+      {pendingRestart ? (
+        <Text dimColor wrap="truncate-end">
+          installed · restart to apply
+        </Text>
+      ) : (
+        <>
+          <Text dimColor>available ·</Text>
+          <Text color="cyan" wrap="truncate-end">
+            {update.command}
+          </Text>
+        </>
+      )}
+    </InfoRow>
   );
 }
 

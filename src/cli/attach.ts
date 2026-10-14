@@ -10,7 +10,8 @@ import type { CliArgs } from "./args";
 import { type DaemonState, isAlive, readDaemonState, startDetached, stopDaemon } from "./daemon";
 import { type DashboardSnapshot, openBrowser, startDashboard } from "./dashboard";
 import { portIsFree } from "./port";
-import { c, centerBlock, symbols } from "./theme";
+import { c, centerBlock, readPackageVersion, symbols } from "./theme";
+import { updateNotice } from "./update-notice";
 
 const POLL_MS = 1000;
 
@@ -61,6 +62,8 @@ export async function attachToDaemon(
 ): Promise<number> {
   let current = initial;
   let busyLabel: string | null = null;
+  // Versi paket terpasang — bisa lebih baru dari daemon yang berjalan.
+  const installed = await readPackageVersion();
 
   const source = (): DashboardSnapshot => {
     const base = current.snapshot ?? snapshotFromState(current);
@@ -93,11 +96,14 @@ export async function attachToDaemon(
     const respawn = (port: number) => startDetached({ ...args, port, detach: true });
 
     void startDashboard(source, {
-      onQuit: () =>
+      onQuit: () => {
+        const update = current.snapshot?.update;
         leave([
           `${c.greenBright(symbols.check)} Dashboard closed — kcgcode keeps running in background.`,
           `  ${hints()}`,
-        ]),
+          ...(update ? [updateNotice(update, installed)] : []),
+        ]);
+      },
       onOpenUrl: () => openBrowser(source().localUrl),
       onStop: async () => {
         busyLabel = "Stopping…";

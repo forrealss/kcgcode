@@ -70,6 +70,7 @@ ENV
   KCG_CONFIG_PATH       Config file path
   KCG_DB_PATH           SQLite path (default ~/.kcgcode/data/kcg-code.sqlite)
   KCG_ALLOW_SLEEP=1     Same as --allow-sleep
+  KCG_NO_UPDATE_CHECK   Set to 1 to skip the npm update check
 
 EXAMPLES
   kcgcode

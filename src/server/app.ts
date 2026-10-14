@@ -33,6 +33,7 @@ import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guar
 import { metaRoutes } from "./routes/meta.routes";
 import { passkeyRoutes } from "./routes/passkeys.routes";
 import { projectsRoutes } from "./routes/projects.routes";
+import { pushRoutes } from "./routes/push.routes";
 import { sessionsRoutes } from "./routes/sessions.routes";
 import { skillsRoutes } from "./routes/skills.routes";
 import { tunnelRoutes } from "./routes/tunnel.routes";
@@ -44,6 +45,7 @@ import { type AuthService, createAuthService } from "./services/auth";
 import { createPasskeyService } from "./services/auth-passkeys";
 import { createClaudeCodeServerManager } from "./services/claude-code-client";
 import { createFrpcInstaller } from "./services/frpc-installer";
+import { createNotificationService, type NotificationService } from "./services/notifications";
 import {
   createOpenCodeServerManager,
   type OpenCodeServerManager,
@@ -61,6 +63,7 @@ import { createTunnelManager, type TunnelManager } from "./services/tunnel";
 import { createTunnelApi } from "./services/tunnel-api";
 import { resolveTunnelConfig } from "./services/tunnel-config";
 import { createLhrManager, type LhrManager } from "./services/tunnel-lhr";
+import { createUpdateChecker, type UpdateChecker } from "./services/update-check";
 import {
   createWebSocketGateway,
   type Subscriber,
@@ -107,6 +110,10 @@ export interface KcgServerOptions {
   uploadsRoot?: string;
   hostname?: string;
   port?: number;
+  /** Fetch untuk layanan Web Push (test menyuntik palsu). */
+  pushFetch?: typeof fetch;
+  /** Pengecek versi baru di npm (default: aktif hanya di mode `cli`). */
+  updates?: UpdateChecker;
   /** Shell SPA untuk rute halaman terdaftar (`spaPaths`; default: 404). */
   spa?: Response | HTMLBundle;
   /**
@@ -135,6 +142,10 @@ export interface KcgServer {
   tunnel: TunnelManager;
   /** Tunnel localhost.run (diekspos untuk dashboard terminal). */
   lhr: LhrManager;
+  /** Notifikasi agent (WS + Web Push) — diekspos untuk pengujian. */
+  notifications: NotificationService;
+  /** Versi baru di npm (dashboard terminal & `/api/meta`). */
+  updates: UpdateChecker;
   /** Provider tunnel terpilih: "kcg" | "lhr". */
   tunnelProvider: () => "kcg" | "lhr";
   /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
@@ -193,6 +204,13 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   });
 
   let gateway: WebSocketGateway;
+  // Notifikasi agent: kartu izin/pertanyaan & turn selesai -> tab terbuka
+  // (WS `notify`) lalu Web Push ke perangkat yang tidak sedang membuka app.
+  const notifications = createNotificationService({
+    store,
+    broadcast: (n) => gateway.notifyAgent(n),
+    fetchFn: opts.pushFetch,
+  });
   const sessionManager = createSessionManager({
     store,
     servers,
@@ -203,7 +221,10 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       gateway.notifyMessagePart(sessionId, messageId, part),
     onMessagePartDelta: (sessionId, messageId, partId, field, delta) =>
       gateway.notifyMessagePartDelta(sessionId, messageId, partId, field, delta),
-    onPrompt: (prompt) => gateway.notifyPrompt(prompt.sessionId, prompt),
+    onPrompt: (prompt) => {
+      gateway.notifyPrompt(prompt.sessionId, prompt);
+      notifications.promptAsked(prompt);
+    },
     // Kartu kembar yang ikut terjawab lewat fan-out grup: kirim notif
     // `prompt_resolved` agar hilang dari UI tanpa menunggu reattach.
     onPromptResolved: (sessionId, promptId) => gateway.notifyPromptResolved(sessionId, promptId),
@@ -214,11 +235,16 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
     // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).
     onTurnChange: (sessionId, active) => gateway.notifyTurnActive(sessionId, active),
+    onTurnEnd: (sessionId, outcome) => notifications.turnEnded(sessionId, outcome),
     // Refresh skill tertunda berjalan otomatis setelah chat selesai -> perbarui
     // notifikasi instalasi terkait ("aktif sekarang").
     onSkillsRefreshed: (projectId) => skillInstalls.markRefreshed(projectId),
   });
-  gateway = createWebSocketGateway({ store, sessionManager });
+  gateway = createWebSocketGateway({
+    store,
+    sessionManager,
+    onNotifyAck: (id, endpoint) => notifications.ack(id, endpoint),
+  });
 
   // Requirement 2.4: tandai Session "running" tanpa proses sebelum menerima koneksi.
   sessionManager.reconcileOnStartup();
@@ -300,15 +326,20 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   }, 30_000);
   sweepTimer.unref?.();
 
+  // Cek versi baru di npm di background — tidak menahan server mulai.
+  const updates = opts.updates ?? createUpdateChecker();
+  void updates.start();
+
   const apiRoutes = guardRoutes(auth, {
     ...authRoutes(auth),
     ...passkeyRoutes(auth, passkeys),
-    ...metaRoutes(),
+    ...metaRoutes(updates),
     ...projectsRoutes(routeCtx),
     ...sessionsRoutes(routeCtx),
     ...uploadsRoutes(routeCtx),
     ...skillsRoutes(routeCtx),
     ...tunnelRoutes(routeCtx),
+    ...pushRoutes(notifications),
     ...workspaceRoutes(routeCtx, {
       auth,
       configPath: config.configPath,
@@ -334,6 +365,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
         staticFile(path.join(PUBLIC_DIR, "manifest.json"), "application/manifest+json"),
       "/sw.js": () => staticFile(path.join(PUBLIC_DIR, "sw.js"), "text/javascript"),
       "/logo.svg": () => staticFile(path.join(PUBLIC_DIR, "logo.svg"), "image/svg+xml"),
+      "/sounds/notification.ogg": () =>
+        staticFile(path.join(PUBLIC_DIR, "sounds", "notification.ogg"), "audio/ogg"),
       "/icons/:name": (req: BunRequest<"/icons/:name">) => {
         const name = req.params.name;
         // Whitelist nama file agar tidak bisa path traversal keluar dari public/icons.
@@ -414,6 +447,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
 
   async function close(): Promise<void> {
     clearInterval(sweepTimer);
+    notifications.close();
+    updates.close();
     // Hentikan frpc lebih dulu agar URL publik tidak menunjuk server mati.
     await Promise.all([tunnel.shutdown(), lhr.shutdown()]);
     // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
@@ -434,6 +469,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     auth,
     tunnel,
     lhr,
+    notifications,
+    updates,
     tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
     apiRoutePatterns: Object.keys(apiRoutes),
     close,

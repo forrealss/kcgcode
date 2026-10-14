@@ -8,6 +8,8 @@
  * - Diperbarui live lewat WS mode daftar (`attach("")`) yang menerima
  *   broadcast global: `session_title` (judul), `session_status` (titik
  *   running/stopped/crashed), dan `session_deleted` (baris hilang).
+ * - Koneksi yang sama menerima `notify` (agent butuh izin / selesai) —
+ *   diteruskan ke `lib/agent-notify.ts` (suara, toast, `notify_ack`).
  * - Muat ulang penuh saat: `data_changed` dari server (Project/Session
  *   dibuat/dihapus di perangkat mana pun), `notifyDataChanged()` lokal, dan
  *   koneksi WS tersambung ulang (kabar yang terlewat selama putus).
@@ -15,6 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { handleAgentNotification } from "@/lib/agent-notify";
 import { ApiError, apiFetch } from "@/lib/api";
 import { onDataChanged } from "@/lib/data-events";
 import { groupSessionsByProject, type SidebarProjectGroup } from "@/lib/sidebar-groups";
@@ -87,6 +90,8 @@ export function useSidebarData(pathname: string): UseSidebarDataResult {
       } else if (msg.type === "data_changed") {
         // Project/Session dibuat atau dihapus (bisa dari perangkat lain).
         void refresh();
+      } else if (msg.type === "notify") {
+        handleAgentNotification(msg.notification, ws.send);
       }
     },
   });

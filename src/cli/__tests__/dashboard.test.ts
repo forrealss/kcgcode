@@ -222,3 +222,34 @@ describe("mode background (dashboard untuk daemon)", () => {
     expect(JSON.parse(JSON.stringify(snap))).toEqual(snap);
   });
 });
+
+describe("notifikasi update", () => {
+  const update = { current: "0.3.0", latest: "0.4.0", command: "bun i -g kcg-code@latest" };
+
+  function infoWithUpdate(available: typeof update | null): DashboardInfo {
+    const info = makeInfo();
+    (info.server as unknown as { updates: unknown }).updates = { available: () => available };
+    return info;
+  }
+
+  test("baris Update + perintah install saat versi baru tersedia", () => {
+    const snap = takeSnapshot(infoWithUpdate(update));
+    expect(snap.update).toEqual(update);
+    const frame = renderSnapshot(snap, "0.3.0");
+    expect(frame).toContain("Update");
+    expect(frame).toContain("v0.4.0");
+    expect(frame).toContain("bun i -g kcg-code@latest");
+  });
+
+  test("tanpa update / server tanpa pengecek -> tidak ada baris Update", () => {
+    expect(renderSnapshot(takeSnapshot(infoWithUpdate(null)), "0.3.0")).not.toContain("Update");
+    expect(takeSnapshot(makeInfo()).update).toBeNull();
+  });
+
+  test("daemon versi lama, paket sudah diperbarui -> ajakan restart", () => {
+    const snap = { ...takeSnapshot(infoWithUpdate(update)), mode: "background" as const };
+    const frame = renderSnapshot(snap, "0.4.0");
+    expect(frame).toContain("restart to apply");
+    expect(frame).not.toContain("bun i -g");
+  });
+});

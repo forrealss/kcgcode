@@ -8,9 +8,22 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
+import { navigate } from "./hooks/useRouter";
 import { captureInstallPrompt, isEphemeralHost } from "./lib/pwa";
 
 captureInstallPrompt();
+
+// Notifikasi push diklik saat tab ini sudah terbuka: service worker meminta
+// navigasi SPA (tanpa reload). Dipasang di sini — bukan di AppShell — agar
+// tetap berlaku di lock screen; halaman tujuan tampil setelah dibuka.
+if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    const data = event.data as { type?: unknown; url?: unknown } | null;
+    if (data?.type === "navigate" && typeof data.url === "string" && data.url.startsWith("/")) {
+      navigate(data.url);
+    }
+  });
+}
 
 const elem = document.getElementById("root");
 if (!elem) {

@@ -190,6 +190,8 @@ interface Harness {
   store: SessionStore;
   sm: FakeSessionManager;
   gw: WebSocketGateway;
+  /** `notify_ack` yang diteruskan gateway: [id, endpoint]. */
+  acks: [string, string][];
   close(): void;
 }
 
@@ -214,12 +216,18 @@ function freshHarness(): Harness {
   });
 
   const sm = makeFakeSessionManager();
-  const gw = createWebSocketGateway({ store, sessionManager: sm });
+  const acks: [string, string][] = [];
+  const gw = createWebSocketGateway({
+    store,
+    sessionManager: sm,
+    onNotifyAck: (id, endpoint) => acks.push([id, endpoint]),
+  });
 
   return {
     store,
     sm,
     gw,
+    acks,
     close() {
       store.close();
       rmSync(root, { recursive: true, force: true });
@@ -671,6 +679,49 @@ test("dispatchClientMessage mengarahkan attach/input/prompt_response/stop/error"
     });
     expect(err).toBeDefined();
     if (err) expect(err.code).toBe("UNKNOWN_MESSAGE_TYPE");
+  } finally {
+    h.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Notifikasi agent
+// ---------------------------------------------------------------------------
+
+test("notifyAgent hanya ke koneksi mode daftar; notify_ack diteruskan", () => {
+  const h = freshHarness();
+  try {
+    const list = makeSub("list");
+    h.gw.attach(list, "");
+    const session = makeSub("session");
+    h.gw.attach(session, "s1");
+    session.sent.length = 0;
+
+    const notification = {
+      id: "n1",
+      kind: "done" as const,
+      sessionId: "s1",
+      title: "Agent finished",
+      body: "proj",
+      url: "/projects/p1/sessions/s1",
+      createdAt: 1,
+    };
+    h.gw.notifyAgent(notification);
+    expect(list.sent).toEqual([{ type: "notify", notification }]);
+    expect(session.sent).toEqual([]);
+
+    dispatchClientMessage(
+      h.gw,
+      list,
+      JSON.stringify({ type: "notify_ack", id: "n1", endpoint: "https://push.example.com/a" }),
+    );
+    expect(h.acks).toEqual([["n1", "https://push.example.com/a"]]);
+
+    // Bentuk salah -> INVALID_MESSAGE, tidak diteruskan.
+    const bad = makeSub("bad");
+    dispatchClientMessage(h.gw, bad, JSON.stringify({ type: "notify_ack", id: 1 }));
+    expect(bad.sent.some((m) => m.type === "error")).toBe(true);
+    expect(h.acks).toHaveLength(1);
   } finally {
     h.close();
   }

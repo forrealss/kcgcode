@@ -5,7 +5,8 @@
  * agar tiap berkas satu tanggung jawab:
  * - `bunWsSubscriber` menyamarkan `ServerWebSocket` Bun menjadi `Subscriber`.
  * - `dispatchClientMessage` mem-parsing teks JSON dari Client lalu meneruskan
- *   ke gateway sesuai `type` (attach/input/prompt_response/stop/interrupt).
+ *   ke gateway sesuai `type` (attach/input/prompt_response/stop/interrupt/
+ *   notify_ack).
  */
 import type { ServerWebSocket } from "bun";
 import type { PromptResponse } from "../../types";
@@ -109,6 +110,18 @@ export function dispatchClientMessage(
         gateway.interrupt(sub, msg.sessionId);
       } else {
         invalidMessage(sub, "interrupt membutuhkan sessionId string");
+      }
+      break;
+    case "notify_ack":
+      if (
+        typeof msg.id === "string" &&
+        typeof msg.endpoint === "string" &&
+        msg.id.length <= 64 &&
+        msg.endpoint.length <= 2048
+      ) {
+        gateway.notifyAck(msg.id, msg.endpoint);
+      } else {
+        invalidMessage(sub, "notify_ack membutuhkan id dan endpoint string");
       }
       break;
     default:

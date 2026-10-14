@@ -6,6 +6,7 @@
  * - Profile  (`/settings`, `/settings/profile`): avatar, nickname, akun.
  * - Security (`/settings/security`): kunci aplikasi, auto-lock, passkey, dan
  *   perangkat yang login (`/settings/devices` lama -> grup ini).
+ * - Notifications (`/settings/notifications`): Web Push per perangkat & suara.
  * - Workspace (`/settings/workspace`): folder tempat semua Project berada.
  * - Remote access (`/settings/remote`): tunnel publik lewat Google sign-in.
  * - About KCG Code (`/settings/about`): versi & kredit — bukan pengaturan,
@@ -17,13 +18,21 @@
  *   chevron); bagian dibuka sebagai halaman dengan tombol kembali
  *   "‹ Settings" + judul di tengah (AdwNavigationView).
  */
-import { ChevronLeftIcon, FolderIcon, GlobeIcon, ShieldIcon, UserIcon } from "lucide-react";
+import {
+  BellIcon,
+  ChevronLeftIcon,
+  FolderIcon,
+  GlobeIcon,
+  ShieldIcon,
+  UserIcon,
+} from "lucide-react";
 import { type ComponentType, type ReactNode, useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import { AvatarEditor } from "@/components/auth/AvatarEditor";
 import { ProfileAvatar } from "@/components/auth/ProfileAvatar";
 import { AboutGroup } from "@/components/settings/AboutGroup";
 import { AccountGroup } from "@/components/settings/AccountGroup";
+import { NotificationsGroup } from "@/components/settings/NotificationsGroup";
 import { ActionRow, EntryRow, PrefsGroup } from "@/components/settings/prefs";
 import { RemoteAccessGroup } from "@/components/settings/RemoteAccessGroup";
 import { SecurityGroup } from "@/components/settings/SecurityGroup";
@@ -64,6 +73,12 @@ export const SETTINGS_PANELS: readonly SettingsPageInfo[] = [
     label: "Security",
     description: "App lock, passkeys & devices",
     icon: ShieldIcon,
+  },
+  {
+    id: "notifications",
+    label: "Notifications",
+    description: "Alerts when an agent needs you",
+    icon: BellIcon,
   },
   {
     id: "workspace",
@@ -144,6 +159,7 @@ export function SettingsPage({
     <div className="flex flex-col gap-8">
       {section === "profile" && <ProfileSection status={status} onOk={ok} onError={error} />}
       {section === "security" && <SecurityGroup status={status} onOk={ok} />}
+      {section === "notifications" && <NotificationsGroup onError={error} />}
       {section === "workspace" && <WorkspaceGroup status={status} />}
       {section === "remote" && <RemoteAccessGroup protectedApp={status.protected} />}
       {section === "about" && <AboutGroup />}

@@ -7,6 +7,7 @@
  */
 export * from "./context";
 export * from "./message";
+export * from "./notification";
 export * from "./project";
 export * from "./prompt";
 export * from "./session";

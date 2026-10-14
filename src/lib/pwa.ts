@@ -34,6 +34,42 @@ export function isIOS(userAgent: string, maxTouchPoints = 0): boolean {
   return /Macintosh/.test(userAgent) && maxTouchPoints > 1;
 }
 
+/** HP / tablet sungguhan — bukan sekadar jendela desktop yang sempit. */
+export function isMobileDevice(userAgent: string, maxTouchPoints = 0): boolean {
+  return isIOS(userAgent, maxTouchPoints) || /Android|Mobi/i.test(userAgent);
+}
+
+/** `prompt` = dialog install bawaan browser; `ios` = langkah Share -> Add to Home Screen. */
+export type InstallOfferKind = "prompt" | "ios";
+
+export interface InstallOfferEnv {
+  userAgent: string;
+  maxTouchPoints: number;
+  hostname: string;
+  standalone: boolean;
+  installed: boolean;
+  canPrompt: boolean;
+}
+
+/**
+ * Cara menawarkan install, atau null bila tidak layak ditawarkan: sudah
+ * berjalan sebagai app / baru di-install, bukan perangkat mobile, alamat
+ * sementara, atau browser tanpa jalur install yang pasti.
+ *
+ * Chrome/Samsung hanya memicu `beforeinstallprompt` bila app BELUM
+ * ter-install, jadi `canPrompt` sekaligus bukti belum ter-install. Browser
+ * lain (mis. Firefox Android) tidak bisa dipastikan, jadi tidak ditawari —
+ * lebih baik diam daripada menyuruh install app yang sudah ada.
+ */
+export function installOfferKind(env: InstallOfferEnv): InstallOfferKind | null {
+  if (env.standalone || env.installed) return null;
+  if (isEphemeralHost(env.hostname)) return null;
+  if (!isMobileDevice(env.userAgent, env.maxTouchPoints)) return null;
+  if (env.canPrompt) return "prompt";
+  if (isIOS(env.userAgent, env.maxTouchPoints)) return "ios";
+  return null;
+}
+
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;

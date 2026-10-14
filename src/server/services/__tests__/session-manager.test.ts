@@ -3507,3 +3507,33 @@ test("Session claude-code memakai backend Claude Code; opencode tidak tersentuh"
     h.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// onTurnEnd — sumber notifikasi "agent selesai"
+// ---------------------------------------------------------------------------
+
+test("onTurnEnd: idle -> done; interrupt user tidak memicu notifikasi", async () => {
+  const ended: [string, string][] = [];
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    { onTurnEnd: (id, outcome) => ended.push([id, outcome]) },
+  );
+  try {
+    const sid = await createSession(h);
+    await h.sm.sendFreeTextInput(sid, "hello");
+    await flush();
+    const client = clientOf(h);
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    expect(ended).toEqual([[sid, "done"]]);
+
+    // Turn kedua dihentikan user -> diam.
+    await h.sm.sendFreeTextInput(sid, "again");
+    await flush();
+    h.sm.interruptSession(sid);
+    client.emit({ type: "session.idle", sessionID: "ses_remote1" });
+    expect(ended).toEqual([[sid, "done"]]);
+  } finally {
+    h.close();
+  }
+});

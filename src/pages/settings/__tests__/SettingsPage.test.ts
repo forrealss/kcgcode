@@ -6,8 +6,14 @@ import { expect, test } from "bun:test";
 import { SETTINGS_SECTIONS } from "@/lib/routes";
 import { SETTINGS_ABOUT, SETTINGS_PANELS } from "../SettingsPage";
 
-test("empat bagian pengaturan: Devices bagian dari Security", () => {
-  expect(SETTINGS_PANELS.map((p) => p.id)).toEqual(["profile", "security", "workspace", "remote"]);
+test("lima bagian pengaturan: Devices bagian dari Security", () => {
+  expect(SETTINGS_PANELS.map((p) => p.id)).toEqual([
+    "profile",
+    "security",
+    "notifications",
+    "workspace",
+    "remote",
+  ]);
 });
 
 test("About entri terpisah; navigasi mencakup semua sub-halaman", () => {

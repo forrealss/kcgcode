@@ -121,6 +121,28 @@ CREATE TABLE IF NOT EXISTS tunnel_account (
   enabled INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
 );
+
+-- Web Push: kunci VAPID server (satu baris, id = 1). Kunci privat tidak
+-- pernah dikirim ke browser; browser hanya menerima kunci publiknya.
+CREATE TABLE IF NOT EXISTS push_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  vapid_public_key TEXT NOT NULL,
+  vapid_private_jwk TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- Subscription Web Push per perangkat (browser). id = hash endpoint.
+-- Tidak terikat sesi login: notifikasi tetap sampai walau perangkat sudah
+-- terkunci otomatis.
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id TEXT PRIMARY KEY,
+  endpoint TEXT NOT NULL UNIQUE,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  user_agent TEXT,
+  created_at INTEGER NOT NULL,
+  last_seen_at INTEGER NOT NULL
+);
 `;
 
 /** Menambah kolom bila belum ada (migrasi DB lama yang idempoten). */

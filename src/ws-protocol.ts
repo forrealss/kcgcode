@@ -10,6 +10,7 @@
  *   streaming aktif) sehingga tombol stop/interrupt bisa ditampilkan.
  */
 import type {
+  AgentNotification,
   InteractivePrompt,
   MessagePart,
   PromptResponse,
@@ -36,7 +37,13 @@ export type ClientMessage =
    * turn di-abort tapi Session tetap `running` sehingga bisa langsung kirim
    * pesan baru. Beda dari `stop` yang menonaktifkan Session.
    */
-  | { type: "interrupt"; sessionId: string };
+  | { type: "interrupt"; sessionId: string }
+  /**
+   * Notifikasi `notify` sudah tampil di layar perangkat ini (tab terlihat):
+   * server tidak perlu mengirim Web Push ke `endpoint` (subscription push
+   * perangkat ini) untuk notifikasi `id` tersebut.
+   */
+  | { type: "notify_ack"; id: string; endpoint: string };
 
 /** Pesan Server -> Client. */
 export type ServerMessage =
@@ -75,6 +82,12 @@ export type ServerMessage =
    * pun — dikirim ke semua koneksi; sidebar & daftar memuat ulang datanya.
    */
   | { type: "data_changed" }
+  /**
+   * Agent butuh perhatian (izin/pertanyaan) atau turn selesai — dikirim ke
+   * semua koneksi. Tab yang terlihat memutar suara + toast lalu membalas
+   * `notify_ack`; perangkat yang tidak membalas menerima Web Push.
+   */
+  | { type: "notify"; notification: AgentNotification }
   | { type: "error"; code: string; message: string };
 
 /** Kode error umum pada pesan `error`. */

@@ -66,7 +66,7 @@ import {
   promptFromQuestion,
   retryStatusMessage,
 } from "./session-events";
-import { TurnStream } from "./turn-stream";
+import { type TurnOutcome, TurnStream } from "./turn-stream";
 
 export const MAX_FREE_TEXT_LENGTH = 10000;
 /**
@@ -167,6 +167,12 @@ export interface SessionManagerOptions {
    * gateway agar Client tahu kapan tombol stop (interrupt) perlu tampil.
    */
   onTurnChange?: (sessionId: string, active: boolean) => void;
+  /**
+   * Turn berakhir dengan sendirinya (`done` = agent selesai menjawab,
+   * `failed` = error terminal / timeout / server mati) — bukan saat user
+   * stop/interrupt. Disambungkan ke layanan notifikasi.
+   */
+  onTurnEnd?: (sessionId: string, outcome: TurnOutcome) => void;
   /**
    * Refresh skill yang sempat tertunda (turn aktif saat skill dipasang) baru
    * saja dijalankan otomatis untuk Project ini.
@@ -346,6 +352,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     onMessagePartDelta,
     onError,
     onTurnChange,
+    onTurnEnd: opts.onTurnEnd,
     // Turn menunggu keputusan user (kartu permission/question pending) bukan
     // keheningan — timer idle ditunda sampai kartu dijawab atau turn ditutup.
     shouldFireIdle: (sessionId) => store.listPendingPrompts(sessionId).length === 0,
@@ -447,7 +454,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       // menandai turn selesai, jika tidak turn terpotong di tengah.
       const cur = store.getSession(sessionId);
       if (!cur.ok || cur.data.ocSessionId !== ocId) return;
-      turns.finish(sessionId);
+      turns.finish(sessionId, "idle");
       return;
     }
     if (ev.type === "session.error") {
@@ -1403,7 +1410,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     for (const s of store.listSessions()) {
       if (s.projectId === projectId && s.agentType === agentType && s.status === "running") {
         // Server mati di tengah turn: selamatkan parts yang sudah ter-stream.
-        turns.finish(s.id);
+        turns.finish(s.id, "crash");
         updateStatus(s.id, "crashed", crashedAt);
         unmapOcSessions(s.id);
       }

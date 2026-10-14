@@ -24,7 +24,8 @@ import path from "node:path";
 import { resolveEffectiveDbPath } from "../paths";
 import type { CliArgs } from "./args";
 import { type DashboardSnapshot, formatUptime } from "./dashboard";
-import { c, centerBlock, panel, row, symbols } from "./theme";
+import { c, centerBlock, panel, readPackageVersion, row, symbols } from "./theme";
+import { updateRowText } from "./update-notice";
 
 /** Penanda env untuk proses anak daemon. */
 export const DAEMON_CHILD_ENV = "KCG_DAEMON_CHILD";
@@ -179,7 +180,9 @@ export async function startDetached(args: CliArgs): Promise<DaemonState> {
   throw new Error(`server not ready after ${READY_TIMEOUT_MS / 1000}s — check ${logFile}`);
 }
 
-function statePanel(state: DaemonState, title: string): string {
+/** `installed`: versi paket di disk (untuk mendeteksi update yang menunggu restart). */
+function statePanel(state: DaemonState, title: string, installed?: string): string {
+  const update = state.snapshot?.update;
   return panel(title, [
     row("Status", c.greenBright(`${symbols.bullet} running in background`)),
     row("Local", c.cyan(state.localUrl)),
@@ -187,6 +190,7 @@ function statePanel(state: DaemonState, title: string): string {
     row("PID", c.white(String(state.pid))),
     row("Uptime", c.white(formatUptime(Date.now() - state.startedAt))),
     row("Log", c.dim(state.logFile)),
+    ...(update ? [row("Update", updateRowText(update, installed))] : []),
     "",
     c.dim(`${c.cyan("kcgcode status")} · ${c.cyan("kcgcode logs -f")} · ${c.cyan("kcgcode stop")}`),
   ]);
@@ -218,7 +222,7 @@ export async function runStatus(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log(statePanel(state, "KCGCODE"));
+  console.log(statePanel(state, "KCGCODE", await readPackageVersion()));
 }
 
 /** Kirim SIGTERM lalu tunggu; SIGKILL bila tidak keluar dalam batas waktu. */

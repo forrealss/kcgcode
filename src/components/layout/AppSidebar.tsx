@@ -14,8 +14,9 @@
  *   (`/skills`).
  * - Desktop: hover baris Session memunculkan menu "..." (Start/Stop/
  *   Restart, Delete) — `SidebarSessionMenu`. HP tidak (tanpa hover).
- * - Footer: pemilih tema (Light / Dark / System), lalu profil pemilik +
- *   tombol Settings & Lock (`SidebarAccount`).
+ * - Footer: kabar versi baru (`SidebarUpdateNotice`, bila ada), pemilih
+ *   tema (Light / Dark / System), lalu profil pemilik + tombol Settings &
+ *   Lock (`SidebarAccount`).
  */
 import {
   ChevronRightIcon,
@@ -31,6 +32,7 @@ import { useEffect, useRef, useState } from "react";
 import { SearchDialog } from "@/components/layout/SearchDialog";
 import { SidebarAccount } from "@/components/layout/SidebarAccount";
 import { SidebarSessionMenu } from "@/components/layout/SidebarSessionMenu";
+import { SidebarUpdateNotice } from "@/components/layout/SidebarUpdateNotice";
 import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -92,12 +94,15 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
   }, []);
 
   /** Navigasi SPA dari tautan sidebar; Sheet mobile ditutup setelahnya. */
+  const navigateAndClose = (path: string) => {
+    navigate(path);
+    if (isMobile) setOpenMobile(false);
+  };
   const go = (path: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
     // Biarkan ctrl/cmd/middle-click membuka tab baru seperti tautan biasa.
     if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
     e.preventDefault();
-    navigate(path);
-    if (isMobile) setOpenMobile(false);
+    navigateAndClose(path);
   };
 
   const activeProjectId =
@@ -181,26 +186,19 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
               activeProjectId={activeProjectId}
               activeSessionId={activeSessionId}
               go={go}
-              navigate={(path) => {
-                navigate(path);
-                if (isMobile) setOpenMobile(false);
-              }}
+              navigate={navigateAndClose}
             />
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter className="gap-3 border-t">
+        {/* Versi baru di npm -> Settings -> About */}
+        <SidebarUpdateNotice onNavigate={navigateAndClose} />
         {/* Tema: Light / Dark / System */}
         <ThemeToggle />
         {/* Profil + Settings + Lock */}
-        <SidebarAccount
-          active={route.name === "settings"}
-          onNavigate={(path) => {
-            navigate(path);
-            if (isMobile) setOpenMobile(false);
-          }}
-        />
+        <SidebarAccount active={route.name === "settings"} onNavigate={navigateAndClose} />
       </SidebarFooter>
 
       <SidebarRail />

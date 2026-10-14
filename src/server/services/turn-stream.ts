@@ -50,6 +50,16 @@ interface StreamingTurn {
   timeoutMessage: string;
 }
 
+/** Hasil akhir turn yang berakhir dengan sendirinya. */
+export type TurnOutcome = "done" | "failed";
+
+/**
+ * Alasan `finish` dipanggil: `idle` (agent selesai, `session.idle`) dan
+ * `crash` (server mati di tengah turn) memicu `onTurnEnd`; tanpa alasan
+ * (stop/hapus/turn baru/abort) turn ditutup diam-diam.
+ */
+export type FinishReason = "idle" | "crash";
+
 export interface TurnStreamOptions {
   store: SessionStore;
   now: () => number;
@@ -72,6 +82,13 @@ export interface TurnStreamOptions {
   onError?: (sessionId: string, message: string) => void;
   /** Perubahan status turn — Client tahu kapan tombol stop aktif. */
   onTurnChange?: (sessionId: string, active: boolean) => void;
+  /**
+   * Turn berakhir dengan sendirinya — `done` (agent selesai menjawab) atau
+   * `failed` (error terminal / timeout / server mati). Sumber notifikasi
+   * "agent selesai". Tidak dipanggil untuk turn yang ditutup user (stop,
+   * interrupt, hapus Session) atau ditimpa turn baru.
+   */
+  onTurnEnd?: (sessionId: string, outcome: TurnOutcome) => void;
   /**
    * Dipanggil saat timer idle terpicu: `false` = tunda fire dan pasang ulang
    * timer — turn sedang menunggu sesuatu yang bukan sunyi (mis. keputusan
@@ -270,7 +287,7 @@ export class TurnStream {
    * turn panjang (mis. sub-agent) koneksi POST bisa putus sebelum balasan
    * datang, sehingga pesan final tidak akan pernah tersimpan.
    */
-  finish(sessionId: string): void {
+  finish(sessionId: string, reason?: FinishReason): void {
     const turn = this.turns.get(sessionId);
     if (!turn || turn.finalized) return;
     this.close(sessionId, turn);
@@ -281,9 +298,12 @@ export class TurnStream {
     // menulis error di atas jawaban asli hanya membuat error palsu.
     // Banner sudah dikirim saat `noteError` — di sini cukup tulis history.
     const pending = turn.pendingError;
-    if (pending && this.countParts(turn) === pending.partsAtError) {
+    const terminalError = pending !== null && this.countParts(turn) === pending.partsAtError;
+    if (pending && terminalError) {
       this.writeErrorMessage(sessionId, pending.message, false);
     }
+    if (reason === "crash") this.opts.onTurnEnd?.(sessionId, "failed");
+    else if (reason === "idle") this.opts.onTurnEnd?.(sessionId, terminalError ? "failed" : "done");
   }
 
   /** Total jumlah part yang sudah terakumulasi pada turn. */
@@ -318,6 +338,7 @@ export class TurnStream {
     this.close(sessionId, turn);
     this.persistParts(sessionId, turn);
     this.writeErrorMessage(sessionId, message);
+    this.opts.onTurnEnd?.(sessionId, "failed");
   }
 
   /**

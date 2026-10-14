@@ -13,6 +13,8 @@ you reach it through a tunnel.
   running turn, and pick the model and agent mode (build, plan, or your own agents).
 - **Answer prompts on the go.** Permission requests and multi-question prompts from the agent
   show up as cards you can approve, deny, or answer from your phone.
+- **Push notifications.** Get a notification on your phone when an agent asks for permission,
+  has a question, or finishes, even when KCG Code is closed. Open tabs play a sound instead.
 - **Projects & sessions.** Organise work by folder inside a sandbox. The sidebar groups every
   session by project, with live status and a quick search (`Ctrl/⌘ + K`).
 - **Rich input.** Mention files with `@`, attach images, and set per-project custom
@@ -24,7 +26,8 @@ you reach it through a tunnel.
 - **App lock.** Protect the app with a PIN or password before exposing it. It comes with a lock
   screen showing your profile photo or avatar, auto-lock after inactivity, signed-in device
   management, and brute-force protection.
-- **Installable PWA** with light, dark, or system theme.
+- **Installable PWA** with light, dark, or system theme. On a phone that hasn't installed it yet,
+  KCG Code explains the benefits and how to install it (once; "Not now" waits 14 days).
 - **Terminal dashboard.** `kcgcode` shows the server status right in your terminal.
 
 ## Requirements
@@ -37,7 +40,7 @@ you reach it through a tunnel.
 ## Install
 
 ```bash
-bun i -g kcgcode
+bun i -g kcg-code
 ```
 
 Or from a local clone:
@@ -46,6 +49,22 @@ Or from a local clone:
 bun pm pack
 bun i -g ./kcgcode-0.1.0.tgz
 ```
+
+### Updating
+
+kcgcode checks npm for a newer version when it starts and every 6 hours after that. When one
+is out, you'll see it in the terminal dashboard, in `kcgcode status` and `kcgcode --version`,
+and in the web app: a one-time dialog per version, a banner in the sidebar, and
+**Settings → About**. To update:
+
+```bash
+bun i -g kcg-code@latest
+```
+
+Then restart kcgcode (`q` in the dashboard, or `kcgcode stop` for the background server, and run
+`kcgcode` again). The check only reads the package's version from the npm registry (or
+`NPM_CONFIG_REGISTRY` if you set one). Turn it off with `KCG_NO_UPDATE_CHECK=1` or
+`NO_UPDATE_NOTIFIER=1`. Running from source (`bun dev`) never checks.
 
 ## Quick start
 
@@ -111,6 +130,30 @@ anything. `KCG_TUNNEL_API_URL` overrides it, for example to point at your own se
 | `KCG_TUNNEL_API_URL` | The URL built into the package (none in a git checkout) |
 | `KCG_FRPC_PATH` | auto (`~/.kcgcode/bin/frpc`, then `PATH`, then download) |
 
+## Notifications
+
+Turn them on per device in **Settings → Notifications**. You get one when an agent asks for
+permission, has a question, finishes a reply, or stops with an error.
+
+- **Requires HTTPS** (Remote access or another HTTPS tunnel), or `localhost` on the machine itself.
+  Plain `http://<lan-ip>` can't use push.
+- **iPhone / iPad (iOS 16.4+):** add KCG Code to your Home Screen first, open it from there, then
+  turn notifications on.
+- **localhost.run links** aren't supported, because the address changes on every reconnect.
+- If KCG Code is open and visible on a device, that device plays a sound and shows a toast
+  instead of a push notification. Other devices still get the push.
+- Notifications show only the session title and project name, never the command or question
+  itself, since they appear on your lock screen.
+
+Push goes out through your browser's push service (Google, Apple, Mozilla or Microsoft). The
+payload is end-to-end encrypted (RFC 8291), so the push service can't read it. kcgcode creates
+its VAPID key pair on first use and keeps it in SQLite. `kcgcode reset-lock` also removes every
+device's push subscription.
+
+| Environment variable | Default |
+| --- | --- |
+| `KCG_VAPID_SUBJECT` | `https://github.com/forrealss/kcgcode` (VAPID `sub` claim: a URL or `mailto:` address) |
+
 ## Security
 
 When a lock is set:
@@ -145,7 +188,7 @@ Skills run with your agent's full permissions. Review a skill and its audit befo
 | --- | --- |
 | `kcgcode` / `kcgcode start` | Run the server + live dashboard |
 | `kcgcode init` | Create `~/.kcgcode` (config, sandbox, data) |
-| `kcgcode reset-lock` | Remove the app lock and sign out all devices |
+| `kcgcode reset-lock` | Remove the app lock, sign out all devices and turn off their push notifications |
 | `kcgcode --help` | Show help |
 | `kcgcode --version` | Show version |
 
@@ -166,6 +209,7 @@ Dashboard keys: `q` quit · `o` open browser · `Ctrl+C` stop.
 | `KCG_CONFIG_PATH` | Config file path |
 | `KCG_DB_PATH` | SQLite path (default `~/.kcgcode/data/kcg-code.sqlite`) |
 | `KCG_ALLOW_SLEEP=1` | Same as `--allow-sleep` |
+| `KCG_NO_UPDATE_CHECK=1` | Don't check npm for new versions |
 
 ## Config & data location
 
@@ -188,6 +232,7 @@ Global CLI layout:
   data/
     kcg-code.sqlite        # projects, sessions, messages, app lock
     uploads/               # image attachments
+    update-check.json      # latest version seen on npm
 ```
 
 Config file resolution order:

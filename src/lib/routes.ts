@@ -27,10 +27,17 @@ export type AppRoute =
   | { name: "not-found" };
 
 /**
- * Sub-halaman Settings (`/settings/:section`): empat bagian pengaturan +
+ * Sub-halaman Settings (`/settings/:section`): lima bagian pengaturan +
  * `about` (tampil terpisah di akhir navigasi, bukan pengaturan).
  */
-export const SETTINGS_SECTIONS = ["profile", "security", "workspace", "remote", "about"] as const;
+export const SETTINGS_SECTIONS = [
+  "profile",
+  "security",
+  "notifications",
+  "workspace",
+  "remote",
+  "about",
+] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 /**

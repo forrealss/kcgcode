@@ -40,16 +40,28 @@ export const symbols = {
   boxBR: "┘",
 } as const;
 
-/** Versi paket dari package.json. */
-export async function readPackageVersion(): Promise<string> {
+export interface PackageInfo {
+  /** Nama paket npm (dipakai perintah update, mis. `bun i -g <name>@latest`). */
+  name: string;
+  version: string;
+}
+
+/** Nama & versi paket dari package.json. */
+export async function readPackageInfo(): Promise<PackageInfo> {
+  const fallback: PackageInfo = { name: "kcg-code", version: "0.1.0" };
   try {
     const file = Bun.file(new URL("../../package.json", import.meta.url));
-    if (!(await file.exists())) return "0.1.0";
-    const json = (await file.json()) as { version?: string };
-    return json.version ?? "0.1.0";
+    if (!(await file.exists())) return fallback;
+    const json = (await file.json()) as { name?: string; version?: string };
+    return { name: json.name ?? fallback.name, version: json.version ?? fallback.version };
   } catch {
-    return "0.1.0";
+    return fallback;
   }
+}
+
+/** Versi paket dari package.json. */
+export async function readPackageVersion(): Promise<string> {
+  return (await readPackageInfo()).version;
 }
 
 /** Banner ASCII "KCG". */

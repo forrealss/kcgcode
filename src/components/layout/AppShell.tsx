@@ -12,15 +12,23 @@
  * - `AppSidebar` (shadcn `sidebar`) menampilkan seluruh Session digroup per
  *   Project: panel tetap di desktop, Sheet off-canvas di HP (`SidebarTrigger`
  *   di header shell & header Session).
+ * - Dialog pengumuman (tidak di Session view, paling banyak satu per
+ *   pemuatan): `InstallAppDialog` (HP yang belum memasang app) didahulukan,
+ *   lalu `UpdateDialog` (kabar versi baru, sekali per versi).
  */
 
+import { useEffect } from "react";
 import { AppSidebar } from "@/components/layout/AppSidebar";
 import { InstallAppBanner } from "@/components/layout/InstallAppBanner";
+import { InstallAppDialog } from "@/components/layout/InstallAppDialog";
+import { UpdateDialog } from "@/components/layout/UpdateDialog";
 import { InstallNotifications } from "@/components/skills/InstallNotifications";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { useInstallOffer } from "@/hooks/useInstallOffer";
 import { useRouter } from "@/hooks/useRouter";
 import { useSidebarData } from "@/hooks/useSidebarData";
+import { syncPush } from "@/lib/push";
 import { parseRoute, projectsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import { ProjectDetailPage } from "@/pages/projects/ProjectDetailPage";
@@ -35,6 +43,13 @@ export function AppShell() {
   const { pathname } = useRouter();
   const route = parseRoute(pathname);
   const sidebarData = useSidebarData(pathname);
+  const installOffer = useInstallOffer();
+
+  // Perangkat yang berlangganan push: segarkan langganannya di server dan
+  // siapkan endpoint untuk `notify_ack` (baru bisa setelah lock screen dibuka).
+  useEffect(() => {
+    void syncPush();
+  }, []);
 
   const isHome = route.name === "projects";
   /**
@@ -127,6 +142,9 @@ export function AppShell() {
       </SidebarProvider>
       {/* Notifikasi instalasi skill: global agar tetap tampil di halaman mana pun. */}
       <InstallNotifications />
+      <InstallAppDialog offer={installOffer} suppressed={isSession} />
+      {/* Di HP, tawaran install didahulukan selama masih berlaku. */}
+      <UpdateDialog suppressed={isSession || installOffer.kind !== null} />
     </TooltipProvider>
   );
 }

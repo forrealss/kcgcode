@@ -2,14 +2,18 @@
  * Settings -> About: logo + versi KCG Code, lalu kredit tim.
  *
  * Versi dari `GET /api/meta` — `"dev"` saat dijalankan lewat `bun dev`.
+ * Bila npm punya versi lebih baru, kartu update menampilkan perintah
+ * install-nya (dijalankan di komputer yang menjalankan kcgcode).
  * Tiap anggota tim adalah baris tautan ke profil GitHub-nya (tab baru).
  */
+import { CheckIcon, CircleArrowUpIcon, CopyIcon } from "lucide-react";
 import type * as React from "react";
 import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { apiFetch } from "@/lib/api";
+import { useAppInfo } from "@/hooks/useAppInfo";
 import { cn } from "@/lib/utils";
-import type { AppInfo } from "@/server/services/app-info";
+import type { UpdateInfo } from "@/server/services/update-check";
 import logo from "../../logo.svg";
 
 export interface TeamMember {
@@ -33,30 +37,20 @@ export function formatVersion(version: string): string {
 }
 
 export function AboutGroup() {
-  const [version, setVersion] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await apiFetch("/api/meta");
-        const info = (await res.json()) as AppInfo;
-        if (!cancelled) setVersion(info.version);
-      } catch {
-        if (!cancelled) setFailed(true);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  return <AboutView version={version} failed={failed} />;
+  const { info, failed } = useAppInfo();
+  return <AboutView version={info?.version ?? null} failed={failed} update={info?.update} />;
 }
 
 /** Tampilan murni (tanpa fetch) — dipakai komponen di atas & diuji SSR. */
-export function AboutView({ version, failed }: { version: string | null; failed: boolean }) {
+export function AboutView({
+  version,
+  failed,
+  update,
+}: {
+  version: string | null;
+  failed: boolean;
+  update?: UpdateInfo | null;
+}) {
   return (
     <>
       {/* Hero: kartu netral dengan SATU cahaya lembut dari atas (warna logo,
@@ -109,6 +103,8 @@ export function AboutView({ version, failed }: { version: string | null; failed:
               <Skeleton className="h-7 w-20 rounded-full" aria-label="Loading version" />
             )}
           </div>
+
+          {update && <UpdateCard update={update} />}
         </div>
       </section>
 
@@ -153,6 +149,52 @@ export function AboutView({ version, failed }: { version: string | null; failed:
         Built with Bun &amp; OpenCode.
       </p>
     </>
+  );
+}
+
+/** Versi baru tersedia: perintah install + tombol salin. */
+function UpdateCard({ update }: { update: UpdateInfo }) {
+  return (
+    <section
+      aria-labelledby="about-update"
+      className="mt-6 w-full max-w-sm rounded-2xl border bg-background p-4 text-left"
+    >
+      <h3 id="about-update" className="flex items-center gap-2 text-[14px] font-medium">
+        <CircleArrowUpIcon className="size-4 shrink-0 text-[#6D5CFB]" aria-hidden />
+        Update available: v{update.latest}
+      </h3>
+      <p className="mt-1 text-[13px] leading-snug text-muted-foreground">
+        Run this on the computer running KCG Code, then restart{" "}
+        <code className="font-mono">kcgcode</code>.
+      </p>
+      <div className="mt-3 flex items-center gap-1 rounded-lg bg-muted/70 pl-3">
+        <code className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{update.command}</code>
+        <CopyCommandButton value={update.command} />
+      </div>
+    </section>
+  );
+}
+
+function CopyCommandButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 1500);
+    return () => clearTimeout(t);
+  }, [copied]);
+  return (
+    <Button
+      type="button"
+      size="icon"
+      variant="ghost"
+      className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+      aria-label={copied ? "Copied" : "Copy command"}
+      onClick={() => {
+        void navigator.clipboard?.writeText(value).then(() => setCopied(true));
+      }}
+    >
+      {copied ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
+    </Button>
   );
 }
 

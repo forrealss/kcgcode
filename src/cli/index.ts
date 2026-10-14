@@ -1,10 +1,12 @@
 /**
  * Router CLI kcgcode — dipanggil dari `bin/kcgcode.ts`.
  */
+import { cachedUpdate } from "../server/services/update-check";
 import { type CliArgs, helpText, parseArgs } from "./args";
 import { runInit, runResetLock, runStart } from "./commands";
 import { runLogs, runStatus, runStop } from "./daemon";
 import { c, readPackageVersion, symbols } from "./theme";
+import { updateNotice } from "./update-notice";
 
 export async function runCli(argv: string[]): Promise<void> {
   const args = parseArgs(argv);
@@ -16,6 +18,9 @@ export async function runCli(argv: string[]): Promise<void> {
     case "version": {
       const v = await readPackageVersion();
       console.log(`kcgcode ${v}`);
+      // Dari cache cek terakhir (tanpa jaringan); stderr agar `$(kcgcode -v)` tetap bersih.
+      const update = process.stderr.isTTY ? await cachedUpdate() : null;
+      if (update) console.error(updateNotice(update));
       return;
     }
     case "invalid":

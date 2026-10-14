@@ -16,6 +16,7 @@
  */
 import type { SessionStore } from "../../db";
 import type {
+  AgentNotification,
   InteractivePrompt,
   MessagePart,
   PromptResponse,
@@ -43,6 +44,8 @@ export interface AttachedInfo {
 export interface WebSocketGatewayOptions {
   store: SessionStore;
   sessionManager: SessionManager;
+  /** Client melaporkan notifikasi sudah tampil di layarnya (`notify_ack`). */
+  onNotifyAck?: (id: string, endpoint: string) => void;
 }
 
 export interface WebSocketGateway {
@@ -83,6 +86,10 @@ export interface WebSocketGateway {
   notifyDataChanged(): void;
   notifyPromptResolved(sessionId: string, promptId: string): void;
   notifyError(sessionId: string, code: string, message: string): void;
+  /** Notifikasi agent ke koneksi mode daftar (sidebar ada di tiap halaman). */
+  notifyAgent(notification: AgentNotification): void;
+  /** Teruskan `notify_ack` dari Client ke layanan notifikasi. */
+  notifyAck(id: string, endpoint: string): void;
   detach(sub: Subscriber): void;
   subscriberCount(sessionId: string): number;
 }
@@ -339,6 +346,18 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     broadcast(sessionId, () => ({ type: "error", code, message }));
   }
 
+  function notifyAgent(notification: AgentNotification): void {
+    // Hanya koneksi mode daftar: tiap halaman punya sidebar (mode daftar),
+    // jadi cukup sekali per tab tanpa ikut ke koneksi per-Session.
+    for (const [sub, info] of subs) {
+      if (info.sessionId === null) sendSafe(sub, { type: "notify", notification });
+    }
+  }
+
+  function notifyAck(id: string, endpoint: string): void {
+    opts.onNotifyAck?.(id, endpoint);
+  }
+
   function detach(sub: Subscriber): void {
     subs.delete(sub);
   }
@@ -368,6 +387,8 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifyDataChanged,
     notifyPromptResolved,
     notifyError,
+    notifyAgent,
+    notifyAck,
     detach,
     subscriberCount,
   };

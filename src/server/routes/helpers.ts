@@ -68,6 +68,17 @@ export function errorStatus(code: string): number {
       return 409;
     case "PASSKEY_INVALID":
       return 401;
+    case "PUSH_ENDPOINT_INVALID":
+    case "PUSH_KEYS_INVALID":
+      return 400;
+    case "PUSH_LIMIT":
+      return 409;
+    case "PUSH_DEVICE_NOT_FOUND":
+      return 404;
+    // Layanan push (FCM/Apple/Mozilla) menolak atau tak terjangkau.
+    case "PUSH_DEVICE_GONE":
+    case "PUSH_SEND_FAILED":
+      return 502;
     case "PASSKEY_NOT_FOUND":
       return 404;
     // Tunnel: prasyarat belum terpenuhi.

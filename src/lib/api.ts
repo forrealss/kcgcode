@@ -153,6 +153,17 @@ export function apiErrorMessage(code: string): string {
       return "Couldn't verify the passkey. Try again.";
     case "PASSKEY_ALREADY_REGISTERED":
       return "This passkey is already added.";
+    case "PUSH_ENDPOINT_INVALID":
+    case "PUSH_KEYS_INVALID":
+      return "This browser returned an invalid push subscription.";
+    case "PUSH_LIMIT":
+      return "Too many devices receive notifications. Remove one first.";
+    case "PUSH_DEVICE_NOT_FOUND":
+      return "That device no longer receives notifications.";
+    case "PUSH_DEVICE_GONE":
+      return "The browser on that device has turned notifications off. Turn them on again there.";
+    case "PUSH_SEND_FAILED":
+      return "The push service didn't accept the notification. Try again later.";
     case "PASSKEY_LIMIT":
       return "You've reached the maximum of 20 passkeys. Remove one first.";
     case "PASSKEY_LOCK_REQUIRED":

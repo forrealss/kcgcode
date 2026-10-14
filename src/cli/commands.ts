@@ -37,6 +37,7 @@ import { disabledKeepAwake, startKeepAwake } from "./keep-awake";
 import { choosePort, portIsFree, requestedPort } from "./port";
 import { runSetup, type SetupOutcome, type SetupState } from "./setup";
 import { c, centerBlock, panel, row, symbols } from "./theme";
+import { updateNotice } from "./update-notice";
 
 /** Interval daemon menulis state + snapshot dashboard. */
 const DAEMON_STATE_MS = 2000;
@@ -189,12 +190,14 @@ export async function runStart(args: CliArgs): Promise<void> {
     // Keluar dari dashboard → pesan ditengahkan seperti dashboard; log daemon tetap polos.
     const say = (line: string) => console.log(dash ? centerBlock(line) : line);
     say(`\n${c.dim(`(${reason})`)} ${c.yellow("Saving session state and stopping…")}`);
+    const update = app.updates.available();
     try {
       await app.close();
     } catch (err) {
       console.error(c.red("Shutdown error:"), err);
     }
     say(c.greenBright(`${symbols.check} KCG Code stopped.`));
+    if (update && !daemonChild) say(updateNotice(update));
     process.exit(0);
   }
 
@@ -359,7 +362,8 @@ export function runInit(args: CliArgs): void {
 /**
  * Lupa PIN/password: hapus kunci aplikasi & cabut semua sesi langsung di
  * database lokal. Hanya bisa dijalankan dari mesin ini (akses shell), jadi
- * aman sebagai jalur pemulihan. Nickname & foto profil tidak diubah.
+ * aman sebagai jalur pemulihan. Nickname & foto profil tidak diubah;
+ * langganan notifikasi push semua perangkat dihapus.
  */
 export function runResetLock(): void {
   const dbPath = resolveEffectiveDbPath();
@@ -371,10 +375,13 @@ export function runResetLock(): void {
   try {
     const wasLocked = store.getAuthSettings(Date.now()).lockKind !== null;
     createAuthService({ store }).resetLock();
+    // Perangkat yang dulu berlangganan push ikut dilepas — notifikasi
+    // memuat judul Session, jadi tak boleh terus mengalir ke perangkat lama.
+    store.deleteAllPushSubscriptions();
     console.log(
       wasLocked
-        ? `${c.greenBright(symbols.check)} App lock removed and all devices signed out.`
-        : `${c.greenBright(symbols.check)} App was not locked. All device sessions cleared.`,
+        ? `${c.greenBright(symbols.check)} App lock removed, all devices signed out and push notifications turned off.`
+        : `${c.greenBright(symbols.check)} App was not locked. All device sessions and push subscriptions cleared.`,
     );
     console.log(
       `${c.dim("Set a new PIN or password in")} ${c.cyan("Settings → Security")}${c.dim(".")}`,

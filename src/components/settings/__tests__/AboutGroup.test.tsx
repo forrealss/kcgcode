@@ -23,6 +23,17 @@ describe("About", () => {
     expect(out).not.toContain("vdev");
   });
 
+  test("update tersedia -> kartu dengan perintah install", () => {
+    const update = { current: "0.3.0", latest: "0.4.0", command: "bun i -g kcg-code@latest" };
+    const out = renderToStaticMarkup(<AboutView version="0.3.0" failed={false} update={update} />);
+    expect(out).toContain("Update available: v0.4.0");
+    expect(out).toContain("bun i -g kcg-code@latest");
+    expect(out).toContain('aria-label="Copy command"');
+
+    const none = renderToStaticMarkup(<AboutView version="0.3.0" failed={false} update={null} />);
+    expect(none).not.toContain("Update available");
+  });
+
   test("versi gagal dimuat -> pesan, bukan skeleton", () => {
     const out = renderToStaticMarkup(<AboutView version={null} failed={true} />);
     expect(out).toContain("Version unavailable");

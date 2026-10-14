@@ -136,6 +136,10 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/auth/passkeys/register/options",
       "/api/auth/passkeys/register",
       "/api/auth/passkeys/x",
+      "/api/push/vapid-key",
+      "/api/push/devices",
+      "/api/push/devices/x",
+      "/api/push/devices/x/test",
     ];
     // Setiap pola rute /api terdaftar (kecuali publik) harus tercakup daftar
     // di atas — rute baru yang belum diuji membuat test ini gagal.
