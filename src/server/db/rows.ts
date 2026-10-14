@@ -36,6 +36,7 @@ export interface SessionRow {
   oc_session_id: string | null;
   model: string | null;
   agent: string | null;
+  permission_mode?: string | null;
   title: string | null;
   created_at: number;
   updated_at: number;
@@ -51,6 +52,7 @@ export interface PromptRow {
   title: string | null;
   options_json: string | null;
   questions_json: string | null;
+  detail?: string | null;
   status: string;
   created_at: number;
   resolved_at: number | null;
@@ -101,6 +103,7 @@ export function mapSession(r: SessionRow): Session {
     ocSessionId: r.oc_session_id,
     model: parseModel(r.model),
     agent: r.agent ?? null,
+    permissionMode: r.permission_mode ?? null,
     title: r.title ?? null,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -133,6 +136,7 @@ export function mapPrompt(r: PromptRow): InteractivePrompt {
     // ({label, description}) — normalisasi toleran terhadap keduanya.
     options: r.options_json ? normalizePromptOptions(JSON.parse(r.options_json)) : null,
     questions,
+    detail: r.detail ?? null,
     status: r.status as PromptStatus,
     createdAt: r.created_at,
     resolvedAt: r.resolved_at,

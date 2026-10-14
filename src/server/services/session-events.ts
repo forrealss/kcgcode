@@ -136,6 +136,17 @@ function fieldOptions(field: AgentFormField): { label: string; description?: str
   return [];
 }
 
+/** Form persetujuan rencana (`metadata.kind = "plan"`, mis. Claude ExitPlanMode). */
+export function isPlanForm(form: AgentForm): boolean {
+  return form.metadata?.kind === "plan";
+}
+
+/** Isi rencana (markdown) pada form persetujuan rencana. */
+function planText(form: AgentForm): string | null {
+  const plan = form.metadata?.plan;
+  return typeof plan === "string" && plan.trim() !== "" ? plan : null;
+}
+
 /**
  * Bangun Interactive_Prompt dari `form.created` (padanan v2 tool `question`).
  *
@@ -160,9 +171,10 @@ export function promptFromForm(form: AgentForm, sessionId: string, now: number):
   return {
     id: form.id,
     sessionId,
-    kind: "question",
+    kind: isPlanForm(form) ? "plan" : "question",
     type: "menu",
     title: first?.question ?? form.title,
+    ...(isPlanForm(form) ? { detail: planText(form) } : {}),
     options: firstOptions.length > 0 ? firstOptions : null,
     multiple: first?.multiple,
     custom: first?.custom !== false,

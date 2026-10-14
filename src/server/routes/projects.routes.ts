@@ -151,6 +151,19 @@ export function projectsRoutes(ctx: ApiRouteContext) {
       },
     },
 
+    // ---- Fitur khas agent (mis. permission mode Claude Code) ----
+    "/api/projects/:id/capabilities": {
+      GET: async (req: BunRequest<"/api/projects/:id/capabilities">) => {
+        try {
+          const res = await sessionManager.listCapabilities(req.params.id, agentTypeParam(req));
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ capabilities: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+    },
+
     // ---- Agent (mode) opencode: build/plan + agent kustom user ----
     "/api/projects/:id/agents": {
       GET: async (req: BunRequest<"/api/projects/:id/agents">) => {

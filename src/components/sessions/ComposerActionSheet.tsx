@@ -7,8 +7,10 @@
  */
 import { ChevronRightIcon, PaperclipIcon } from "lucide-react";
 import { AgentModeList } from "@/components/sessions/AgentModeList";
+import { PermissionModeList } from "@/components/sessions/PermissionModePicker";
 import { SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import type { UseAgentPickerResult } from "@/hooks/useAgentPicker";
+import type { UsePermissionModesResult } from "@/hooks/usePermissionModes";
 
 export interface ComposerActionSheetProps {
   /** Input tidak boleh dipakai (Session mati / sibuk) — aksi ikut terkunci. */
@@ -18,6 +20,15 @@ export interface ComposerActionSheetProps {
   agentPicker: UseAgentPickerResult;
   activeAgent: string | null;
   onPickAgent: (name: string | null) => void;
+  /**
+   * Agent dengan permission mode (mis. Claude Code): grup "Mode" berisi
+   * permission mode, menggantikan daftar agent.
+   */
+  permission?: {
+    picker: UsePermissionModesResult;
+    active: string | null;
+    onPick: (mode: string | null) => void;
+  };
 }
 
 export function ComposerActionSheet({
@@ -26,6 +37,7 @@ export function ComposerActionSheet({
   agentPicker,
   activeAgent,
   onPickAgent,
+  permission,
 }: ComposerActionSheetProps) {
   return (
     <SheetContent
@@ -74,20 +86,34 @@ export function ComposerActionSheet({
               Mode
             </h3>
             <p className="text-[12px] text-muted-foreground/80">
-              How the agent handles your next message
+              {permission
+                ? "What the agent may do without asking — takes effect right away"
+                : "How the agent handles your next message"}
             </p>
           </div>
           <div>
-            <AgentModeList
-              variant="sheet"
-              agents={agentPicker.agents}
-              loading={agentPicker.loading}
-              error={agentPicker.error}
-              activeAgent={activeAgent}
-              saving={agentPicker.saving}
-              disabled={disabled}
-              onPick={onPickAgent}
-            />
+            {permission ? (
+              <PermissionModeList
+                variant="sheet"
+                modes={permission.picker.modes ?? []}
+                active={permission.active}
+                saving={permission.picker.saving}
+                disabled={disabled}
+                error={permission.picker.error}
+                onPick={permission.onPick}
+              />
+            ) : (
+              <AgentModeList
+                variant="sheet"
+                agents={agentPicker.agents}
+                loading={agentPicker.loading}
+                error={agentPicker.error}
+                activeAgent={activeAgent}
+                saving={agentPicker.saving}
+                disabled={disabled}
+                onPick={onPickAgent}
+              />
+            )}
           </div>
         </section>
       </div>

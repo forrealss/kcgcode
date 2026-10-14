@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   oc_session_id TEXT,
   model TEXT,
   agent TEXT,
+  permission_mode TEXT,
   title TEXT,
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
@@ -193,8 +194,26 @@ export function runMigrations(db: Database): void {
     "questions_json",
     "ALTER TABLE prompts ADD COLUMN questions_json TEXT",
   );
+  // Isi tambahan prompt (markdown), mis. rencana pada kartu persetujuan plan.
+  ensureColumn(db, "prompts", "detail", "ALTER TABLE prompts ADD COLUMN detail TEXT");
   // Agent (mode) opencode pilihan Session — null = default opencode (build).
   ensureColumn(db, "sessions", "agent", "ALTER TABLE sessions ADD COLUMN agent TEXT");
+  // Permission mode pilihan Session (agent dengan capability `permissionModes`,
+  // mis. Claude Code), NULL = ikut default settings agent.
+  const hadPermissionMode = (
+    db.query("PRAGMA table_info(sessions)").all() as { name: string }[]
+  ).some((c) => c.name === "permission_mode");
+  ensureColumn(
+    db,
+    "sessions",
+    "permission_mode",
+    "ALTER TABLE sessions ADD COLUMN permission_mode TEXT",
+  );
+  if (!hadPermissionMode) {
+    // Dulu mode permission Claude Code disimpan di kolom `agent` — pindahkan.
+    db.exec(`UPDATE sessions SET permission_mode = agent, agent = NULL
+             WHERE agent_type = 'claude-code' AND agent IS NOT NULL`);
+  }
   // Model pilihan per Session (JSON `{providerID, modelID}`), NULL = default.
   ensureColumn(db, "sessions", "model", "ALTER TABLE sessions ADD COLUMN model TEXT");
   // Judul Session hasil generate opencode (SSE `session.updated`), NULL = belum ada.

@@ -232,7 +232,8 @@ export class ClaudeTurnTranslator {
     const key = `${apiMsgId}:${ev.index}`;
     if (ev.type === "content_block_start") {
       const block = ev.content_block as { type?: unknown } | undefined;
-      const kind = block?.type === "text" ? "text" : block?.type === "thinking" ? "reasoning" : null;
+      const kind =
+        block?.type === "text" ? "text" : block?.type === "thinking" ? "reasoning" : null;
       if (kind === null) return; // tool_use dirakit dari pesan `assistant`
       this.ensureTurn();
       this.blocks.set(key, { kind, ordinal: this.ordinals[kind]++, text: "", started: false });
@@ -240,7 +241,11 @@ export class ClaudeTurnTranslator {
     }
     const cur = this.blocks.get(key);
     if (!cur || this.messageId === null) return;
-    const base = { sessionID: this.sessionID, assistantMessageID: this.messageId, ordinal: cur.ordinal };
+    const base = {
+      sessionID: this.sessionID,
+      assistantMessageID: this.messageId,
+      ordinal: cur.ordinal,
+    };
     if (ev.type === "content_block_delta") {
       const delta = ev.delta as { type?: unknown; text?: unknown; thinking?: unknown } | undefined;
       const piece =

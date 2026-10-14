@@ -40,3 +40,19 @@ export interface SkillInfo {
   location: string | null;
   source: SkillSource;
 }
+
+/** Satu permission mode yang ditawarkan agent (mis. Claude Code `plan`). */
+export interface PermissionModeOption {
+  /** Id mode — nilai `Session.permissionMode`. */
+  id: string;
+  label: string;
+  description: string;
+  /** Mode berisiko (mis. melewati semua izin) — UI meminta konfirmasi. */
+  dangerous?: boolean;
+}
+
+/** Fitur khas agent yang perlu diketahui UI (`GET /api/projects/:id/capabilities`). */
+export interface AgentCapabilitiesInfo {
+  /** Permission mode yang bisa dipilih; kosong = agent tidak punya konsep ini. */
+  permissionModes: PermissionModeOption[];
+}

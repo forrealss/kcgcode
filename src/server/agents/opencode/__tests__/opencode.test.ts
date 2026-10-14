@@ -32,7 +32,9 @@ describe("versi opencode", () => {
     expect(
       await checkOpencodeVersion(async () => ({ ok: false, notFound: true, error: "ENOENT" })),
     ).toEqual({ ok: false, error: OPENCODE_NOT_FOUND });
-    expect(await checkOpencodeVersion(async () => ({ ok: true, output: "opencode v2.0.28" }))).toEqual({
+    expect(
+      await checkOpencodeVersion(async () => ({ ok: true, output: "opencode v2.0.28" })),
+    ).toEqual({
       ok: true,
       data: { version: "2.0.28", major: 2 },
     });
@@ -178,8 +180,16 @@ function fakeApi(pid = 100) {
         return {
           data: [
             { id: "opencode", name: "OpenCode", path: "/builtin/opencode.md" },
-            { id: "local", name: "local", path: path.join(dir, ".agents", "skills", "local", "SKILL.md") },
-            { id: "global", name: "global", path: path.resolve("/home/u/.agents/skills/global/SKILL.md") },
+            {
+              id: "local",
+              name: "local",
+              path: path.join(dir, ".agents", "skills", "local", "SKILL.md"),
+            },
+            {
+              id: "global",
+              name: "global",
+              path: path.resolve("/home/u/.agents/skills/global/SKILL.md"),
+            },
           ],
         };
       }),
@@ -310,16 +320,26 @@ describe("createOpencodeBackend", () => {
     r.data.event.subscribe((e) => events.push(e));
     const loc = { location: { directory: PROJ } };
     const base = { sessionID: "ses_1", assistantMessageID: "m", id: "call_1" };
-    apis[0]?.push({ type: "session.tool.input.started", ...loc, data: { ...base, name: "todowrite" } });
+    apis[0]?.push({
+      type: "session.tool.input.started",
+      ...loc,
+      data: { ...base, name: "todowrite" },
+    });
     apis[0]?.push({
       type: "session.tool.called",
       ...loc,
-      data: { ...base, input: { todos: [{ content: "a", status: "in_progress", priority: "high" }] } },
+      data: {
+        ...base,
+        input: { todos: [{ content: "a", status: "in_progress", priority: "high" }] },
+      },
     });
     await tick();
     const todos = [{ content: "a", status: "in_progress", priority: "high" }];
     expect(await r.data.session.todos("ses_1")).toEqual({ ok: true, data: todos });
-    expect(events.at(-1)).toEqual({ type: "agent.todos.updated", data: { sessionID: "ses_1", todos } });
+    expect(events.at(-1)).toEqual({
+      type: "agent.todos.updated",
+      data: { sessionID: "ses_1", todos },
+    });
   });
 
   test("reply request yang sudah tidak ditunggu -> AGENT_REQUEST_GONE; hapus session hilang = ok", async () => {
@@ -333,7 +353,9 @@ describe("createOpencodeBackend", () => {
     expect(
       await r.data.permission.reply({ sessionID: "s", requestID: "per_1", decision: "once" }),
     ).toEqual({ ok: false, error: AGENT_REQUEST_GONE });
-    expect(await r.data.form.reply({ sessionID: "s", formID: "frm_1", answer: { q0: "a" } })).toEqual({
+    expect(
+      await r.data.form.reply({ sessionID: "s", formID: "frm_1", answer: { q0: "a" } }),
+    ).toEqual({
       ok: false,
       error: AGENT_REQUEST_GONE,
     });
@@ -384,7 +406,14 @@ describe("createOpencodeBackend", () => {
     const c = r.data;
     expect(await c.model.list()).toEqual({
       ok: true,
-      data: [{ providerID: "opencode", providerName: "OpenCode", modelID: "big-pickle", name: "Big Pickle" }],
+      data: [
+        {
+          providerID: "opencode",
+          providerName: "OpenCode",
+          modelID: "big-pickle",
+          name: "Big Pickle",
+        },
+      ],
     });
     expect(await c.agent.list()).toEqual({
       ok: true,
@@ -442,8 +471,21 @@ describe("createOpencodeBackend", () => {
     await backend.shutdown();
   });
 
+  test("tanpa permission mode: capability kosong, hanya null yang diterima", async () => {
+    const { backend } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    expect(r.data.capabilities.permissionModes).toEqual([]);
+    expect(await r.data.session.setPermissionMode("ses_1", null)).toEqual({ ok: true });
+    expect(await r.data.session.setPermissionMode("ses_1", "plan")).toEqual({
+      ok: false,
+      error: "AGENT_PERMISSION_MODE_UNSUPPORTED",
+    });
+  });
+
   test("directoryKey menyamakan pemisah & (Windows) huruf besar/kecil", () => {
     expect(directoryKey(PROJ)).toBe(directoryKey(`${PROJ}${path.sep}`));
-    if (process.platform === "win32") expect(directoryKey("C:\\Proj")).toBe(directoryKey("c:/proj"));
+    if (process.platform === "win32")
+      expect(directoryKey("C:\\Proj")).toBe(directoryKey("c:/proj"));
   });
 });

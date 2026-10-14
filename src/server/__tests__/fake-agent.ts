@@ -53,6 +53,10 @@ export interface FakeAgentClient extends AgentClient {
   promptModels: (string | null)[];
   promptAgents: (string | null)[];
   promptSystems: (string | null)[];
+  /** Permission mode yang berlaku per prompt (null = default agent). */
+  promptModes: (string | null)[];
+  /** Hasil `setPermissionMode` (untuk mensimulasikan kegagalan). */
+  permissionModeResult: Res;
   /** Hook setelah prompt diterima (mis. memancarkan balasan palsu). */
   onPrompt?: (sessionID: string, text: string) => void;
 }
@@ -69,12 +73,12 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
   /** Pilihan yang diterapkan per Session (switchModel/switchAgent/instructions). */
   const applied = new Map<
     string,
-    { model: string | null; agent: string | null; system: string | null }
+    { model: string | null; agent: string | null; system: string | null; mode: string | null }
   >();
   const appliedFor = (id: string) => {
     let a = applied.get(id);
     if (!a) {
-      a = { model: null, agent: null, system: null };
+      a = { model: null, agent: null, system: null, mode: null };
       applied.set(id, a);
     }
     return a;
@@ -84,7 +88,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
   const client: FakeAgentClient = {
     kind: "opencode",
     directory: "/proj",
-    capabilities: { skillReload: true },
+    capabilities: { skillReload: true, permissionModes: [] },
     calls,
     get subscribed() {
       return eventCb !== null;
@@ -126,6 +130,8 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
     promptModels: [],
     promptAgents: [],
     promptSystems: [],
+    promptModes: [],
+    permissionModeResult: { ok: true },
     session: {
       async create(input) {
         calls.push(`session.create:${input?.title ?? ""}`);
@@ -169,6 +175,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
         client.promptModels.push(a.model);
         client.promptAgents.push(a.agent);
         client.promptSystems.push(a.system);
+        client.promptModes.push(a.mode);
         const delay = client.promptDelays.shift();
         if (delay) await Bun.sleep(delay);
         if (!client.promptResult.ok) return fail(client.promptResult, "AGENT_PROMPT_FAILED");
@@ -177,6 +184,17 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
       },
       async interrupt(sessionID) {
         calls.push(`session.interrupt:${sessionID}`);
+        return { ok: true };
+      },
+      async setPermissionMode(sessionID, mode) {
+        calls.push(`session.permission_mode:${sessionID}:${mode}`);
+        if (mode !== null && client.capabilities.permissionModes.length === 0) {
+          return { ok: false, error: "AGENT_PERMISSION_MODE_UNSUPPORTED" };
+        }
+        if (!client.permissionModeResult.ok) {
+          return fail(client.permissionModeResult, "AGENT_PERMISSION_MODE_FAILED");
+        }
+        appliedFor(sessionID).mode = mode;
         return { ok: true };
       },
       async todos(sessionID) {

@@ -39,7 +39,9 @@ const PASS_THROUGH = new Set<AgentEventType>([
 type Raw = { type?: unknown; data?: unknown; location?: unknown };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === "object" && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  return typeof v === "object" && v !== null && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : null;
 }
 
 /** Direktori event (v2 `location.directory`) bila ada. */

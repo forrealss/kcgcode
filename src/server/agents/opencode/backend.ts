@@ -208,7 +208,9 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
     const ev = translateOpencodeEvent(raw);
     if (!ev) return;
     const sessionID =
-      ev.type === "form.created" ? ev.data.form.sessionID : (ev.data as { sessionID: string }).sessionID;
+      ev.type === "form.created"
+        ? ev.data.form.sessionID
+        : (ev.data as { sessionID: string }).sessionID;
     if (ev.location) sessionDirs.set(sessionID, directoryKey(ev.location.directory));
     const dirKey = sessionDirs.get(sessionID);
     if (!dirKey) return; // Session milik aplikasi opencode lain / belum dikenal.
@@ -307,7 +309,10 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
   }
 
   /** Seperti `call` untuk reply: request yang sudah tidak ditunggu -> GONE. */
-  async function reply(code: string, fn: (a: OpencodeApi) => Promise<unknown>): Promise<SimpleResult> {
+  async function reply(
+    code: string,
+    fn: (a: OpencodeApi) => Promise<unknown>,
+  ): Promise<SimpleResult> {
     try {
       await fn(await api());
       return { ok: true };
@@ -321,7 +326,10 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
     const dirKey = directoryKey(directory);
     const location = { location: { directory } };
     /** Pilihan terakhir yang sudah diterapkan per Session (hindari RPC berulang). */
-    const applied = new Map<string, { model?: string; agent?: string; instructions?: string | null }>();
+    const applied = new Map<
+      string,
+      { model?: string; agent?: string; instructions?: string | null }
+    >();
     const appliedFor = (sessionID: string) => {
       let a = applied.get(sessionID);
       if (!a) {
@@ -331,12 +339,13 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
       return a;
     };
 
-    const ok = <T>(r: Result<T>): SimpleResult => (r.ok ? { ok: true } : { ok: false, error: r.error });
+    const ok = <T>(r: Result<T>): SimpleResult =>
+      r.ok ? { ok: true } : { ok: false, error: r.error };
 
     const client: AgentClient = {
       kind: "opencode",
       directory,
-      capabilities: { skillReload: true },
+      capabilities: { skillReload: true, permissionModes: [] },
       session: {
         async create(input = {}) {
           const res = await call("AGENT_CREATE_SESSION_FAILED", (a) =>
@@ -354,7 +363,10 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
             const info = rec(await (await api()).session.get({ sessionID }));
             const dir = str(rec(info.location).directory);
             sessionDirs.set(sessionID, dir ? directoryKey(dir) : dirKey);
-            return { ok: true, data: { id: sessionID, title: str(info.title) ?? undefined, directory } };
+            return {
+              ok: true,
+              data: { id: sessionID, title: str(info.title) ?? undefined, directory },
+            };
           } catch (e) {
             return { ok: false, error: `AGENT_SESSION_NOT_FOUND: ${errorMessage(e)}` };
           }
@@ -362,7 +374,9 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
         async remove(sessionID) {
           applied.delete(sessionID);
           todos.delete(sessionID);
-          const res = await reply("AGENT_DELETE_SESSION_FAILED", (a) => a.session.remove({ sessionID }));
+          const res = await reply("AGENT_DELETE_SESSION_FAILED", (a) =>
+            a.session.remove({ sessionID }),
+          );
           // Session sudah tidak ada = tujuan tercapai.
           return res.ok || res.error === AGENT_REQUEST_GONE ? { ok: true } : res;
         },
@@ -373,19 +387,23 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
           // `null` = default: hanya perlu kembali bila sebelumnya diganti.
           if (!model) {
             if (a.model === undefined) return { ok: true };
-            const def = await call("AGENT_SWITCH_MODEL_FAILED", (x) =>
-              x.model.default(location),
-            );
+            const def = await call("AGENT_SWITCH_MODEL_FAILED", (x) => x.model.default(location));
             if (!def.ok) return def;
             const ref = rec(rec(def.data).data);
             const res = await call("AGENT_SWITCH_MODEL_FAILED", (x) =>
-              x.session.switchModel({ sessionID, model: { id: ref.id, providerID: ref.providerID } }),
+              x.session.switchModel({
+                sessionID,
+                model: { id: ref.id, providerID: ref.providerID },
+              }),
             );
             if (res.ok) a.model = undefined;
             return ok(res);
           }
           const res = await call("AGENT_SWITCH_MODEL_FAILED", (x) =>
-            x.session.switchModel({ sessionID, model: { id: model.modelID, providerID: model.providerID } }),
+            x.session.switchModel({
+              sessionID,
+              model: { id: model.modelID, providerID: model.providerID },
+            }),
           );
           if (res.ok) a.model = want;
           return ok(res);
@@ -440,6 +458,13 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
         async interrupt(sessionID) {
           return ok(await call("AGENT_ABORT_FAILED", (a) => a.session.interrupt({ sessionID })));
         },
+        // opencode v2 tidak punya permission mode tingkat Session (izin diatur
+        // lewat agent & config) — hanya `null` (tanpa pilihan) yang diterima.
+        async setPermissionMode(_sessionID, mode) {
+          return mode === null
+            ? { ok: true }
+            : { ok: false, error: "AGENT_PERMISSION_MODE_UNSUPPORTED" };
+        },
         async todos(sessionID) {
           return { ok: true, data: todos.get(sessionID) ?? [] };
         },
@@ -452,7 +477,9 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
       },
       form: {
         reply: ({ sessionID, formID, answer }) =>
-          reply("AGENT_FORM_REPLY_FAILED", (a) => a.session.form.reply({ sessionID, formID, answer })),
+          reply("AGENT_FORM_REPLY_FAILED", (a) =>
+            a.session.form.reply({ sessionID, formID, answer }),
+          ),
         cancel: ({ sessionID, formID }) =>
           reply("AGENT_FORM_CANCEL_FAILED", (a) => a.session.form.cancel({ sessionID, formID })),
       },

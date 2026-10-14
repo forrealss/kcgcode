@@ -24,7 +24,7 @@ export function createSessionRepo(db: Database) {
   const q = {
     projectById: db.query("SELECT id FROM projects WHERE id = ?"),
     insertSession: db.query(
-      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, agent, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, agent, permission_mode, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getSession: db.query("SELECT * FROM sessions WHERE id = ?"),
     getSessionByOcId: db.query("SELECT * FROM sessions WHERE oc_session_id = ?"),
@@ -35,6 +35,9 @@ export function createSessionRepo(db: Database) {
     ),
     updateSessionModel: db.query("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?"),
     updateSessionAgent: db.query("UPDATE sessions SET agent = ?, updated_at = ? WHERE id = ?"),
+    updateSessionPermissionMode: db.query(
+      "UPDATE sessions SET permission_mode = ?, updated_at = ? WHERE id = ?",
+    ),
     updateSessionTitle: db.query("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?"),
     deleteSessionMessages: db.query("DELETE FROM messages WHERE session_id = ?"),
     deleteSessionPrompts: db.query("DELETE FROM prompts WHERE session_id = ?"),
@@ -65,6 +68,7 @@ export function createSessionRepo(db: Database) {
           session.ocSessionId,
           session.model ? JSON.stringify(session.model) : null,
           session.agent ?? null,
+          session.permissionMode ?? null,
           session.title ?? null,
           session.createdAt,
           session.updatedAt,
@@ -132,6 +136,20 @@ export function createSessionRepo(db: Database) {
       try {
         if (!findRow(sessionId)) return errResult("SESSION_NOT_FOUND");
         q.updateSessionAgent.run(agent ?? null, Date.now(), sessionId);
+        return { ok: true, data: mapSession(findRow(sessionId) as SessionRow) };
+      } catch (e) {
+        return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);
+      }
+    },
+
+    /**
+     * Perbarui permission mode Session (`null` = default settings agent) tanpa
+     * mengubah status.
+     */
+    updateSessionPermissionMode(sessionId: string, mode: string | null): Result<Session> {
+      try {
+        if (!findRow(sessionId)) return errResult("SESSION_NOT_FOUND");
+        q.updateSessionPermissionMode.run(mode ?? null, Date.now(), sessionId);
         return { ok: true, data: mapSession(findRow(sessionId) as SessionRow) };
       } catch (e) {
         return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);

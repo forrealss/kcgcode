@@ -47,6 +47,13 @@ export interface Session {
   model: SessionModel | null;
   /** Agent (mode) pilihan; null = agent default opencode (build). */
   agent: string | null;
+  /**
+   * Permission mode pilihan (agent dengan capability `permissionModes`, mis.
+   * Claude Code: `default`, `acceptEdits`, `plan`, …). null = ikut default
+   * settings agent. Ikut berubah bila agent sendiri berganti mode (mis.
+   * rencana disetujui).
+   */
+  permissionMode?: string | null;
   createdAt: number;
   updatedAt: number;
 }

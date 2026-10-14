@@ -18,6 +18,7 @@ import type {
   FileChange,
   McpServerInfo,
   ModelOption,
+  PermissionModeOption,
   SkillInfo,
   TodoItem,
 } from "../../types";
@@ -117,7 +118,11 @@ export type AgentEvent =
   | Ev<"session.tool.input.started", StepData<{ id: string; name: string }>>
   | Ev<
       "session.tool.called",
-      StepData<{ id: string; input: Record<string, unknown>; /** Nama tool bila adapter tahu. */ name?: string }>
+      StepData<{
+        id: string;
+        input: Record<string, unknown> /** Nama tool bila adapter tahu. */;
+        name?: string;
+      }>
     >
   | Ev<"session.tool.progress", StepData<{ id: string; metadata?: Record<string, unknown> }>>
   | Ev<
@@ -142,7 +147,12 @@ export type AgentEvent =
   /** Tanda hidup tanpa konten (proses agent masih bekerja). */
   | Ev<"agent.activity", SessionData>
   /** Task list agent berubah (TodoWrite Claude / todowrite opencode). */
-  | Ev<"agent.todos.updated", SessionData<{ todos: TodoItem[] }>>;
+  | Ev<"agent.todos.updated", SessionData<{ todos: TodoItem[] }>>
+  /**
+   * Permission mode Session yang BERLAKU di agent berubah — termasuk
+   * perubahan oleh agent sendiri (mis. rencana disetujui -> `acceptEdits`).
+   */
+  | Ev<"agent.permission_mode.changed", SessionData<{ mode: string }>>;
 
 export type AgentEventType = AgentEvent["type"];
 
@@ -180,12 +190,14 @@ export type AgentPermissionDecision = "once" | "always" | "reject";
 
 /**
  * Fitur yang dimiliki sebuah agent — UI & Session_Manager memakai ini alih-alih
- * mengecek tipe agent. Fitur khusus Claude Code (permission mode, slash
- * command, dst.) ditambahkan di sini pada fase berikutnya.
+ * mengecek tipe agent. Fitur khas agent (mis. permission mode Claude Code)
+ * dideklarasikan di sini, bukan dipetakan ke konsep opencode.
  */
 export interface AgentCapabilities {
   /** Daftar skill perlu di-refresh (cache sisi agent) setelah skill dipasang. */
   skillReload: boolean;
+  /** Permission mode yang ditawarkan; kosong = agent tidak punya konsep ini. */
+  permissionModes: PermissionModeOption[];
 }
 
 export interface AgentClient {
@@ -207,10 +219,21 @@ export interface AgentClient {
     /** Instruksi tambahan Project (custom instruction); `null` = hapus. */
     instructions(sessionID: string, text: string | null): Promise<SimpleResult>;
     /**
+     * Ganti permission mode Session (`null` = default settings agent). Berlaku
+     * SEGERA — juga di tengah turn yang sedang berjalan — bila agent mendukung
+     * (`capabilities.permissionModes`); selain itu error
+     * `AGENT_PERMISSION_MODE_UNSUPPORTED`.
+     */
+    setPermissionMode(sessionID: string, mode: string | null): Promise<SimpleResult>;
+    /**
      * Kirim prompt tanpa menunggu balasan. Hasil turn tiba lewat event dan
      * ditutup `session.execution.succeeded|failed|interrupted`.
      */
-    prompt(input: { sessionID: string; text: string; files?: AgentPromptFile[] }): Promise<SimpleResult>;
+    prompt(input: {
+      sessionID: string;
+      text: string;
+      files?: AgentPromptFile[];
+    }): Promise<SimpleResult>;
     /** Hentikan turn yang sedang berjalan. */
     interrupt(sessionID: string): Promise<SimpleResult>;
     /** Task list Session (kosong bila agent belum memakainya). */
@@ -224,7 +247,11 @@ export interface AgentClient {
     }): Promise<SimpleResult>;
   };
   form: {
-    reply(input: { sessionID: string; formID: string; answer: AgentFormAnswer }): Promise<SimpleResult>;
+    reply(input: {
+      sessionID: string;
+      formID: string;
+      answer: AgentFormAnswer;
+    }): Promise<SimpleResult>;
     cancel(input: { sessionID: string; formID: string }): Promise<SimpleResult>;
   };
   model: { list(): Promise<Result<ModelOption[]>> };

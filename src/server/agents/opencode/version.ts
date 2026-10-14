@@ -29,7 +29,9 @@ export function parseOpencodeVersion(output: string): OpencodeVersion | null {
 }
 
 /** Jalankan `opencode --version` (injectable untuk test). */
-export type VersionProbe = () => Promise<{ ok: true; output: string } | { ok: false; notFound: boolean; error: string }>;
+export type VersionProbe = () => Promise<
+  { ok: true; output: string } | { ok: false; notFound: boolean; error: string }
+>;
 
 export const defaultVersionProbe: VersionProbe = async () => {
   try {
@@ -63,7 +65,10 @@ export async function checkOpencodeVersion(
 ): Promise<Result<OpencodeVersion>> {
   const res = await probe();
   if (!res.ok) {
-    return { ok: false, error: res.notFound ? OPENCODE_NOT_FOUND : `SERVER_START_FAILED: ${res.error}` };
+    return {
+      ok: false,
+      error: res.notFound ? OPENCODE_NOT_FOUND : `SERVER_START_FAILED: ${res.error}`,
+    };
   }
   const v = parseOpencodeVersion(res.output);
   if (!v) return { ok: false, error: "SERVER_START_FAILED: unable to read the opencode version" };

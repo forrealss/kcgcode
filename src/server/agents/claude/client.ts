@@ -37,10 +37,10 @@ import {
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
-  AgentOption,
   FileChange,
   McpServerInfo,
   ModelOption,
+  PermissionModeOption,
   TodoItem,
 } from "../../../types";
 import type { Result, SimpleResult } from "../../result";
@@ -71,16 +71,51 @@ const MODELS_CACHE_MS = 5 * 60_000;
 const STDERR_TAIL_LINES = 20;
 
 /**
- * Mode permission yang ditawarkan sebagai "agent" di pemilih mode composer.
- * `default` = ikuti `permissions.defaultMode` di settings Claude Code user.
+ * Permission mode Claude Code (`PermissionMode` SDK). Session tanpa pilihan
+ * (`null`) mengikuti `permissions.defaultMode` di settings user.
  */
-export const CLAUDE_AGENTS: AgentOption[] = [
-  { name: "default", mode: "primary", description: "Follow your Claude Code permission settings" },
-  { name: "acceptEdits", mode: "primary", description: "Auto-approve file edits" },
-  { name: "plan", mode: "primary", description: "Plan only — no edits or commands" },
+export const CLAUDE_PERMISSION_MODES: PermissionModeOption[] = [
+  {
+    id: "default",
+    label: "Ask before acting",
+    description: "Asks before edits and commands",
+  },
+  {
+    id: "acceptEdits",
+    label: "Accept edits",
+    description: "Auto-approves file edits; still asks for commands",
+  },
+  {
+    id: "plan",
+    label: "Plan",
+    description: "Read-only: researches and proposes a plan for your approval",
+  },
+  {
+    id: "auto",
+    label: "Auto",
+    description: "A classifier approves safe actions and asks about the rest",
+  },
+  {
+    id: "dontAsk",
+    label: "Don't ask",
+    description: "Never asks — anything not pre-approved is denied",
+  },
+  {
+    id: "bypassPermissions",
+    label: "Bypass permissions",
+    description: "Runs every tool without asking. Use only in a sandbox",
+    dangerous: true,
+  },
 ];
 
-const PERMISSION_MODES = new Set<string>(["default", "acceptEdits", "plan"]);
+const PERMISSION_MODE_IDS = new Set(CLAUDE_PERMISSION_MODES.map((m) => m.id));
+
+/** Keputusan kartu persetujuan rencana (`ExitPlanMode`) -> mode berikutnya. */
+const PLAN_DECISIONS = [
+  { value: "acceptEdits", label: "Yes, and auto-accept edits" },
+  { value: "default", label: "Yes, and approve each edit" },
+  { value: "plan", label: "No, keep planning" },
+] as const;
 
 /** Subset `Query` SDK yang dipakai (di-mock pada test). */
 export interface ClaudeQueryLike extends AsyncIterable<SDKMessage> {
@@ -184,9 +219,11 @@ interface LiveSession {
   model: string | null;
   mode: string | null;
   system: string | null;
-  /** Pilihan untuk prompt berikutnya (`session.switchModel/Agent/instructions`). */
+  /** Pilihan untuk prompt berikutnya (`session.switchModel/setPermissionMode/instructions`). */
   wantModel: string | null;
   wantMode: string | null;
+  /** Mode yang terakhir dilaporkan CLI (`system/init` / `system/status`). */
+  reportedMode: string | null;
   wantSystem: string | null;
   /** Transcript sudah ada di disk -> proses berikutnya pakai `resume`. */
   persisted: boolean;
@@ -211,7 +248,7 @@ interface LiveSession {
 
 interface PendingAsk {
   sessionId: string;
-  kind: "permission" | "question";
+  kind: "permission" | "question" | "plan";
   input: Record<string, unknown>;
   suggestions?: PermissionUpdate[];
   allowAlways: boolean;
@@ -405,6 +442,57 @@ export function formFromQuestions(
   };
 }
 
+/** Field keputusan pada form persetujuan rencana. */
+export const PLAN_DECISION_KEY = "decision";
+
+/**
+ * Form persetujuan rencana dari input `ExitPlanMode` (Claude selesai
+ * merencanakan di plan mode). Isi rencana (markdown) dibawa di
+ * `metadata.plan`; jawaban bebas = masukan agar Claude merevisi rencana.
+ */
+export function planForm(id: string, sessionID: string, input: Record<string, unknown>): AgentForm {
+  const plan = typeof input.plan === "string" ? input.plan : null;
+  return {
+    id,
+    sessionID,
+    title: "Ready to implement this plan?",
+    metadata: { kind: "plan", ...(plan ? { plan } : {}) },
+    fields: [
+      {
+        key: PLAN_DECISION_KEY,
+        type: "string",
+        title: "Plan",
+        description: "Ready to implement this plan?",
+        options: PLAN_DECISIONS.map((d) => ({ value: d.value, label: d.label })),
+        custom: true,
+      },
+    ],
+  };
+}
+
+/**
+ * Hasil `canUseTool` untuk keputusan rencana: setuju -> jalankan rencana dan
+ * ganti mode Session (seperti Claude Code CLI); tetap merencanakan / masukan
+ * bebas -> tolak agar Claude merevisi rencana.
+ */
+export function planDecision(input: Record<string, unknown>, value: unknown): PermissionResult {
+  const decision = typeof value === "string" ? value.trim() : "";
+  if (decision === "acceptEdits" || decision === "default") {
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      updatedPermissions: [{ type: "setMode", mode: decision, destination: "session" }],
+    };
+  }
+  if (decision === "" || decision === "plan") {
+    return { behavior: "deny", message: "The user wants to keep planning. Refine the plan." };
+  }
+  return {
+    behavior: "deny",
+    message: `The user wants changes to the plan before implementing it: ${decision}`,
+  };
+}
+
 export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}): ClaudeClient {
   const runQuery: ClaudeQueryFn =
     opts.query ?? ((params) => sdkQuery(params) as unknown as ClaudeQueryLike);
@@ -449,6 +537,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         system: null,
         wantModel: null,
         wantMode: null,
+        reportedMode: null,
         wantSystem: null,
         persisted,
         running: false,
@@ -554,12 +643,32 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     emit({ type: "session.execution.failed", data: { sessionID: live.id, error } });
   }
 
+  /** Catat mode yang dilaporkan CLI; pancarkan perubahan saja. */
+  function reportMode(live: LiveSession, mode: string): void {
+    if (live.reportedMode === mode) return;
+    live.reportedMode = mode;
+    // Proses kini berjalan dengan mode ini — pilihan berikutnya dibandingkan
+    // terhadapnya (hindari `setPermissionMode` ulang yang tidak perlu).
+    live.mode = mode;
+    live.wantMode = mode;
+    emit({ type: "agent.permission_mode.changed", data: { sessionID: live.id, mode } });
+  }
+
   function handleMessage(live: LiveSession, msg: SDKMessage): void {
     const m = msg as unknown as Record<string, unknown>;
     // Tanda hidup apa pun -> reset timer idle turn (tool lama, retry, dll).
     if (live.running) emit({ type: "agent.activity", data: { sessionID: live.id } });
 
     if (m.type === "system") {
+      // Mode yang BERLAKU dilaporkan CLI di `init` (awal tiap turn) dan
+      // `status` (mis. setelah rencana disetujui atau mode diganti) —
+      // diteruskan agar pilihan di UI selalu mengikuti keadaan sebenarnya.
+      if (
+        (m.subtype === "init" || m.subtype === "status") &&
+        typeof m.permissionMode === "string"
+      ) {
+        reportMode(live, m.permissionMode);
+      }
       if (m.subtype === "init") {
         live.persisted = true;
         const servers = Array.isArray(m.mcp_servers) ? m.mcp_servers : [];
@@ -667,12 +776,17 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     input: Record<string, unknown>,
     options: Parameters<CanUseTool>[2],
   ): Promise<PermissionResult> {
-    const isQuestion = toolName === "AskUserQuestion";
-    const requestID = `${isQuestion ? "frm" : "per"}_${randomUUID()}`;
+    const kind: PendingAsk["kind"] =
+      toolName === "AskUserQuestion"
+        ? "question"
+        : toolName === "ExitPlanMode"
+          ? "plan"
+          : "permission";
+    const requestID = `${kind === "permission" ? "per" : "frm"}_${randomUUID()}`;
     const result = new Promise<PermissionResult>((resolve) => {
       pending.set(requestID, {
         sessionId: live.id,
-        kind: isQuestion ? "question" : "permission",
+        kind,
         input,
         suggestions: options.suggestions,
         allowAlways: options.suppressAlwaysAllowRule !== true,
@@ -688,8 +802,10 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       );
     });
 
-    if (isQuestion) {
+    if (kind === "question") {
       emit({ type: "form.created", data: { form: formFromQuestions(requestID, live.id, input) } });
+    } else if (kind === "plan") {
+      emit({ type: "form.created", data: { form: planForm(requestID, live.id, input) } });
     } else {
       // Akses di luar direktori project dilaporkan CLI lewat `blockedPath`.
       const blocked = typeof options.blockedPath === "string" ? options.blockedPath : null;
@@ -718,7 +834,10 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       ...(live.persisted ? { resume: live.id } : { sessionId: live.id }),
       ...(model ? { model } : {}),
       // Tanpa mode eksplisit: ikuti `permissions.defaultMode` user.
-      ...(mode && mode !== "default" ? { permissionMode: mode as PermissionMode } : {}),
+      ...(mode ? { permissionMode: mode as PermissionMode } : {}),
+      // Hanya MENGIZINKAN pindah ke `bypassPermissions` (dipilih user secara
+      // eksplisit lewat konfirmasi di UI) — tidak mengaktifkannya.
+      allowDangerouslySkipPermissions: true,
       ...(system
         ? {
             systemPrompt: {
@@ -771,7 +890,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       } else {
         const q = live.query;
         if (live.wantModel !== live.model) {
-          await withTimeout(q.setModel(live.wantModel ?? undefined), CONTROL_TIMEOUT_MS, "setModel");
+          await withTimeout(
+            q.setModel(live.wantModel ?? undefined),
+            CONTROL_TIMEOUT_MS,
+            "setModel",
+          );
           live.model = live.wantModel;
         }
         if (live.wantMode !== live.mode) {
@@ -792,7 +915,10 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       });
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: `AGENT_PROMPT_FAILED: Failed to start Claude Code: ${(e as Error).message}` };
+      return {
+        ok: false,
+        error: `AGENT_PROMPT_FAILED: Failed to start Claude Code: ${(e as Error).message}`,
+      };
     }
   }
 
@@ -908,7 +1034,10 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     return ask;
   }
 
-  async function replyPermission(requestID: string, decision: "once" | "always" | "reject"): Promise<SimpleResult> {
+  async function replyPermission(
+    requestID: string,
+    decision: "once" | "always" | "reject",
+  ): Promise<SimpleResult> {
     const ask = takePending(requestID, "permission");
     if (!ask) return { ok: false, error: AGENT_REQUEST_GONE };
     if (decision === "reject") {
@@ -930,6 +1059,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   }
 
   async function replyForm(formID: string, answer: AgentFormAnswer): Promise<SimpleResult> {
+    const plan = takePending(formID, "plan");
+    if (plan) {
+      plan.resolve(planDecision(plan.input, answer[PLAN_DECISION_KEY]));
+      return { ok: true };
+    }
     const ask = takePending(formID, "question");
     if (!ask) return { ok: false, error: AGENT_REQUEST_GONE };
     const questions = Array.isArray(ask.input.questions) ? ask.input.questions : [];
@@ -940,10 +1074,40 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       const question = (q as { question?: unknown } | null)?.question;
       if (typeof question !== "string") return;
       const value = answer[`q${i}`];
-      map[question] = Array.isArray(value) ? value.join(", ") : value === undefined ? "" : String(value);
+      map[question] = Array.isArray(value)
+        ? value.join(", ")
+        : value === undefined
+          ? ""
+          : String(value);
     });
     ask.resolve({ behavior: "allow", updatedInput: { ...ask.input, answers: map } });
     return { ok: true };
+  }
+
+  /**
+   * Ganti permission mode Session. Proses `claude` yang hidup diganti modenya
+   * SEGERA (`setPermissionMode` SDK) — juga di tengah turn; tanpa proses,
+   * mode dipakai saat proses berikutnya di-spawn.
+   */
+  async function setPermissionMode(sessionId: string, mode: string | null): Promise<SimpleResult> {
+    if (mode !== null && !PERMISSION_MODE_IDS.has(mode)) {
+      return { ok: false, error: "INVALID_PERMISSION_MODE" };
+    }
+    const live = getOrCreate(sessionId, false);
+    live.wantMode = mode;
+    const q = live.query;
+    if (!q || mode === live.mode) return { ok: true };
+    try {
+      await withTimeout(
+        q.setPermissionMode((mode ?? "default") as PermissionMode),
+        CONTROL_TIMEOUT_MS,
+        "setPermissionMode",
+      );
+      live.mode = mode;
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: `AGENT_PERMISSION_MODE_FAILED: ${(e as Error).message}` };
+    }
   }
 
   async function interrupt(sessionId: string): Promise<SimpleResult> {
@@ -998,7 +1162,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   return {
     kind: "claude-code",
     directory: cwd,
-    capabilities: { skillReload: false },
+    capabilities: { skillReload: false, permissionModes: CLAUDE_PERMISSION_MODES },
     session: {
       async create() {
         // Proses `claude` baru di-spawn saat prompt pertama (`sessionId` ini).
@@ -1019,10 +1183,12 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         getOrCreate(sessionId, false).wantModel = selectedModel(model);
         return { ok: true };
       },
-      async switchAgent(sessionId, agent) {
-        getOrCreate(sessionId, false).wantMode = agent && PERMISSION_MODES.has(agent) ? agent : null;
+      // Claude Code memakai permission mode, bukan agent percakapan ala
+      // opencode (lihat `setPermissionMode`).
+      async switchAgent() {
         return { ok: true };
       },
+      setPermissionMode,
       async instructions(sessionId, text) {
         getOrCreate(sessionId, false).wantSystem = text?.trim() ? text : null;
         return { ok: true };
@@ -1039,16 +1205,22 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     form: {
       reply: ({ formID, answer }) => replyForm(formID, answer),
       async cancel({ formID }) {
-        const ask = takePending(formID, "question");
+        const ask = takePending(formID, "question") ?? takePending(formID, "plan");
         if (!ask) return { ok: false, error: AGENT_REQUEST_GONE };
-        ask.resolve({ behavior: "deny", message: "The user dismissed the question." });
+        ask.resolve({
+          behavior: "deny",
+          message:
+            ask.kind === "plan"
+              ? "The user dismissed the plan. Keep planning."
+              : "The user dismissed the question.",
+        });
         return { ok: true };
       },
     },
     model: { list: listModels },
     agent: {
       async list() {
-        return { ok: true, data: CLAUDE_AGENTS };
+        return { ok: true, data: [] };
       },
     },
     mcp: { list: listMcp },

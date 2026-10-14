@@ -65,8 +65,12 @@ export function normalizePromptOptions(raw: unknown): PromptOption[] {
 
 export type PromptStatus = "pending" | "resolved";
 
-/** Sumber Interactive_Prompt: izin tool (permission) atau pertanyaan (question). */
-export type PromptKind = "permission" | "question";
+/**
+ * Sumber Interactive_Prompt: izin tool (permission), pertanyaan (question),
+ * atau persetujuan rencana (plan — mis. Claude Code keluar dari plan mode;
+ * dijawab seperti question, isi rencana di `detail`).
+ */
+export type PromptKind = "permission" | "question" | "plan";
 
 export interface InteractivePrompt {
   /** Id request opencode (`per_...` / `que_...`) — dipakai untuk reply. */
@@ -95,6 +99,8 @@ export interface InteractivePrompt {
    * terdaftar (flag `custom` di skema question opencode, default true).
    */
   custom?: boolean;
+  /** Isi tambahan dalam markdown (mis. rencana pada prompt `plan`). */
+  detail?: string | null;
   status: PromptStatus;
   createdAt: number;
   resolvedAt: number | null;

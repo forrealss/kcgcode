@@ -247,6 +247,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
     // Judul hasil generate opencode -> daftar Session di Client terbarui live.
     onTitleChange: (sessionId, title) => gateway.notifySessionTitle(sessionId, title),
+    onPermissionModeChange: (sessionId, mode) =>
+      gateway.notifySessionPermissionMode(sessionId, mode),
     onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
     // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).

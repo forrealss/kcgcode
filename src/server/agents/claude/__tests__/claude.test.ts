@@ -81,10 +81,18 @@ describe("ClaudeTurnTranslator", () => {
     const msg = t.currentMessageId;
     t.handle(streamEvent({ type: "message_start", message: { id: "api_1" } }));
     t.handle(
-      streamEvent({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } }),
+      streamEvent({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }),
     );
     t.handle(
-      streamEvent({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hi" } }),
+      streamEvent({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "Hi" },
+      }),
     );
     t.handle({
       type: "assistant",
@@ -99,7 +107,12 @@ describe("ClaudeTurnTranslator", () => {
       "session.text.delta",
       "session.text.ended",
     ]);
-    expect(data(events[3])).toEqual({ sessionID: SID, assistantMessageID: msg, ordinal: 0, delta: "Hi" });
+    expect(data(events[3])).toEqual({
+      sessionID: SID,
+      assistantMessageID: msg,
+      ordinal: 0,
+      delta: "Hi",
+    });
     expect(data(events[4])).toMatchObject({ ordinal: 0, text: "Hi" });
   });
 
@@ -107,7 +120,9 @@ describe("ClaudeTurnTranslator", () => {
     const { t, events } = translator();
     t.beginTurn();
     t.handle(streamEvent({ type: "message_start", message: { id: "api_2" } }));
-    t.handle(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }));
+    t.handle(
+      streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
+    );
     t.handle(
       streamEvent({
         type: "content_block_delta",
@@ -123,7 +138,9 @@ describe("ClaudeTurnTranslator", () => {
     const { t, events } = translator();
     t.beginTurn();
     t.handle(streamEvent({ type: "message_start", message: { id: "api_h" } }));
-    t.handle(streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }));
+    t.handle(
+      streamEvent({ type: "content_block_start", index: 0, content_block: { type: "thinking" } }),
+    );
     t.handle(streamEvent({ type: "content_block_stop", index: 0 }));
     expect(events.map((e) => e.type)).toEqual([
       "session.execution.started",
@@ -212,7 +229,13 @@ describe("ClaudeTurnTranslator", () => {
 
   test("api_retry -> session.retry.scheduled", () => {
     const { t, events } = translator();
-    t.handle({ type: "system", subtype: "api_retry", attempt: 2, error: "rate_limit", error_status: 429 });
+    t.handle({
+      type: "system",
+      subtype: "api_retry",
+      attempt: 2,
+      error: "rate_limit",
+      error_status: 429,
+    });
     expect(events[0]).toEqual({
       type: "session.retry.scheduled",
       data: {
@@ -329,7 +352,10 @@ describe("createClaudeClient", () => {
     if (!created.ok) throw new Error("create");
     expect(calls.length).toBe(0); // malas: belum ada proses
 
-    await client.session.switchModel(created.data.id, { providerID: CLAUDE_PROVIDER_ID, modelID: "sonnet" });
+    await client.session.switchModel(created.data.id, {
+      providerID: CLAUDE_PROVIDER_ID,
+      modelID: "sonnet",
+    });
     const res = await client.session.prompt({ sessionID: created.data.id, text: "hello" });
     expect(res.ok).toBe(true);
     await tick();
@@ -344,13 +370,16 @@ describe("createClaudeClient", () => {
     expect(opts.env?.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).toBe("1");
     expect(opts.env?.HOME).toBe("/home/u");
     expect(calls[0]?.inputs[0]?.message).toEqual({ role: "user", content: "hello" });
-    expect(events[0]).toEqual({ type: "session.execution.started", data: { sessionID: created.data.id } });
+    expect(events[0]).toEqual({
+      type: "session.execution.started",
+      data: { sessionID: created.data.id },
+    });
   });
 
   test("transcript sudah ada -> resume; model/mode diganti lewat kontrol", async () => {
     const { client, calls } = setup([SID]);
     expect((await client.session.get(SID)).ok).toBe(true);
-    await client.session.switchAgent(SID, "plan");
+    await client.session.setPermissionMode(SID, "plan");
     await client.session.prompt({ sessionID: SID, text: "a" });
     await tick();
     expect(calls[0]?.options.resume).toBe(SID);
@@ -358,7 +387,7 @@ describe("createClaudeClient", () => {
     expect(calls[0]?.options.permissionMode).toBe("plan");
 
     await client.session.switchModel(SID, { providerID: CLAUDE_PROVIDER_ID, modelID: "opus" });
-    await client.session.switchAgent(SID, null);
+    await client.session.setPermissionMode(SID, null);
     await client.session.prompt({ sessionID: SID, text: "b" });
     await tick();
     expect(calls.length).toBe(1); // proses dipakai ulang
@@ -390,7 +419,12 @@ describe("createClaudeClient", () => {
     await tick();
     const q = calls[0]?.query;
     q?.push(state("running"));
-    q?.push({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["boom"] });
+    q?.push({
+      type: "result",
+      subtype: "error_during_execution",
+      is_error: true,
+      errors: ["boom"],
+    });
     q?.push(state("idle"));
     await tick();
     expect(events.at(-1)).toEqual({
@@ -402,7 +436,10 @@ describe("createClaudeClient", () => {
     q?.push(state("running"));
     q?.push(state("idle"));
     await tick();
-    expect(events.at(-1)).toEqual({ type: "session.execution.succeeded", data: { sessionID: SID } });
+    expect(events.at(-1)).toEqual({
+      type: "session.execution.succeeded",
+      data: { sessionID: SID },
+    });
   });
 
   test("permission: canUseTool -> permission.asked; reply once/always/reject", async () => {
@@ -425,7 +462,11 @@ describe("createClaudeClient", () => {
       { signal, suggestions, toolUseID: "t1", requestId: "r1" },
     );
     const asked = events.find((e) => e.type === "permission.asked");
-    expect(data(asked)).toMatchObject({ sessionID: SID, action: "bash", resources: ["git status"] });
+    expect(data(asked)).toMatchObject({
+      sessionID: SID,
+      action: "bash",
+      resources: ["git status"],
+    });
     const id = String(data(asked).id);
     const reply = (decision: "once" | "always" | "reject") =>
       client.permission.reply({ sessionID: SID, requestID: id, decision });
@@ -446,7 +487,11 @@ describe("createClaudeClient", () => {
     );
     const asked2 = events.filter((e) => e.type === "permission.asked").at(-1);
     expect(data(asked2)).toMatchObject({ action: "external_directory", resources: ["/x"] });
-    await client.permission.reply({ sessionID: SID, requestID: String(data(asked2).id), decision: "reject" });
+    await client.permission.reply({
+      sessionID: SID,
+      requestID: String(data(asked2).id),
+      decision: "reject",
+    });
     expect(await p2).toMatchObject({ behavior: "deny" });
   });
 
@@ -520,7 +565,9 @@ describe("createClaudeClient", () => {
     q?.push({ type: "result", subtype: "error_during_execution", is_error: true, errors: ["x"] });
     q?.push(state("idle"));
     await second;
-    const ends = events.filter((e) => e.type.startsWith("session.execution.") && e.type !== "session.execution.started");
+    const ends = events.filter(
+      (e) => e.type.startsWith("session.execution.") && e.type !== "session.execution.started",
+    );
     expect(ends.map((e) => e.type)).toEqual(["session.execution.interrupted"]);
     expect(calls[0]?.inputs.length).toBe(2);
 
@@ -539,7 +586,10 @@ describe("createClaudeClient", () => {
     await tick();
     q?.end();
     await tick();
-    expect(events.at(-1)).toMatchObject({ type: "session.execution.failed", data: { sessionID: SID } });
+    expect(events.at(-1)).toMatchObject({
+      type: "session.execution.failed",
+      data: { sessionID: SID },
+    });
   });
 
   test("gambar dikirim inline sebagai base64; @file dirujuk lewat path", async () => {
@@ -578,15 +628,28 @@ describe("createClaudeClient", () => {
     expect(models).toEqual({
       ok: true,
       data: [
-        { providerID: CLAUDE_PROVIDER_ID, providerName: "Claude Code", modelID: "sonnet", name: "Sonnet" },
+        {
+          providerID: CLAUDE_PROVIDER_ID,
+          providerName: "Claude Code",
+          modelID: "sonnet",
+          name: "Sonnet",
+        },
       ],
     });
     // Query sementara untuk daftar model langsung ditutup & tidak dipersist.
     expect(calls[0]?.query.closed).toBe(true);
     expect(calls[0]?.options.persistSession).toBe(false);
 
-    const agents = await client.agent.list();
-    expect(agents.ok && agents.data.map((a) => a.name)).toEqual(["default", "acceptEdits", "plan"]);
+    // Claude Code memakai permission mode (capability), bukan agent percakapan.
+    expect(await client.agent.list()).toEqual({ ok: true, data: [] });
+    expect(client.capabilities.permissionModes.map((m) => m.id)).toEqual([
+      "default",
+      "acceptEdits",
+      "plan",
+      "auto",
+      "dontAsk",
+      "bypassPermissions",
+    ]);
 
     await client.session.prompt({ sessionID: SID, text: "x" });
     await tick();
@@ -595,7 +658,9 @@ describe("createClaudeClient", () => {
       type: "assistant",
       message: {
         id: "m",
-        content: [{ type: "tool_use", id: "t", name: "TodoWrite", input: { todos: [{ content: "a" }] } }],
+        content: [
+          { type: "tool_use", id: "t", name: "TodoWrite", input: { todos: [{ content: "a" }] } },
+        ],
       },
       parent_tool_use_id: null,
       uuid: "u",
@@ -615,5 +680,106 @@ describe("createClaudeClient", () => {
     expect((await client.session.remove(SID)).ok).toBe(true);
     expect(q?.closed).toBe(true);
     expect(removed).toEqual([SID]);
+  });
+});
+
+describe("permission mode Claude Code", () => {
+  test("mode baru: spawn dengan permissionMode; mode tak dikenal ditolak", async () => {
+    const { client, calls } = setup();
+    expect(await client.session.setPermissionMode(SID, "yolo")).toEqual({
+      ok: false,
+      error: "INVALID_PERMISSION_MODE",
+    });
+    expect((await client.session.setPermissionMode(SID, "acceptEdits")).ok).toBe(true);
+    expect(calls.length).toBe(0); // tanpa proses: dipakai saat spawn
+    await client.session.prompt({ sessionID: SID, text: "x" });
+    await tick();
+    expect(calls[0]?.options.permissionMode).toBe("acceptEdits");
+    // Pindah ke bypass nanti hanya DIIZINKAN, tidak diaktifkan.
+    expect(calls[0]?.options.allowDangerouslySkipPermissions).toBe(true);
+  });
+
+  test("ganti mode di tengah turn -> setPermissionMode langsung ke proses", async () => {
+    const { client, calls } = setup();
+    await client.session.prompt({ sessionID: SID, text: "x" });
+    await tick();
+    const q = calls[0]?.query;
+    q?.push(state("running"));
+    await tick();
+    expect((await client.session.setPermissionMode(SID, "plan")).ok).toBe(true);
+    expect(q?.modes).toEqual(["plan"]);
+    // Mode sama tidak dikirim ulang.
+    await client.session.setPermissionMode(SID, "plan");
+    expect(q?.modes).toEqual(["plan"]);
+  });
+
+  test("mode dari CLI (init/status) dipancarkan sekali per perubahan", async () => {
+    const { client, calls, events } = setup();
+    await client.session.prompt({ sessionID: SID, text: "x" });
+    await tick();
+    const q = calls[0]?.query;
+    q?.push({ type: "system", subtype: "init", permissionMode: "default", mcp_servers: [] });
+    q?.push({ type: "system", subtype: "status", status: null, permissionMode: "default" });
+    q?.push({ type: "system", subtype: "status", status: null, permissionMode: "acceptEdits" });
+    await tick();
+    const changes = events.filter((e) => e.type === "agent.permission_mode.changed").map(data);
+    expect(changes.map((d) => d.mode)).toEqual(["default", "acceptEdits"]);
+    // Mode yang dilaporkan menjadi acuan: memilih mode yang sama tidak memicu kontrol.
+    await client.session.setPermissionMode(SID, "acceptEdits");
+    expect(q?.modes).toEqual([]);
+  });
+
+  test("ExitPlanMode -> form rencana; setuju mengganti mode, masukan menolak dengan pesan", async () => {
+    const { client, calls, events } = setup();
+    await client.session.prompt({ sessionID: SID, text: "x" });
+    await tick();
+    const canUseTool = calls[0]?.options.canUseTool;
+    if (!canUseTool) throw new Error("canUseTool");
+    const opts = { signal: new AbortController().signal, toolUseID: "t", requestId: "r" };
+    const input = { plan: "## Rencana\n1. Ubah a.ts" };
+
+    const p1 = canUseTool("ExitPlanMode", input, opts);
+    const form1 = data(events.find((e) => e.type === "form.created")).form as {
+      id: string;
+      metadata: Record<string, unknown>;
+      fields: { key: string; options: { value: string }[] }[];
+    };
+    expect(form1.metadata).toEqual({ kind: "plan", plan: input.plan });
+    expect(form1.fields[0]?.options.map((o) => o.value)).toEqual([
+      "acceptEdits",
+      "default",
+      "plan",
+    ]);
+    await client.form.reply({
+      sessionID: SID,
+      formID: form1.id,
+      answer: { decision: "acceptEdits" },
+    });
+    expect(await p1).toEqual({
+      behavior: "allow",
+      updatedInput: input,
+      updatedPermissions: [{ type: "setMode", mode: "acceptEdits", destination: "session" }],
+    });
+
+    const p2 = canUseTool("ExitPlanMode", input, opts);
+    const form2 = data(events.filter((e) => e.type === "form.created").at(-1)).form as {
+      id: string;
+    };
+    await client.form.reply({
+      sessionID: SID,
+      formID: form2.id,
+      answer: { decision: "Tambah test dulu" },
+    });
+    expect(await p2).toEqual({
+      behavior: "deny",
+      message: "The user wants changes to the plan before implementing it: Tambah test dulu",
+    });
+
+    const p3 = canUseTool("ExitPlanMode", input, opts);
+    const form3 = data(events.filter((e) => e.type === "form.created").at(-1)).form as {
+      id: string;
+    };
+    expect((await client.form.cancel({ sessionID: SID, formID: form3.id })).ok).toBe(true);
+    expect(await p3).toMatchObject({ behavior: "deny" });
   });
 });

@@ -147,6 +147,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                   send={chat.send}
                   reportError={chat.reportError}
                   onInterrupt={chat.interrupt}
+                  permissionMode={chat.permissionMode}
+                  onPermissionModeChange={chat.setPermissionMode}
                 />
               </div>
               <div className="min-h-0 flex-[3]" />
@@ -186,6 +188,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                   send={chat.send}
                   reportError={chat.reportError}
                   onInterrupt={chat.interrupt}
+                  permissionMode={chat.permissionMode}
+                  onPermissionModeChange={chat.setPermissionMode}
                 />
               )}
             </>

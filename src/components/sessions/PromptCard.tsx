@@ -39,12 +39,14 @@ import {
   ChevronRightIcon,
   HelpCircleIcon,
   ListChecksIcon,
+  ListTreeIcon,
   PencilLineIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
 } from "lucide-react";
 import * as m from "motion/react-m";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { MarkdownContent } from "@/components/sessions/MarkdownContent";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -383,7 +385,9 @@ export function PromptCard({
                 opts.onSubmit();
               }
             }}
-            placeholder="Type your own answer…"
+            placeholder={
+              prompt?.kind === "plan" ? "Tell the agent what to change…" : "Type your own answer…"
+            }
             disabled={submittingKey !== null}
             aria-label={opts.ariaLabel ?? "Your own answer"}
             enterKeyHint={opts.enterHint ?? (opts.showSend === false ? "next" : "send")}
@@ -527,7 +531,9 @@ export function PromptCard({
           aria-hidden
           className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-foreground/80"
         >
-          {isMultiQuestion || isMulti ? (
+          {prompt.kind === "plan" ? (
+            <ListTreeIcon className="size-4" />
+          ) : isMultiQuestion || isMulti ? (
             <ListChecksIcon className="size-4" />
           ) : (
             <HelpCircleIcon className="size-4" />
@@ -602,6 +608,13 @@ export function PromptCard({
               "min-h-0 flex-auto overflow-x-hidden overflow-y-auto overscroll-contain pb-3 [scrollbar-width:thin] [-webkit-overflow-scrolling:touch]",
           )}
         >
+          {/* Persetujuan rencana: isi rencana (markdown) di atas pilihan —
+              ikut area scroll jawaban agar rencana panjang tetap terbaca di HP. */}
+          {prompt.kind === "plan" && prompt.detail && (
+            <div className="mx-1 mb-3 rounded-xl border bg-card px-4 py-3 text-sm">
+              <MarkdownContent>{prompt.detail}</MarkdownContent>
+            </div>
+          )}
           {isMultiQuestion ? (
             // Semua langkah ditumpuk di SATU sel grid: tinggi kartu = langkah
             // tertinggi dan TETAP selama navigasi. Sebelumnya hanya langkah

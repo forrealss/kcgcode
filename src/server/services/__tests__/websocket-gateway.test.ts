@@ -168,6 +168,12 @@ function makeFakeSessionManager(): FakeSessionManager {
     setSessionAgent() {
       return { ok: false, error: "not-used" };
     },
+    async setSessionPermissionMode() {
+      return { ok: false, error: "not-used" };
+    },
+    async listCapabilities() {
+      return { ok: true, data: { permissionModes: [] } };
+    },
     async sendFreeTextInput(sessionId, text) {
       sm.inputs.push([sessionId, text]);
       return sm.inputResult;

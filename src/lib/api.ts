@@ -58,6 +58,9 @@ export function apiErrorMessage(code: string): string {
   if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
     return "Couldn't reach skills.sh. Check your connection and try again.";
   }
+  if (code.startsWith("AGENT_PERMISSION_MODE_FAILED")) {
+    return "The agent could not switch to that permission mode.";
+  }
   if (code.startsWith("SERVER_START_FAILED")) {
     return "Failed to connect to the opencode service.";
   }
@@ -81,6 +84,10 @@ export function apiErrorMessage(code: string): string {
       return "The project still has sessions. Delete them first.";
     case "UNSUPPORTED_AGENT_TYPE":
       return "This CLI_Agent type is not supported.";
+    case "INVALID_PERMISSION_MODE":
+      return "That permission mode is not available for this agent.";
+    case "AGENT_PERMISSION_MODE_UNSUPPORTED":
+      return "This agent does not support permission modes.";
     case "SESSION_NOT_FOUND":
       return "Session not found.";
     case "SESSION_NOT_RUNNING":

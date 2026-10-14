@@ -48,6 +48,9 @@ export interface SessionChat {
   /** Kirim pesan Client -> Server (dipakai composer untuk `input`/`interrupt`). */
   send: (msg: ClientMessage) => void;
   status: SessionStatus;
+  /** Permission mode Session (null = default agent) — tersinkron dari WS. */
+  permissionMode: string | null;
+  setPermissionMode: (mode: string | null) => void;
   /** Model sedang merespon: turn aktif atau masih ada pesan streaming. */
   busy: boolean;
   /** Model sedang merespon DAN Session berjalan (untuk tombol Stop). */
@@ -131,6 +134,13 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
   const [collapsible, setCollapsible] = useState<CollapsibleState>({});
   const [prompts, setPrompts] = useState<InteractivePrompt[]>([]);
   const [status, setStatus] = useState<SessionStatus>(session.status);
+  /**
+   * Permission mode Session (agent dengan capability `permissionModes`).
+   * Ikut berubah bila agent sendiri berganti mode (WS `session_permission_mode`).
+   */
+  const [permissionMode, setPermissionMode] = useState<string | null>(
+    session.permissionMode ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   /** Error resolusi prompt — tampil di kartunya (bukan banner global). */
   const [promptError, setPromptError] = useState<string | null>(null);
@@ -200,6 +210,10 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
           setStatus(msg.status);
           // Session non-running -> tidak mungkin ada model yang merespon.
           if (msg.status !== "running") setTurnActive(false);
+          break;
+        case "session_permission_mode":
+          if (msg.sessionId !== session.id) break;
+          setPermissionMode(msg.mode);
           break;
         case "turn_active":
           setTurnActive(msg.active);
@@ -392,12 +406,17 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
    * opencode yang menutup input teks selama question aktif). Permission
    * kartu tidak menggantikan composer (tetap floating).
    */
-  const hasPendingQuestion = useMemo(() => prompts.some((p) => p.kind === "question"), [prompts]);
+  const hasPendingQuestion = useMemo(
+    () => prompts.some((p) => p.kind === "question" || p.kind === "plan"),
+    [prompts],
+  );
 
   return {
     wsStatus,
     send,
     status,
+    permissionMode,
+    setPermissionMode,
     busy,
     generating,
     canInput,

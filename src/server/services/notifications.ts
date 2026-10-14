@@ -223,7 +223,7 @@ export function createNotificationService(opts: NotificationServiceOptions): Not
 
   return {
     promptAsked(prompt) {
-      const n = build(prompt.kind === "question" ? "question" : "permission", prompt.sessionId);
+      const n = build(prompt.kind === "permission" ? "permission" : "question", prompt.sessionId);
       if (n) dispatch(n);
     },
 

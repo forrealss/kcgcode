@@ -29,6 +29,7 @@ import { pathToFileURL } from "node:url";
 import type { SessionStore } from "../../db";
 import { modelFacingMime } from "../../lib/attachments";
 import type {
+  AgentCapabilitiesInfo,
   AgentOption,
   AgentType,
   InteractivePrompt,
@@ -87,6 +88,11 @@ export interface CreateSessionRequest {
   model?: SessionModel | null;
   /** Agent (mode) pilihan user; null/undefined = default agent. */
   agent?: string | null;
+  /**
+   * Permission mode pilihan user (agent dengan capability `permissionModes`);
+   * null/undefined = default settings agent.
+   */
+  permissionMode?: string | null;
 }
 
 export type CreateSessionResult = { ok: true; session: Session } | { ok: false; error: string };
@@ -151,6 +157,11 @@ export interface SessionManagerOptions {
    * Session di Client ikut terbarui tanpa reload.
    */
   onTitleChange?: (sessionId: string, title: string) => void;
+  /**
+   * Hook permission mode Session berubah — oleh user maupun agent (mis.
+   * rencana disetujui). Disambungkan ke WebSocket_Gateway.
+   */
+  onPermissionModeChange?: (sessionId: string, mode: string | null) => void;
   /** Hook Session dihapus permanen — disambungkan ke WebSocket_Gateway. */
   onDeleted?: (sessionId: string) => void;
   /** Hook error asinkron (mis. balasan model gagal) — disambungkan ke gateway. */
@@ -242,6 +253,17 @@ export interface SessionManager {
    */
   setSessionAgent(sessionId: string, agent: string | null): SimpleResult;
   /**
+   * Ganti permission mode Session (`null` = default settings agent). Berlaku
+   * SEGERA bila agent sedang berjalan (juga di tengah turn), selain itu pada
+   * prompt berikutnya. Agent tanpa capability `permissionModes` -> ditolak.
+   */
+  setSessionPermissionMode(sessionId: string, mode: string | null): Promise<SimpleResult>;
+  /** Fitur khas agent untuk UI (mis. daftar permission mode). */
+  listCapabilities(
+    projectId: string,
+    agentType?: AgentType,
+  ): Promise<Result<AgentCapabilitiesInfo>>;
+  /**
    * Kirim input bebas. `files` = path relatif project (`@file`); `images` =
    * id lampiran di Attachment_Store (gambar upload dari perangkat).
    */
@@ -295,6 +317,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const onPromptResolved = opts.onPromptResolved;
   const onStatusChange = opts.onStatusChange;
   const onTitleChange = opts.onTitleChange;
+  const onPermissionModeChange = opts.onPermissionModeChange;
   const onDeleted = opts.onDeleted;
   const onError = opts.onError;
 
@@ -398,6 +421,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       return cur.ok && cur.data.ocSessionId === agentSessionID;
     },
     mapChild: (childID, sessionId) => mapOcSession(childID, sessionId),
+    setPermissionMode: (sessionId, mode) => {
+      const cur = store.getSession(sessionId);
+      if (!cur.ok || cur.data.permissionMode === mode) return;
+      if (!store.updateSessionPermissionMode(sessionId, mode).ok) return;
+      onPermissionModeChange?.(sessionId, mode);
+    },
     setTitle: (sessionId, title) => {
       const cur = store.getSession(sessionId);
       if (!cur.ok || cur.data.title === title) return;
@@ -480,6 +509,15 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (!known) return { ok: false, error: "MODEL_NOT_FOUND" };
     }
 
+    // (5b) permission mode harus salah satu yang ditawarkan agent.
+    const permissionMode = req.permissionMode ?? null;
+    if (
+      permissionMode !== null &&
+      !client.capabilities.permissionModes.some((m) => m.id === permissionMode)
+    ) {
+      return { ok: false, error: "INVALID_PERMISSION_MODE" };
+    }
+
     // (6) buat Session di agent — TANPA judul, agar agent meng-generate judul
     //     dari prompt pertama (lihat lib/session-title.ts).
     const created = await client.session.create();
@@ -503,6 +541,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       title: remoteTitle,
       model,
       agent: req.agent ?? null,
+      permissionMode,
       createdAt,
       updatedAt: createdAt,
     };
@@ -846,6 +885,47 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
+   * Ganti permission mode Session. Client agent yang sudah siap langsung
+   * menerapkannya (juga di tengah turn — mis. pindah ke `plan` saat agent
+   * mulai mengedit); tanpa client, mode diterapkan sebelum prompt berikutnya.
+   * Kegagalan agent menerapkan mode tidak mengubah pilihan tersimpan.
+   */
+  async function setSessionPermissionMode(
+    sessionId: string,
+    mode: string | null,
+  ): Promise<SimpleResult> {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    const caps = await listCapabilities(cur.data.projectId, cur.data.agentType);
+    if (!caps.ok) return { ok: false, error: caps.error };
+    if (caps.data.permissionModes.length === 0) {
+      return { ok: false, error: "AGENT_PERMISSION_MODE_UNSUPPORTED" };
+    }
+    if (mode !== null && !caps.data.permissionModes.some((m) => m.id === mode)) {
+      return { ok: false, error: "INVALID_PERMISSION_MODE" };
+    }
+    const client = clientFor(cur.data.agentType, cur.data.projectId);
+    if (client && cur.data.status === "running" && cur.data.ocSessionId) {
+      const applied = await client.session.setPermissionMode(cur.data.ocSessionId, mode);
+      if (!applied.ok) return applied;
+    }
+    const upd = store.updateSessionPermissionMode(sessionId, mode);
+    if (!upd.ok) return { ok: false, error: upd.error };
+    onPermissionModeChange?.(sessionId, mode);
+    return { ok: true };
+  }
+
+  /** Fitur khas agent Project (client dibuat bila perlu). */
+  async function listCapabilities(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<AgentCapabilitiesInfo>> {
+    const client = await projectClient(projectId, agentType);
+    if (!client.ok) return client;
+    return { ok: true, data: { permissionModes: client.data.capabilities.permissionModes } };
+  }
+
+  /**
    * Hapus Session permanen:
    *
    * 1. Turn yang sedang stream difinalisasi & pemetaan event dilepas.
@@ -1017,6 +1097,10 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
           () => client.session.switchModel(ocSessionId, cur.data.model),
           () => client.session.switchAgent(ocSessionId, cur.data.agent),
           () => client.session.instructions(ocSessionId, system),
+          // Hanya agent yang punya konsep permission mode.
+          ...(client.capabilities.permissionModes.length > 0
+            ? [() => client.session.setPermissionMode(ocSessionId, cur.data.permissionMode ?? null)]
+            : []),
           () =>
             client.session.prompt({ sessionID: ocSessionId, text: promptText, files: promptFiles }),
         ];
@@ -1204,6 +1288,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     hasPendingSkillRefresh,
     setSessionModel,
     setSessionAgent,
+    setSessionPermissionMode,
+    listCapabilities,
     findFiles,
     sessionContext,
     sendFreeTextInput,

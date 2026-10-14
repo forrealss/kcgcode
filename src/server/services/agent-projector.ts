@@ -45,6 +45,8 @@ export interface AgentProjectorOptions {
   mapChild(childID: string, sessionId: string): void;
   /** Judul Session baru dari agent — kembalikan false bila tidak berubah. */
   setTitle(sessionId: string, title: string): void;
+  /** Permission mode yang berlaku di agent berubah (Session akar). */
+  setPermissionMode?(sessionId: string, mode: string): void;
   /** Simpan prompt baru; kembalikan false bila duplikat. */
   insertPrompt(prompt: InteractivePrompt): boolean;
   onPrompt?: (prompt: InteractivePrompt) => void;
@@ -343,6 +345,12 @@ export class AgentEventProjector {
       case "form.cancelled":
         this.forgetPrompt(ev.data.id);
         return;
+      case "agent.permission_mode.changed": {
+        const sessionId = this.opts.resolve(ev.data.sessionID);
+        if (!sessionId || !this.opts.isRoot(sessionId, ev.data.sessionID)) return;
+        this.opts.setPermissionMode?.(sessionId, ev.data.mode);
+        return;
+      }
       case "permission.replied":
         this.promptOwners.delete(ev.data.requestID);
         return;

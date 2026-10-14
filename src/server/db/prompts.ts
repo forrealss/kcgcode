@@ -10,7 +10,7 @@ import { sessionExists } from "./sessions";
 export function createPromptRepo(db: Database) {
   const q = {
     insertPrompt: db.query(
-      "INSERT INTO prompts (id, session_id, kind, type, custom, multiple, title, options_json, questions_json, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO prompts (id, session_id, kind, type, custom, multiple, title, options_json, questions_json, detail, status, created_at, resolved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getPrompt: db.query("SELECT * FROM prompts WHERE id = ?"),
     pendingPrompts: db.query(
@@ -37,6 +37,7 @@ export function createPromptRepo(db: Database) {
           // Multi-question: seluruh pertanyaan request (null = pertanyaan
           // tunggal — field legacy sudah cukup).
           prompt.questions && prompt.questions.length > 0 ? JSON.stringify(prompt.questions) : null,
+          prompt.detail ?? null,
           prompt.status,
           prompt.createdAt,
           prompt.resolvedAt,

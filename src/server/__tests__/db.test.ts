@@ -496,3 +496,32 @@ test("migrasi onboarded_at: instalasi lama (sudah punya project/kunci) ditandai 
   };
   expect(r2.onboarded_at).toBeNull();
 });
+
+test("migrasi: mode Claude Code lama di kolom agent pindah ke permission_mode", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "kcg-pm-"));
+  const dbPath = path.join(dir, "kcg.sqlite");
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, agent_type TEXT NOT NULL, cwd TEXT NOT NULL, status TEXT NOT NULL, oc_session_id TEXT, model TEXT, agent TEXT, title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    INSERT INTO projects VALUES ('p1', 'p', '/p', 1);
+    INSERT INTO sessions VALUES ('cc', 'p1', 'claude-code', '/p', 'stopped', NULL, NULL, 'plan', NULL, 1, 1);
+    INSERT INTO sessions VALUES ('oc', 'p1', 'opencode', '/p', 'stopped', NULL, NULL, 'build', NULL, 1, 1);
+  `);
+  db.close();
+
+  const store = openSessionStore(dbPath);
+  const cc = store.getSession("cc");
+  const oc = store.getSession("oc");
+  expect(cc.ok && [cc.data.agent, cc.data.permissionMode]).toEqual([null, "plan"]);
+  expect(oc.ok && [oc.data.agent, oc.data.permissionMode]).toEqual(["build", null]);
+  // Migrasi sekali saja: pilihan baru tidak ditimpa saat store dibuka ulang.
+  expect(store.updateSessionAgent("cc", "x").ok).toBe(true);
+  store.close();
+  const again = openSessionStore(dbPath);
+  const cc2 = again.getSession("cc");
+  expect(cc2.ok && [cc2.data.agent, cc2.data.permissionMode]).toEqual(["x", "plan"]);
+  again.close();
+  rmTmp(dir);
+});

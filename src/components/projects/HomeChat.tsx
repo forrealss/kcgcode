@@ -28,6 +28,7 @@ import { useEffect, useRef, useState } from "react";
 import { HomeRecentSessions } from "@/components/projects/HomeRecentSessions";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
+import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,6 +47,7 @@ import {
   InputGroupTextarea,
 } from "@/components/ui/input-group";
 import { Spinner } from "@/components/ui/spinner";
+import { usePermissionModes } from "@/hooks/usePermissionModes";
 import { useRouter } from "@/hooks/useRouter";
 import { readPreferredAgentType, storePreferredAgentType } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
@@ -57,6 +59,48 @@ import { sessionPath } from "@/lib/routes";
 import { seedSession } from "@/lib/session-handoff";
 import logo from "@/logo.svg";
 import type { AgentType, Session, SessionModel } from "@/types";
+
+/**
+ * Slot "Mode" composer homepage: permission mode untuk agent yang memilikinya
+ * (mis. Claude Code), pemilih agent untuk lainnya (opencode). Kosong selama
+ * capability agent belum termuat (hindari kedip).
+ */
+function HomeModeControl(props: {
+  projectId: string;
+  agentType: AgentType;
+  agent: string | null;
+  onAgentChange: (agent: string | null) => void;
+  permissionMode: string | null;
+  onPermissionModeChange: (mode: string | null) => void;
+  disabled: boolean;
+}) {
+  const picker = usePermissionModes(
+    props.projectId,
+    props.agentType,
+    null,
+    props.onPermissionModeChange,
+  );
+  if (picker.modes === null) return null;
+  if (picker.modes.length > 0) {
+    return (
+      <PermissionModePicker
+        picker={picker}
+        active={props.permissionMode}
+        disabled={props.disabled}
+      />
+    );
+  }
+  return (
+    <AgentPicker
+      projectId={props.projectId}
+      agentType={props.agentType}
+      sessionId={null}
+      agent={props.agent}
+      onChanged={props.onAgentChange}
+      disabled={props.disabled}
+    />
+  );
+}
 
 const LAST_PROJECT_KEY = "kcg-home-project";
 
@@ -84,6 +128,8 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   /** Model & agent untuk Session baru; null = default opencode. */
   const [model, setModel] = useState<SessionModel | null>(null);
   const [agent, setAgent] = useState<string | null>(null);
+  /** Permission mode Session baru (agent dengan capability, mis. Claude Code). */
+  const [permissionMode, setPermissionMode] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   // Project tersimpan sudah dihapus / belum ada -> pakai yang paling baru aktif.
@@ -100,6 +146,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       // Model/agent tersedia per Project (config opencode masing-masing).
       setModel(null);
       setAgent(null);
+      setPermissionMode(null);
     }
     setProjectId(id);
     if (typeof localStorage !== "undefined") localStorage.setItem(LAST_PROJECT_KEY, id);
@@ -111,6 +158,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       // Model & mode berasal dari backend masing-masing.
       setModel(null);
       setAgent(null);
+      setPermissionMode(null);
     }
     setAgentType(next);
     storePreferredAgentType(next);
@@ -128,7 +176,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     try {
       const res = await apiFetch("/api/sessions", {
         method: "POST",
-        body: JSON.stringify({ agentType, projectId: selected.id, model, agent }),
+        body: JSON.stringify({ agentType, projectId: selected.id, model, agent, permissionMode }),
       });
       const { session } = (await res.json()) as { session: Session };
       setPendingPrompt(session.id, text);
@@ -186,12 +234,13 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
             />
             <InputGroupAddon align="block-end" className="gap-2 px-2 pb-2">
               {selected && (
-                <AgentPicker
+                <HomeModeControl
                   projectId={selected.id}
                   agentType={agentType}
-                  sessionId={null}
                   agent={agent}
-                  onChanged={setAgent}
+                  onAgentChange={setAgent}
+                  permissionMode={permissionMode}
+                  onPermissionModeChange={setPermissionMode}
                   disabled={sending}
                 />
               )}

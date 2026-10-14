@@ -79,6 +79,8 @@ export interface WebSocketGateway {
   notifySessionStatus(sessionId: string, status: SessionStatus): void;
   /** Broadcast judul Session baru hasil generate opencode. */
   notifySessionTitle(sessionId: string, title: string): void;
+  /** Permission mode Session berubah — dikirim ke koneksi yang attach Session. */
+  notifySessionPermissionMode(sessionId: string, mode: string | null): void;
   /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
   notifyTurnActive(sessionId: string, active: boolean): void;
   notifySessionDeleted(sessionId: string): void;
@@ -322,6 +324,10 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     broadcastAll(() => ({ type: "session_title", sessionId, title }));
   }
 
+  function notifySessionPermissionMode(sessionId: string, mode: string | null): void {
+    broadcast(sessionId, () => ({ type: "session_permission_mode", sessionId, mode }));
+  }
+
   function notifyTurnActive(sessionId: string, active: boolean): void {
     broadcast(sessionId, () => ({ type: "turn_active", sessionId, active }));
   }
@@ -382,6 +388,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifyPrompt,
     notifySessionStatus,
     notifySessionTitle,
+    notifySessionPermissionMode,
     notifyTurnActive,
     notifySessionDeleted,
     notifyDataChanged,

@@ -146,23 +146,26 @@ export function AgentModeList({
   );
 }
 
-interface RowProps {
+export interface RowProps {
   icon: LucideIcon;
   label: string;
   description: string | null;
   selected: boolean;
   accent?: boolean;
+  /** Pilihan berisiko (mis. melewati semua izin) — ikon merah. */
+  danger?: boolean;
   /** Baris pembantu di "More modes": lebih pendek. */
   compact?: boolean;
   onClick: () => void;
 }
 
-function ModeRow({
+export function ModeRow({
   icon: Icon,
   label,
   description,
   selected,
   accent,
+  danger,
   compact,
   onClick,
   sheet,
@@ -188,9 +191,11 @@ function ModeRow({
             compact ? "size-6" : "size-8",
             selected
               ? "bg-primary/15 text-primary dark:bg-primary/25"
-              : accent
-                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-                : "bg-muted text-muted-foreground group-hover/row:bg-background/60",
+              : danger
+                ? "bg-destructive/10 text-destructive"
+                : accent
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : "bg-muted text-muted-foreground group-hover/row:bg-background/60",
           )}
           aria-hidden
         >
@@ -233,9 +238,11 @@ function ModeRow({
           compact ? "size-7" : "size-9",
           selected
             ? "bg-primary/15 text-primary dark:bg-primary/25"
-            : accent
-              ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
-              : "bg-muted text-muted-foreground",
+            : danger
+              ? "bg-destructive/10 text-destructive"
+              : accent
+                ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                : "bg-muted text-muted-foreground",
         )}
         aria-hidden
       >

@@ -37,12 +37,14 @@ import {
   type PendingAttachment,
   PendingAttachments,
 } from "@/components/sessions/PendingAttachments";
+import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
 import { useAgentPicker } from "@/hooks/useAgentPicker";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
+import { usePermissionModes } from "@/hooks/usePermissionModes";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { ApiError, apiErrorMessage, apiUploadFile } from "@/lib/api";
 import { isPreviewableImage, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
@@ -74,6 +76,10 @@ export interface SessionComposerProps {
   reportError: (message: string | null) => void;
   /** Hentikan balasan model (interrupt) — Session tetap aktif. */
   onInterrupt: () => void;
+  /** Permission mode aktif (agent dengan capability `permissionModes`). */
+  permissionMode?: string | null;
+  /** Permission mode diterima server — pemilik state memperbarui nilainya. */
+  onPermissionModeChange?: (mode: string | null) => void;
 }
 
 export function SessionComposer({
@@ -86,6 +92,8 @@ export function SessionComposer({
   send,
   reportError,
   onInterrupt,
+  permissionMode = null,
+  onPermissionModeChange,
 }: SessionComposerProps) {
   /** Layar sempit: placeholder composer dipendekkan agar tidak terpotong. */
   const isMobile = useIsMobile();
@@ -127,11 +135,23 @@ export function SessionComposer({
    * (tanpa nested popover) supaya tap satu mode langsung menerapkannya.
    */
   const agentPicker = useAgentPicker(session.projectId, session.id, setAgent, session.agentType);
+  /**
+   * Permission mode (capability agent, mis. Claude Code). Agent yang
+   * memilikinya memakai pemilih permission mode di slot "Mode" composer;
+   * agent lain (opencode) memakai pemilih agent.
+   */
+  const permissionPicker = usePermissionModes(
+    session.projectId,
+    session.agentType,
+    session.id,
+    (mode) => onPermissionModeChange?.(mode),
+  );
+  const hasPermissionModes = (permissionPicker.modes?.length ?? 0) > 0;
   // Muat daftar agent begitu Sheet aksi mobile pertama dibuka (lazy, sama
   // seperti popover AgentPicker di desktop).
   useEffect(() => {
-    if (actionSheetOpen) agentPicker.load();
-  }, [actionSheetOpen, agentPicker.load]);
+    if (actionSheetOpen && !hasPermissionModes) agentPicker.load();
+  }, [actionSheetOpen, agentPicker.load, hasPermissionModes]);
   /**
    * Autocomplete `@file`: deteksi token @query di sekitar kursor + daftar
    * saran dari server (index file milik opencode, seperti `@` di TUI-nya).
@@ -562,6 +582,18 @@ export function SessionComposer({
                       setActionSheetOpen(false);
                       void agentPicker.pick(name);
                     }}
+                    permission={
+                      hasPermissionModes
+                        ? {
+                            picker: permissionPicker,
+                            active: permissionMode,
+                            onPick: (mode) => {
+                              setActionSheetOpen(false);
+                              void permissionPicker.pick(mode);
+                            },
+                          }
+                        : undefined
+                    }
                   />
                 </Sheet>
               );
@@ -586,7 +618,15 @@ export function SessionComposer({
               </Button>
             );
 
-            const agentPickerEl = (
+            // Slot "Mode": permission mode (agent yang memilikinya) atau agent;
+            // kosong selama capability belum termuat (hindari kedip).
+            const agentPickerEl = hasPermissionModes ? (
+              <PermissionModePicker
+                picker={permissionPicker}
+                active={permissionMode}
+                disabled={!canInput}
+              />
+            ) : permissionPicker.modes === null ? null : (
               <AgentPicker
                 projectId={session.projectId}
                 agentType={session.agentType}

@@ -8,6 +8,11 @@ import type { AgentType } from "../../types";
 import { errorStatus, json, parseModelBody, readJson, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
+/** String non-kosong (ter-trim), selain itu null — body `permissionMode`. */
+function optionalString(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
+}
+
 export function sessionsRoutes(ctx: ApiRouteContext) {
   const { sessionManager, attachments, notifyDataChanged } = ctx;
   return {
@@ -24,17 +29,19 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { agentType, projectId, model, agent } = body.data as {
+          const { agentType, projectId, model, agent, permissionMode } = body.data as {
             agentType?: unknown;
             projectId?: unknown;
             model?: unknown;
             agent?: unknown;
+            permissionMode?: unknown;
           };
           const res = await sessionManager.createSession({
             agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
             projectId: typeof projectId === "string" ? projectId : "",
             model: parseModelBody(model),
             agent: typeof agent === "string" && agent.trim() !== "" ? agent.trim() : null,
+            permissionMode: optionalString(permissionMode),
           });
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           notifyDataChanged();
@@ -91,9 +98,14 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { model: rawModel, agent: rawAgent } = body.data as {
+          const {
+            model: rawModel,
+            agent: rawAgent,
+            permissionMode: rawMode,
+          } = body.data as {
             model?: unknown;
             agent?: unknown;
+            permissionMode?: unknown;
           };
           if (rawModel !== undefined) {
             const model = rawModel === null ? null : parseModelBody(rawModel);
@@ -106,6 +118,16 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
             const agent =
               typeof rawAgent === "string" && rawAgent.trim() !== "" ? rawAgent.trim() : null;
             const res = sessionManager.setSessionAgent(req.params.id, agent);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
+          }
+          if (rawMode !== undefined) {
+            // Berlaku segera bila agent sedang berjalan (juga di tengah turn).
+            const res = await sessionManager.setSessionPermissionMode(
+              req.params.id,
+              optionalString(rawMode),
+            );
             if (!res.ok) {
               return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
             }

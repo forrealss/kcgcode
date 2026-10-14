@@ -69,6 +69,7 @@ export interface SessionStore extends AuthRepo, TunnelRepo, PushRepo {
   updateSessionModel(sessionId: string, model: SessionModel | null): Result<Session>;
   /** Perbarui agent (mode) pilihan Session; `null` = default opencode. */
   updateSessionAgent(sessionId: string, agent: string | null): Result<Session>;
+  updateSessionPermissionMode(sessionId: string, mode: string | null): Result<Session>;
   /** Simpan judul Session hasil generate opencode (SSE `session.updated`). */
   updateSessionTitle(sessionId: string, title: string): Result<Session>;
   getSession(sessionId: string): Result<Session>;

@@ -58,7 +58,7 @@ export function getPromptActions(prompt: InteractivePrompt): PromptAction[] {
  */
 export function getPromptQuestions(prompt: InteractivePrompt): PromptQuestion[] {
   if (prompt.questions && prompt.questions.length > 0) return prompt.questions;
-  if (prompt.kind !== "question") return [];
+  if (prompt.kind !== "question" && prompt.kind !== "plan") return [];
   return [
     {
       question: prompt.title,

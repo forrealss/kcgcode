@@ -2968,3 +2968,197 @@ test("onTurnEnd: idle -> done; interrupt user tidak memicu notifikasi", async ()
     h.close();
   }
 });
+
+// ---------------------------------------------------------------------------
+// Permission mode (capability agent, mis. Claude Code)
+// ---------------------------------------------------------------------------
+
+const MODES = [
+  { id: "default", label: "Ask", description: "Ask" },
+  { id: "plan", label: "Plan", description: "Plan" },
+  { id: "bypassPermissions", label: "Bypass", description: "Bypass", dangerous: true },
+];
+
+/** Harness dengan backend Claude Code palsu yang punya permission mode. */
+function modeHarness() {
+  const claude = makeFakeBackend("claude-code", () =>
+    makeFakeClient({ capabilities: { skillReload: false, permissionModes: MODES } }),
+  );
+  const changes: [string, string | null][] = [];
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    {
+      backends: { "claude-code": claude.backend },
+      onPermissionModeChange: (sid, mode) => changes.push([sid, mode]),
+    },
+  );
+  const client = () => {
+    const c = claude.clients.get("p1");
+    if (!c) throw new Error("client claude belum ada");
+    return c;
+  };
+  return { h, claude, client, changes };
+}
+
+test("createSession: permissionMode divalidasi terhadap capability agent", async () => {
+  const { h } = modeHarness();
+  try {
+    const bad = await h.sm.createSession({
+      agentType: "claude-code",
+      projectId: "p1",
+      permissionMode: "yolo",
+    });
+    expect(bad).toEqual({ ok: false, error: "INVALID_PERMISSION_MODE" });
+    const ok = await h.sm.createSession({
+      agentType: "claude-code",
+      projectId: "p1",
+      permissionMode: "plan",
+    });
+    expect(ok.ok && ok.session.permissionMode).toBe("plan");
+    // opencode tidak punya permission mode.
+    const oc = await h.sm.createSession({
+      agentType: "opencode",
+      projectId: "p1",
+      permissionMode: "plan",
+    });
+    expect(oc).toEqual({ ok: false, error: "INVALID_PERMISSION_MODE" });
+  } finally {
+    h.close();
+  }
+});
+
+test("setSessionPermissionMode: diterapkan SEGERA ke agent + disimpan + hook", async () => {
+  const { h, client, changes } = modeHarness();
+  try {
+    const sid = await createSession(h, "claude-code");
+    expect((await h.sm.setSessionPermissionMode(sid, "plan")).ok).toBe(true);
+    expect(client().calls).toContain("session.permission_mode:ses_remote1:plan");
+    const cur = h.store.getSession(sid);
+    expect(cur.ok && cur.data.permissionMode).toBe("plan");
+    expect(changes).toEqual([[sid, "plan"]]);
+
+    expect(await h.sm.setSessionPermissionMode(sid, "yolo")).toEqual({
+      ok: false,
+      error: "INVALID_PERMISSION_MODE",
+    });
+    // Agent gagal menerapkan -> pilihan tersimpan TIDAK berubah.
+    client().permissionModeResult = { ok: false, error: "AGENT_PERMISSION_MODE_FAILED: boom" };
+    expect((await h.sm.setSessionPermissionMode(sid, "default")).error).toBe(
+      "AGENT_PERMISSION_MODE_FAILED: boom",
+    );
+    const after = h.store.getSession(sid);
+    expect(after.ok && after.data.permissionMode).toBe("plan");
+  } finally {
+    h.close();
+  }
+});
+
+test("setSessionPermissionMode: agent tanpa permission mode -> ditolak", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    expect(await h.sm.setSessionPermissionMode(sid, "plan")).toEqual({
+      ok: false,
+      error: "AGENT_PERMISSION_MODE_UNSUPPORTED",
+    });
+  } finally {
+    h.close();
+  }
+});
+
+test("mode yang dilaporkan agent (mis. rencana disetujui) memperbarui Session", async () => {
+  const { h, client, changes } = modeHarness();
+  try {
+    const sid = await createSession(h, "claude-code");
+    client().emit({
+      type: "agent.permission_mode.changed",
+      data: { sessionID: "ses_remote1", mode: "acceptEdits" },
+    });
+    // Mode sama dilaporkan ulang -> tanpa hook ganda.
+    client().emit({
+      type: "agent.permission_mode.changed",
+      data: { sessionID: "ses_remote1", mode: "acceptEdits" },
+    });
+    const cur = h.store.getSession(sid);
+    expect(cur.ok && cur.data.permissionMode).toBe("acceptEdits");
+    expect(changes).toEqual([[sid, "acceptEdits"]]);
+  } finally {
+    h.close();
+  }
+});
+
+test("prompt: permission mode Session diterapkan sebelum dikirim (agent ber-capability saja)", async () => {
+  const { h, client } = modeHarness();
+  try {
+    const res = await h.sm.createSession({
+      agentType: "claude-code",
+      projectId: "p1",
+      permissionMode: "plan",
+    });
+    if (!res.ok) throw new Error(res.error);
+    await h.sm.sendFreeTextInput(res.session.id, "rencanakan");
+    await flush();
+    expect(client().promptModes).toEqual(["plan"]);
+  } finally {
+    h.close();
+  }
+  const oc = freshHarness();
+  try {
+    const sid = await createSession(oc);
+    await oc.sm.sendFreeTextInput(sid, "halo");
+    await flush();
+    // opencode: langkah permission mode dilewati sama sekali.
+    expect(clientOf(oc).calls.some((c) => c.startsWith("session.permission_mode"))).toBe(false);
+  } finally {
+    oc.close();
+  }
+});
+
+test("form rencana -> prompt kind=plan dengan isi rencana; jawaban lewat form.reply", async () => {
+  const { h, client } = modeHarness();
+  try {
+    const sid = await createSession(h, "claude-code");
+    client().emit({
+      type: "form.created",
+      data: {
+        form: {
+          id: "frm_plan",
+          sessionID: "ses_remote1",
+          title: "Ready to implement this plan?",
+          metadata: { kind: "plan", plan: "## Rencana\n1. Ubah a.ts" },
+          fields: [
+            {
+              key: "decision",
+              type: "string",
+              description: "Ready to implement this plan?",
+              options: [
+                { value: "acceptEdits", label: "Yes, and auto-accept edits" },
+                { value: "plan", label: "No, keep planning" },
+              ],
+              custom: true,
+            },
+          ],
+        },
+      },
+    });
+    const p = promptOf(h);
+    expect(p).toMatchObject({
+      id: "frm_plan",
+      kind: "plan",
+      type: "menu",
+      title: "Ready to implement this plan?",
+      detail: "## Rencana\n1. Ubah a.ts",
+    });
+    // Tersimpan utuh (reattach menampilkan kartu yang sama).
+    const stored = h.store.getPrompt("frm_plan");
+    expect(stored.ok && stored.data.detail).toBe("## Rencana\n1. Ubah a.ts");
+
+    expect(
+      (await h.sm.resolvePrompt(sid, "frm_plan", { option: "Yes, and auto-accept edits" })).ok,
+    ).toBe(true);
+    expect(client().calls).toContain("form.reply:frm_plan:acceptEdits");
+  } finally {
+    h.close();
+  }
+});
