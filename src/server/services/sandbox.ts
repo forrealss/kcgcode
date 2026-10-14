@@ -22,7 +22,8 @@ export type SandboxResult = { ok: true; realPath: string } | { ok: false; reason
 /** Karakter terlarang untuk nama direktori sesuai OS server. */
 const FORBIDDEN_CHARS = process.platform === "win32" ? /[<>:"|?*\0/\\]/ : /[\0]/;
 
-function isWithin(rootReal: string, p: string): boolean {
+/** `p` sama dengan `rootReal` atau berada di dalamnya (keduanya path absolut ter-resolve). */
+export function isWithin(rootReal: string, p: string): boolean {
   return p === rootReal || p.startsWith(rootReal + path.sep);
 }
 

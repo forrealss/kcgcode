@@ -15,7 +15,7 @@ import { ActionRow, PrefsGroup, RowBadge, SwitchRow } from "@/components/setting
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { playNotificationSound, setSoundEnabled, soundEnabled } from "@/lib/agent-notify";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import {
   disablePush,
   enablePush,
@@ -26,10 +26,6 @@ import {
 } from "@/lib/push";
 import { cn } from "@/lib/utils";
 import type { PushDeviceInfo } from "@/server/services/notifications";
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof ApiError ? e.message : fallback;
-}
 
 /** Alasan push tidak tersedia di perangkat ini. */
 const UNAVAILABLE: Record<Exclude<PushSupport, "supported">, string> = {

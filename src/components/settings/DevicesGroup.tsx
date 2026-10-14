@@ -8,12 +8,8 @@ import { useCallback, useEffect, useState } from "react";
 import { ActionRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import type { DeviceInfo } from "@/server/services/auth";
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof ApiError ? e.message : fallback;
-}
 
 /** Ringkasan user agent -> "Chrome on Android". */
 export function describeDevice(ua: string | null): { label: string; mobile: boolean } {

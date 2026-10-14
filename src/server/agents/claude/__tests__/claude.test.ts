@@ -7,6 +7,7 @@ import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { todosFromInput } from "../../todos";
 import { AGENT_REQUEST_GONE, type AgentEvent } from "../../types";
 import {
   CLAUDE_PROVIDER_ID,
@@ -14,13 +15,7 @@ import {
   createClaudeClient,
   slashCommandInfo,
 } from "../client";
-import {
-  ClaudeTurnTranslator,
-  normalizeToolInput,
-  permissionName,
-  todosFromInput,
-  toolName,
-} from "../translate";
+import { ClaudeTurnTranslator, normalizeToolInput, permissionName, toolName } from "../translate";
 
 const SID = "11111111-1111-4111-8111-111111111111";
 

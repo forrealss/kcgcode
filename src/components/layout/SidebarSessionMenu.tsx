@@ -22,16 +22,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 
 type Busy = "stop" | "start" | "restart" | null;
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof ApiError ? e.message : fallback;
-}
 
 export interface SidebarSessionMenuProps {
   session: Session;

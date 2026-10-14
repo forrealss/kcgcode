@@ -33,7 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { lockLabel, refreshAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import type { AuthStatus } from "@/server/services/auth";
@@ -47,10 +47,6 @@ const AUTO_LOCK_OPTIONS = [
   { value: 30, label: "30 minutes" },
   { value: 60, label: "1 hour" },
 ];
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof ApiError ? e.message : fallback;
-}
 
 export function SecurityGroup({ status, onOk }: { status: AuthStatus; onOk: (t: string) => void }) {
   const [dialog, setDialog] = useState<"set" | "remove" | null>(null);

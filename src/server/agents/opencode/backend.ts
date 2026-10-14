@@ -27,6 +27,7 @@ import type {
   TodoItem,
 } from "../../../types";
 import type { Result, SimpleResult } from "../../result";
+import { todosFromInput } from "../todos";
 import {
   AGENT_REQUEST_GONE,
   type AgentBackend,
@@ -189,23 +190,6 @@ const MCP_STATUSES = new Set<McpServerInfo["status"]>([
   "needs_auth",
   "needs_client_registration",
 ]);
-
-/** Task list dari input tool `todowrite` (`{ todos: [...] }`). */
-export function todosFromInput(input: unknown): TodoItem[] | null {
-  const raw = rec(input).todos;
-  if (!Array.isArray(raw)) return null;
-  const out: TodoItem[] = [];
-  for (const t of raw) {
-    const item = rec(t);
-    if (typeof item.content !== "string") continue;
-    out.push({
-      content: item.content,
-      status: typeof item.status === "string" ? item.status : "pending",
-      priority: typeof item.priority === "string" ? item.priority : "medium",
-    });
-  }
-  return out;
-}
 
 export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentBackend {
   const connector = opts.connect ?? defaultConnector;

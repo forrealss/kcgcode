@@ -47,3 +47,16 @@ export function useMediaQuery(query: string): boolean {
 export function useIsMobile(): boolean {
   return useMediaQuery(MOBILE_QUERY);
 }
+
+/** Media query viewport di bawah breakpoint `md` (768px). */
+export const BELOW_MD_QUERY = "(max-width: 767px)";
+
+/**
+ * Viewport di bawah breakpoint `md` — di bawah ambang ini sidebar shadcn
+ * dirender sebagai Sheet (off-canvas). Sengaja lebih lebar dari
+ * `useIsMobile` karena kelas responsif `components/ui/sidebar.tsx` memakai
+ * varian `md:`.
+ */
+export function useIsBelowMd(): boolean {
+  return useMediaQuery(BELOW_MD_QUERY);
+}

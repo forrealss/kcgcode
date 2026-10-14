@@ -26,6 +26,7 @@
  */
 import { randomUUID } from "node:crypto";
 import type { TodoItem } from "../../../types";
+import { todosFromInput } from "../todos";
 import type { AgentEvent, AgentEventData } from "../types";
 
 /** Batas panjang output tool yang diteruskan (hindari blob raksasa di DB). */
@@ -83,26 +84,6 @@ export function permissionTarget(input: Record<string, unknown>): string | null 
     if (typeof v === "string" && v.trim() !== "") return v;
   }
   return null;
-}
-
-/** Task list dari input `TodoWrite` (`{ todos: [{ content, status }] }`). */
-export function todosFromInput(input: unknown): TodoItem[] | null {
-  if (typeof input !== "object" || input === null) return null;
-  const raw = (input as { todos?: unknown }).todos;
-  if (!Array.isArray(raw)) return null;
-  const out: TodoItem[] = [];
-  for (const t of raw) {
-    if (typeof t !== "object" || t === null) continue;
-    const { content, status, priority } = t as Record<string, unknown>;
-    if (typeof content !== "string") continue;
-    out.push({
-      content,
-      status: typeof status === "string" ? status : "pending",
-      // TodoWrite Claude Code tidak punya prioritas — UI tetap butuh nilai.
-      priority: typeof priority === "string" ? priority : "medium",
-    });
-  }
-  return out;
 }
 
 /** Teks dari konten `tool_result` (string atau array blok). */

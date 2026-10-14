@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import type { Project } from "../../types";
 import type { Result } from "../result";
+import { isWithin } from "./sandbox";
 
 export const WORKSPACE_PATH_MAX = 1024;
 
@@ -115,10 +116,6 @@ function safeRealpath(p: string): string | null {
   } catch {
     return null;
   }
-}
-
-function isWithin(root: string, p: string): boolean {
-  return p === root || p.startsWith(root + path.sep);
 }
 
 /**

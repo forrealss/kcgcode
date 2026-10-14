@@ -15,7 +15,7 @@
 import { DownloadIcon, ShareIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsBelowMd } from "@/hooks/useMediaQuery";
 import { useRouter } from "@/hooks/useRouter";
 import { isEphemeralHost, isIOS, isStandalone, promptInstall, useInstallState } from "@/lib/pwa";
 import { settingsPath } from "@/lib/routes";
@@ -31,7 +31,7 @@ function readDismissed(): boolean {
 }
 
 export function InstallAppBanner() {
-  const isMobile = useIsMobile();
+  const isMobile = useIsBelowMd();
   const { navigate } = useRouter();
   const { canPrompt, installed } = useInstallState();
   const [dismissed, setDismissed] = useState(readDismissed);

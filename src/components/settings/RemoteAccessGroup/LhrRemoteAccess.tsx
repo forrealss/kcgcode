@@ -15,22 +15,19 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import { useRouter } from "@/hooks/useRouter";
-import { ApiError, apiErrorMessage, apiFetch } from "@/lib/api";
+import { apiErrorMessage, apiFetch, errorText } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import type { LhrStatus } from "@/server/services/tunnel-lhr";
+import { LiveAddress } from "./LiveAddress";
+import { LogPanel } from "./LogPanel";
+import { LoadingGroup, type Tone } from "./rows";
+import { sameOrigin } from "./utils";
 
 const BUSY: LhrStatus["phase"][] = ["starting", "connecting", "reconnecting"];
 
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof ApiError ? e.message : fallback;
-}
-
 export interface LhrRemoteAccessProps {
   protectedApp: boolean;
-  /** Komponen bersama dari panel penyedia bawaan (QR + link, log). */
-  LiveAddress: (p: { url: string }) => ReactNode;
-  LogPanel: (p: { endpoint?: string }) => ReactNode;
   /** Buka konfirmasi mematikan (halaman bisa terputus bila dibuka lewat link ini). */
   onRequestStop: (stop: () => Promise<void>, viaThisLink: boolean) => void;
   /** Grup "Connection method" — dirender sebelum log. */
@@ -39,8 +36,6 @@ export interface LhrRemoteAccessProps {
 
 export function LhrRemoteAccess({
   protectedApp,
-  LiveAddress,
-  LogPanel,
   onRequestStop,
   methodPicker,
 }: LhrRemoteAccessProps) {
@@ -91,16 +86,7 @@ export function LhrRemoteAccess({
     }
   };
 
-  if (!s) {
-    return (
-      <PrefsGroup>
-        <li className="flex min-h-14 items-center justify-center" role="status">
-          <Spinner className="size-5 text-muted-foreground" />
-          <span className="sr-only">Loading remote access…</span>
-        </li>
-      </PrefsGroup>
-    );
-  }
+  if (!s) return <LoadingGroup />;
 
   const running = s.enabled && s.phase !== "stopped";
   const online = s.phase === "online" && s.url !== null;
@@ -108,7 +94,7 @@ export function LhrRemoteAccess({
   const connecting = running && !online && s.phase !== "error";
 
   // Subjudul: satu kalimat pendek yang menjelaskan keadaan + apa artinya.
-  let tone: RowTone = "muted";
+  let tone: Tone = "muted";
   let subtitle: ReactNode = "Off";
   if (!protectedApp) {
     tone = "warning";
@@ -231,18 +217,8 @@ export function LhrRemoteAccess({
   );
 }
 
-function sameOrigin(url: string): boolean {
-  try {
-    return new URL(url).origin === window.location.origin;
-  } catch {
-    return false;
-  }
-}
-
-type RowTone = "success" | "busy" | "warning" | "muted";
-
 /** Ikon bulat di awal baris (sama dengan baris lain di Settings). */
-function RowIcon({ tone, children }: { tone: RowTone; children: ReactNode }) {
+function RowIcon({ tone, children }: { tone: Tone; children: ReactNode }) {
   return (
     <span
       aria-hidden

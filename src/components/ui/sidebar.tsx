@@ -14,7 +14,7 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { useIsBelowMd } from "@/hooks/useMediaQuery";
 import { cn } from "@/lib/utils";
 
 /** Kunci localStorage status buka/ciut sidebar desktop (pengganti cookie upstream — app ini tanpa SSR). */
@@ -64,7 +64,7 @@ function SidebarProvider({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
 }) {
-  const isMobile = useIsMobile();
+  const isMobile = useIsBelowMd();
   const [openMobile, setOpenMobile] = React.useState(false);
 
   // This is the internal state of the sidebar.

@@ -44,7 +44,7 @@ import { WorkspaceGroup } from "@/components/settings/WorkspaceGroup";
 import { Spinner } from "@/components/ui/spinner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useRouter } from "@/hooks/useRouter";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { refreshAuth, useAuth } from "@/lib/auth";
 import { type SettingsSection, settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -118,10 +118,6 @@ function pageInfo(section: SettingsSection): SettingsPageInfo {
 
 /** Breakpoint `lg` — di atasnya navigasi & isi berdampingan. */
 const WIDE_QUERY = "(min-width: 1024px)";
-
-function errorText(e: unknown, fallback: string): string {
-  return e instanceof ApiError ? e.message : fallback;
-}
 
 /** Tautan SPA (Ctrl/Cmd-klik tetap membuka tab baru). */
 function useNavLink() {

@@ -26,6 +26,11 @@ export class ApiError extends Error {
   }
 }
 
+/** Pesan `ApiError` untuk ditampilkan; error lain memakai `fallback`. */
+export function errorText(e: unknown, fallback: string): string {
+  return e instanceof ApiError ? e.message : fallback;
+}
+
 /**
  * Dipanggil saat server membalas 401 `AUTH_REQUIRED` (sesi habis / terkunci
  * otomatis / dicabut) — lock screen dipasang oleh `lib/auth.ts`.
