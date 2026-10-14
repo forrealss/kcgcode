@@ -8,7 +8,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
 import { AGENT_REQUEST_GONE, type AgentEvent } from "../../types";
-import { CLAUDE_PROVIDER_ID, type ClaudeQueryLike, createClaudeClient } from "../client";
+import {
+  CLAUDE_PROVIDER_ID,
+  type ClaudeQueryLike,
+  createClaudeClient,
+  slashCommandInfo,
+} from "../client";
 import {
   ClaudeTurnTranslator,
   normalizeToolInput,
@@ -311,6 +316,21 @@ function fakeQuery() {
             supportedEffortLevels: ["low", "medium", "high", "max"],
           },
           { value: "haiku-old", displayName: "Haiku", description: "" },
+        ];
+      },
+      async supportedCommands() {
+        return [
+          { name: "review", description: "Review changes ", argumentHint: "[pr#]", builtin: true },
+          { name: "clear", description: "New session", argumentHint: "", builtin: true },
+          { name: "__internal", description: "x", argumentHint: "", builtin: true },
+          {
+            name: "remotion:docs",
+            description: "(Remotion) Search docs",
+            argumentHint: "",
+            aliases: ["docs"],
+          },
+          // Command kustom boleh bernama sama dengan bawaan yang disembunyikan.
+          { name: "model", description: "Project command", argumentHint: "<name>" },
         ];
       },
       async mcpServerStatus() {
@@ -718,6 +738,58 @@ describe("createClaudeClient", () => {
     expect((await client.session.remove(SID)).ok).toBe(true);
     expect(q?.closed).toBe(true);
     expect(removed).toEqual([SID]);
+  });
+});
+
+describe("slash command Claude Code", () => {
+  test("supportedCommands -> daftar composer; bawaan yang bentrok dengan KCG disembunyikan", async () => {
+    const { client, calls } = setup();
+    const res = await client.command.list();
+    expect(res).toEqual({
+      ok: true,
+      data: [
+        { name: "review", description: "Review changes", argumentHint: "[pr#]", builtin: true },
+        {
+          name: "remotion:docs",
+          description: "(Remotion) Search docs",
+          argumentHint: null,
+          aliases: ["docs"],
+        },
+        { name: "model", description: "Project command", argumentHint: "<name>" },
+      ],
+    });
+    // Query sementara, lalu cache: panggilan kedua tanpa proses baru.
+    expect(calls[0]?.query.closed).toBe(true);
+    await client.command.list();
+    expect(calls.length).toBe(1);
+  });
+
+  test("commands_changed dari CLI mengganti cache; reload membuangnya", async () => {
+    const { client, calls } = setup();
+    await client.session.prompt({ sessionID: SID, text: "/review 12" });
+    await tick();
+    // Teks slash command diteruskan apa adanya — CLI yang menjalankannya.
+    expect(calls[0]?.inputs[0]?.message).toEqual({ role: "user", content: "/review 12" });
+    calls[0]?.query.push({
+      type: "system",
+      subtype: "commands_changed",
+      commands: [{ name: "fresh", description: "", argumentHint: "" }],
+    });
+    await tick();
+    expect(await client.command.list()).toEqual({
+      ok: true,
+      data: [{ name: "fresh", description: null, argumentHint: null }],
+    });
+    await client.location.reload();
+    const again = await client.command.list();
+    expect(again.ok && again.data.map((c) => c.name)).toContain("review");
+  });
+
+  test("slashCommandInfo: nama internal `__` selalu disembunyikan", () => {
+    expect(slashCommandInfo({ name: "__x", description: "", argumentHint: "" })).toBeNull();
+    expect(
+      slashCommandInfo({ name: "focus", description: "", argumentHint: "", builtin: true }),
+    ).toBeNull();
   });
 });
 

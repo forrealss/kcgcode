@@ -28,8 +28,10 @@ import { useEffect, useRef, useState } from "react";
 import { HomeBackdrop } from "@/components/projects/HomeBackdrop";
 import { HomeRecentSessions } from "@/components/projects/HomeRecentSessions";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
+import { ComposerSuggestions } from "@/components/sessions/ComposerSuggestions";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
 import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
+import { SlashCommandDropdown } from "@/components/sessions/SlashCommandDropdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -50,7 +52,8 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { usePermissionModes } from "@/hooks/usePermissionModes";
 import { useRouter } from "@/hooks/useRouter";
-import { readPreferredAgentType, storePreferredAgentType } from "@/lib/agent-types";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
+import { agentQuery, readPreferredAgentType, storePreferredAgentType } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
 import { pickHeadline } from "@/lib/headlines";
@@ -133,6 +136,8 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   /** Permission mode Session baru (agent dengan capability, mis. Claude Code). */
   const [permissionMode, setPermissionMode] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  /** Kotak input — acuan posisi saran slash command. */
+  const inputBoxRef = useRef<HTMLDivElement | null>(null);
 
   // Project tersimpan sudah dihapus / belum ada -> pakai yang paling baru aktif.
   const selectedOverview =
@@ -142,6 +147,23 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   useEffect(() => {
     textareaRef.current?.focus();
   }, []);
+
+  /**
+   * Slash command (`/` di awal pesan) — mis. `/init` sebagai pesan pertama
+   * Session baru. Daftar milik Project & agent terpilih, dimuat saat `/`
+   * pertama diketik.
+   */
+  const slash = useSlashCommands(
+    selected ? `/api/projects/${selected.id}/commands${agentQuery(agentType)}` : null,
+  );
+  useEffect(
+    () =>
+      slash.setOnPick((next) => {
+        setText(next);
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      }),
+    [slash],
+  );
 
   const choose = (id: string) => {
     if (id !== selected?.id) {
@@ -231,12 +253,38 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
           {/* Section 1 — kotak input: textarea + baris aksi (mode agent kiri,
             kirim kanan), tata letak sama dengan composer Session. `-m-px`
             menumpuk border kotak ini di atas border container luar. */}
-          <InputGroup className="-m-px w-auto rounded-2xl bg-card shadow-sm dark:bg-card">
+          <ComposerSuggestions open={slash.open} anchorRef={inputBoxRef} onDismiss={slash.close}>
+            <SlashCommandDropdown
+              loading={slash.loading}
+              error={slash.error}
+              matches={slash.matches}
+              highlighted={slash.highlighted}
+              onPick={(i) => {
+                const next = slash.pick(i);
+                if (next === null) return;
+                setText(next);
+                requestAnimationFrame(() => textareaRef.current?.focus());
+              }}
+            />
+          </ComposerSuggestions>
+          <InputGroup
+            ref={inputBoxRef}
+            className="-m-px w-auto rounded-2xl bg-card shadow-sm dark:bg-card"
+          >
             <InputGroupTextarea
               ref={textareaRef}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              onChange={(e) => {
+                setText(e.target.value);
+                slash.onInputChange(
+                  e.target.value,
+                  e.target.selectionStart ?? e.target.value.length,
+                );
+              }}
+              onBlur={() => slash.close()}
               onKeyDown={(e) => {
+                // Dropdown slash command aktif: panah/enter/tab/escape miliknya.
+                if (slash.handleKeyDown(e)) return;
                 // Enter kirim, Shift+Enter baris baru (abaikan saat komposisi IME).
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();

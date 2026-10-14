@@ -20,6 +20,7 @@ import type {
   ModelOption,
   PermissionModeOption,
   SkillInfo,
+  SlashCommandInfo,
   TodoItem,
 } from "../../types";
 import type { Result, SimpleResult } from "../result";
@@ -235,7 +236,9 @@ export interface AgentClient {
     setPermissionMode(sessionID: string, mode: string | null): Promise<SimpleResult>;
     /**
      * Kirim prompt tanpa menunggu balasan. Hasil turn tiba lewat event dan
-     * ditutup `session.execution.succeeded|failed|interrupted`.
+     * ditutup `session.execution.succeeded|failed|interrupted`. Teks yang
+     * diawali `/nama` dijalankan sebagai slash command bila `nama` ada di
+     * `command.list()` (selain itu dikirim sebagai teks biasa).
      */
     prompt(input: {
       sessionID: string;
@@ -266,6 +269,8 @@ export interface AgentClient {
   agent: { list(): Promise<Result<AgentOption[]>> };
   mcp: { list(): Promise<Result<McpServerInfo[]>> };
   skill: { list(): Promise<Result<SkillInfo[]>> };
+  /** Slash command yang bisa dijalankan lewat prompt `/nama args`. */
+  command: { list(): Promise<Result<SlashCommandInfo[]>> };
   file: { find(query: string): Promise<Result<string[]>> };
   vcs: { status(): Promise<Result<FileChange[]>> };
   location: {

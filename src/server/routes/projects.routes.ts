@@ -4,8 +4,9 @@
  * `/api/projects` (GET daftar / POST buat), `/api/projects/:id` (PATCH ubah
  * custom instruction, DELETE hapus
  * pendaftaran Project beserta seluruh Session-nya), `/api/fs` (GET list
- * direktori untuk Folder_Browser), dan `/api/projects/:id/models` (GET model
- * yang tersedia pada server headless Project). Dipasang composition root
+ * direktori untuk Folder_Browser), `/api/projects/:id/models` (GET model
+ * yang tersedia pada server headless Project), dan daftar agent / MCP / skill /
+ * slash command Project. Dipasang composition root
  * (`app.ts`) bersama tabel rute lain — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
@@ -145,6 +146,19 @@ export function projectsRoutes(ctx: ApiRouteContext) {
           const res = await sessionManager.listSkills(req.params.id, agentTypeParam(req));
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ skills: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+    },
+
+    // ---- Slash command (autocomplete `/` di composer) ----
+    "/api/projects/:id/commands": {
+      GET: async (req: BunRequest<"/api/projects/:id/commands">) => {
+        try {
+          const res = await sessionManager.listCommands(req.params.id, agentTypeParam(req));
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ commands: res.data });
         } catch (e) {
           return serverError(e);
         }

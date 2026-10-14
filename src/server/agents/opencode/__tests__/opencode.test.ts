@@ -7,7 +7,12 @@
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
 import { AGENT_REQUEST_GONE, type AgentEvent } from "../../types";
-import { createOpencodeBackend, directoryKey, type OpencodeApi } from "../backend";
+import {
+  createOpencodeBackend,
+  directoryKey,
+  type OpencodeApi,
+  parseSlashCommand,
+} from "../backend";
 import { toAgentForm, translateOpencodeEvent } from "../translate";
 import {
   checkOpencodeVersion,
@@ -138,6 +143,7 @@ function fakeApi(pid = 100) {
       switchModel: rec("session.switchModel"),
       switchAgent: rec("session.switchAgent"),
       prompt: rec("session.prompt"),
+      command: rec("session.command"),
       interrupt: rec("session.interrupt", { interrupted: true }),
       instructions: {
         entry: { put: rec("instructions.put"), remove: rec("instructions.remove") },
@@ -202,6 +208,11 @@ function fakeApi(pid = 100) {
       }),
     },
     file: { find: rec("file.find", { data: [{ path: "src/a.ts", type: "file" }] }) },
+    command: {
+      list: rec("command.list", {
+        data: [{ name: "review", description: "Review changes" }, { name: "init" }, {}],
+      }),
+    },
     vcs: {
       status: rec("vcs.status", {
         data: [{ file: "src/a.ts", additions: 3, deletions: 1, status: "modified" }],
@@ -408,6 +419,42 @@ describe("createOpencodeBackend", () => {
       { sessionID: "ses_1", model: { id: "big-pickle", providerID: "opencode" } },
       { sessionID: "ses_2", model: { id: "big-pickle", providerID: "opencode", variant: "low" } },
     ]);
+  });
+
+  test("slash command: daftar dari command.list; `/nama` dikenal -> session.command", async () => {
+    const { backend, apis } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    expect(await r.data.command.list()).toEqual({
+      ok: true,
+      data: [
+        { name: "init", description: null, argumentHint: null },
+        { name: "review", description: "Review changes", argumentHint: null },
+      ],
+    });
+    const files = [{ uri: "file:///proj/a.ts", name: "a.ts", mime: "text/plain" }];
+    await r.data.session.prompt({ sessionID: "ses_1", text: "/review  fokus ke API ", files });
+    await r.data.session.prompt({ sessionID: "ses_1", text: "/usr/bin bukan command" });
+    const calls = apis[0]?.calls ?? [];
+    expect(calls.find(([n]) => n === "session.command")?.[1]).toEqual({
+      sessionID: "ses_1",
+      name: "review",
+      text: "fokus ke API",
+      files: [{ uri: "file:///proj/a.ts", name: "a.ts" }],
+    });
+    expect(calls.filter(([n]) => n === "session.prompt").map(([, i]) => i)).toEqual([
+      { sessionID: "ses_1", text: "/usr/bin bukan command" },
+    ]);
+    // Daftar di-cache untuk perutean: tidak dimuat ulang tiap prompt.
+    expect(calls.filter(([n]) => n === "command.list")).toHaveLength(1);
+  });
+
+  test("parseSlashCommand: hanya `/nama` di awal teks", () => {
+    expect(parseSlashCommand("/init")).toEqual({ name: "init", args: "" });
+    expect(parseSlashCommand(" /review a\nb ")).toEqual({ name: "review", args: "a\nb" });
+    expect(parseSlashCommand("halo /review")).toBeNull();
+    expect(parseSlashCommand("/")).toBeNull();
+    expect(parseSlashCommand("// komentar")).toBeNull();
   });
 
   test("prompt meneruskan teks + lampiran sebagai uri", async () => {

@@ -13,6 +13,7 @@ import type {
   McpServerInfo,
   ModelOption,
   SkillInfo,
+  SlashCommandInfo,
   TodoItem,
 } from "../../types";
 import {
@@ -48,6 +49,7 @@ export interface FakeAgentClient extends AgentClient {
   availableAgents: AgentOption[];
   mcpServers: McpServerInfo[];
   skillList: SkillInfo[];
+  commandList: SlashCommandInfo[];
   /** Per prompt: lampiran, model (`provider/model` | null), agent, instruksi. */
   promptFilesCalls: AgentPromptFile[][];
   promptModels: (string | null)[];
@@ -134,6 +136,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
       { name: "broken", status: "failed", error: "spawn ENOENT" },
     ],
     skillList: [{ name: "shadcn", description: "UI", location: null, source: "project" }],
+    commandList: [{ name: "review", description: "Review changes", argumentHint: "[pr#]" }],
     promptFilesCalls: [],
     promptModels: [],
     promptEfforts: [],
@@ -257,6 +260,12 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
       async list() {
         calls.push("skill.list");
         return { ok: true, data: client.skillList };
+      },
+    },
+    command: {
+      async list() {
+        calls.push("command.list");
+        return { ok: true, data: client.commandList };
       },
     },
     file: {

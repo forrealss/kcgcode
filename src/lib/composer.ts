@@ -5,8 +5,10 @@
  * Isinya keputusan teks placeholder: di layar HP input jauh lebih sempit,
  * sehingga placeholder panjang terpotong di tengah kata dan justru tidak
  * memberi informasi apa pun. Versi mobile dibuat pendek; petunjuk lengkap
- * (`@` untuk file, drop/tempel file) tetap tersedia di layar lebar.
+ * (`/` untuk command, `@` untuk file, drop/tempel file) tetap tersedia di
+ * layar lebar.
  */
+import { leadingCommand } from "@/lib/slash-commands";
 
 /** Kondisi composer yang menentukan teks placeholder. */
 export interface ComposerPlaceholderState {
@@ -34,7 +36,7 @@ export function composerPlaceholder(state: ComposerPlaceholderState): string {
   if (state.hasAttachments) return "Add a message…";
   return state.compact
     ? "Type a message…"
-    : "Type a message… type @ for file references, or drop files here";
+    : "Type a message… / for commands, @ for files, or drop files here";
 }
 
 /**
@@ -58,13 +60,15 @@ export function extractMentionedFiles(text: string, knownPaths: ReadonlySet<stri
   return files;
 }
 
-/** Potongan teks composer untuk lapisan sorot: teks biasa atau mention file. */
+/** Potongan teks composer untuk lapisan sorot: teks, slash command, atau mention file. */
 export type ComposerSegment =
   | { kind: "text"; text: string }
+  | { kind: "command"; text: string }
   | { kind: "mention"; text: string; path: string };
 
 /**
- * Pecah teks composer menjadi potongan teks biasa & mention `@path` yang
+ * Pecah teks composer menjadi potongan teks biasa, slash command `/nama` di
+ * awal teks (bila `nama` ada di `knownCommands`), & mention `@path` yang
  * dikenali (aturan sama dengan `extractMentionedFiles`: path pernah
  * disarankan autocomplete ATAU memuat `/`). Gabungan `text` seluruh
  * potongan SELALU identik dengan input — lapisan sorot di belakang textarea
@@ -73,13 +77,20 @@ export type ComposerSegment =
 export function splitComposerMentions(
   text: string,
   knownPaths: ReadonlySet<string>,
+  knownCommands: ReadonlySet<string> = new Set(),
 ): ComposerSegment[] {
   const out: ComposerSegment[] = [];
   let last = 0;
+  const command = leadingCommand(text, knownCommands);
+  if (command) {
+    out.push({ kind: "command", text: command });
+    last = command.length;
+  }
   for (const match of text.matchAll(/(^|\s)@([^\s]+)/g)) {
     const path = match[2] ?? "";
     if (path.length === 0 || !(knownPaths.has(path) || path.includes("/"))) continue;
     const start = (match.index ?? 0) + (match[1]?.length ?? 0);
+    if (start < last) continue;
     if (start > last) out.push({ kind: "text", text: text.slice(last, start) });
     out.push({ kind: "mention", text: `@${path}`, path });
     last = start + 1 + path.length;

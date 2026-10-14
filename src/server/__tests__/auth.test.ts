@@ -85,6 +85,7 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/projects/x/models",
       "/api/projects/x/mcp",
       "/api/projects/x/skills",
+      "/api/projects/x/commands",
       "/api/projects/x/agents",
       "/api/projects/x/capabilities",
       "/api/projects/x/skills/install",

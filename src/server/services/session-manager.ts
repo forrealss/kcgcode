@@ -43,6 +43,7 @@ import type {
   SessionModel,
   SessionStatus,
   SkillInfo,
+  SlashCommandInfo,
 } from "../../types";
 import {
   AGENT_REQUEST_GONE,
@@ -238,6 +239,11 @@ export interface SessionManager {
   listMcp(projectId: string, agentType?: AgentType): Promise<Result<McpServerInfo[]>>;
   /** Skill yang terdaftar untuk Project (global, folder Project, bawaan). */
   listSkills(projectId: string, agentType?: AgentType): Promise<Result<SkillInfo[]>>;
+  /**
+   * Slash command Project untuk autocomplete `/` di composer (bawaan agent,
+   * kustom, skill). Dijalankan lewat prompt `/nama args`.
+   */
+  listCommands(projectId: string, agentType?: AgentType): Promise<Result<SlashCommandInfo[]>>;
   /**
    * Muat ulang daftar skill server headless Project setelah skill dipasang.
    * Bila ada turn aktif di Project, refresh ditunda (`refreshed: false`) agar
@@ -748,6 +754,15 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   ): Promise<Result<SkillInfo[]>> {
     const client = await projectClient(projectId, agentType);
     return client.ok ? client.data.skill.list() : client;
+  }
+
+  /** Slash command Project (client dibuat bila perlu). */
+  async function listCommands(
+    projectId: string,
+    agentType: AgentType = "opencode",
+  ): Promise<Result<SlashCommandInfo[]>> {
+    const client = await projectClient(projectId, agentType);
+    return client.ok ? client.data.command.list() : client;
   }
 
   function projectBusy(projectId: string): boolean {
@@ -1315,6 +1330,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     listAgents,
     listMcp,
     listSkills,
+    listCommands,
     refreshSkills,
     hasPendingSkillRefresh,
     setSessionModel,

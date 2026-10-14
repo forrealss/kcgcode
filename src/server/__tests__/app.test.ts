@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { openSessionStore, type SessionStore } from "../../db";
-import type { Project, Session, SessionContext } from "../../types";
+import type { Project, Session, SessionContext, SlashCommandInfo } from "../../types";
 import type { ServerMessage } from "../../ws-protocol";
 import { createKcgServer, type KcgServer } from "../app";
 import type { SkillsRegistry } from "../services/skills-registry";
@@ -578,6 +578,14 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
 
     expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/mcp`)).status).toBe(404);
     expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/skills`)).status).toBe(404);
+
+    // ---- slash command (autocomplete `/` composer) ----
+    const cmdRes = await fetch(`${baseUrl()}/api/projects/${proj.project.id}/commands`);
+    expect(cmdRes.status).toBe(200);
+    expect(((await cmdRes.json()) as { commands: SlashCommandInfo[] }).commands).toEqual([
+      { name: "review", description: "Review changes", argumentHint: "[pr#]" },
+    ]);
+    expect((await fetch(`${baseUrl()}/api/projects/tidak-ada/commands`)).status).toBe(404);
   });
 
   test("model: GET /api/projects/:id/models + create dengan model + PUT ganti model", async () => {

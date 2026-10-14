@@ -19,7 +19,7 @@ describe("composerPlaceholder", () => {
 
   test("wide screen: full hint when input is ready", () => {
     expect(composerPlaceholder({ busy: false, canInput: true, compact: false })).toBe(
-      "Type a message… type @ for file references, or drop files here",
+      "Type a message… / for commands, @ for files, or drop files here",
     );
   });
 
@@ -114,5 +114,17 @@ describe("splitComposerMentions", () => {
     for (const text of ["", "@", "@skills-lock.json", "\n@src/a.ts\n\nteks", "  @x/y  "]) {
       expect(join(splitComposerMentions(text, known))).toBe(text);
     }
+  });
+
+  test("slash command dikenal di awal teks disorot, lalu mention seperti biasa", () => {
+    const commands = new Set(["review"]);
+    const text = "/review cek @src/App.tsx";
+    const segs = splitComposerMentions(text, known, commands);
+    expect(segs.map((x) => x.kind)).toEqual(["command", "text", "mention"]);
+    expect(segs[0]?.text).toBe("/review");
+    expect(join(segs)).toBe(text);
+    // Bukan command yang dikenal / bukan di awal -> teks biasa.
+    expect(splitComposerMentions("/usr/bin x", known, commands)[0]?.kind).toBe("text");
+    expect(splitComposerMentions("tolong /review", known, commands)[0]?.kind).toBe("text");
   });
 });

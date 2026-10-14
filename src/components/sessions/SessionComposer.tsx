@@ -1,7 +1,7 @@
 /**
  * Composer input Session — textarea prompt, lampiran file (gambar maupun
- * file lain; lewat tombol, paste, atau drag & drop), @file autocomplete,
- * mode agent, serta tombol kirim/stop.
+ * file lain; lewat tombol, paste, atau drag & drop), autocomplete slash
+ * command (`/` di awal pesan) & @file, mode agent, serta tombol kirim/stop.
  *
  * Drag & drop: overlay "Add anything" dipasang `SessionView` (menutupi
  * seluruh layar Session) dan memanggil `addFiles(files, fromRect)` lewat
@@ -31,6 +31,7 @@ import {
 } from "react";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
 import { ComposerActionSheet } from "@/components/sessions/ComposerActionSheet";
+import { ComposerSuggestions } from "@/components/sessions/ComposerSuggestions";
 import { DropPlate } from "@/components/sessions/DropPlate";
 import { FileMentionDropdown } from "@/components/sessions/FileMentionDropdown";
 import {
@@ -38,6 +39,7 @@ import {
   PendingAttachments,
 } from "@/components/sessions/PendingAttachments";
 import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
+import { SlashCommandDropdown } from "@/components/sessions/SlashCommandDropdown";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -45,7 +47,9 @@ import { useAgentPicker } from "@/hooks/useAgentPicker";
 import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
 import { usePermissionModes } from "@/hooks/usePermissionModes";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
+import { agentQuery } from "@/lib/agent-types";
 import { ApiError, apiErrorMessage, apiUploadFile } from "@/lib/api";
 import { isPreviewableImage, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 import { composerPlaceholder, extractMentionedFiles, splitComposerMentions } from "@/lib/composer";
@@ -166,6 +170,16 @@ export function SessionComposer({
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
   useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
+  /**
+   * Autocomplete slash command: `/` di awal pesan membuka daftar command
+   * agent (bawaan, kustom, skill); pesan `/nama args` dijalankan agent.
+   */
+  const slash = useSlashCommands(
+    `/api/projects/${session.projectId}/commands${agentQuery(session.agentType)}`,
+  );
+  useEffect(() => slash.setOnPick(applyPicked), [slash, applyPicked]);
+  const mentionOpen =
+    mention.mention !== null && (mention.suggestions.length > 0 || mention.loading);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   /** Lapisan sorot @file di belakang textarea (scroll disinkronkan). */
@@ -328,6 +342,7 @@ export function SessionComposer({
       setPendingImages([]);
       setText("");
       mention.close();
+      slash.close();
     } catch (e) {
       reportError(e instanceof ApiError ? e.message : apiErrorMessage("ERROR"));
     } finally {
@@ -398,19 +413,40 @@ export function SessionComposer({
             <DropPlate from={plate.from} items={plate.targets} box={plate.box} onDone={endPlate} />
           )}
 
-          {/* Dropdown saran @file (muncul di atas input saat token @ aktif). */}
-          {mention.mention !== null && (mention.suggestions.length > 0 || mention.loading) && (
-            <FileMentionDropdown
-              loading={mention.loading}
-              error={mention.error}
-              suggestions={mention.suggestions}
-              highlighted={mention.highlighted}
-              onPick={(i) => {
-                const next = mention.pick(i);
-                if (next !== null) applyPicked(next);
-              }}
-            />
-          )}
+          {/* Saran autocomplete di atas kotak composer: slash command (`/` di
+              awal pesan) atau @file (token @ aktif). */}
+          <ComposerSuggestions
+            open={slash.open || mentionOpen}
+            anchorRef={boxRef}
+            onDismiss={() => {
+              slash.close();
+              mention.close();
+            }}
+          >
+            {slash.open ? (
+              <SlashCommandDropdown
+                loading={slash.loading}
+                error={slash.error}
+                matches={slash.matches}
+                highlighted={slash.highlighted}
+                onPick={(i) => {
+                  const next = slash.pick(i);
+                  if (next !== null) applyPicked(next);
+                }}
+              />
+            ) : (
+              <FileMentionDropdown
+                loading={mention.loading}
+                error={mention.error}
+                suggestions={mention.suggestions}
+                highlighted={mention.highlighted}
+                onPick={(i) => {
+                  const next = mention.pick(i);
+                  if (next !== null) applyPicked(next);
+                }}
+              />
+            )}
+          </ComposerSuggestions>
 
           {(() => {
             // Ala Gemini: begitu input tumbuh ke 2 baris (multiline), tombol
@@ -425,8 +461,8 @@ export function SessionComposer({
             // Sengaja bukan warna teks: textarea harus tetap menggambar
             // teksnya sendiri agar teks komposisi IME tetap terlihat. Textarea tetap input aslinya: kursor, seleksi,
             // undo, IME, dan autocomplete tidak berubah. Scroll disinkronkan.
-            const segments = splitComposerMentions(text, suggestedCacheRef.current);
-            const hasMention = segments.some((seg) => seg.kind === "mention");
+            const segments = splitComposerMentions(text, suggestedCacheRef.current, slash.known);
+            const hasMention = segments.some((seg) => seg.kind !== "text");
             const textareaEl = (
               <div
                 key="composer-textarea"
@@ -439,7 +475,7 @@ export function SessionComposer({
                     className="pointer-events-none absolute inset-0 overflow-hidden px-2 py-1.5 text-base leading-6 break-words whitespace-pre-wrap text-transparent"
                   >
                     {segments.map((seg, i) =>
-                      seg.kind === "mention" ? (
+                      seg.kind !== "text" ? (
                         <mark
                           // biome-ignore lint/suspicious/noArrayIndexKey: urutan potongan = urutan teks
                           key={i}
@@ -460,14 +496,14 @@ export function SessionComposer({
                   ref={textareaRef}
                   value={text}
                   onChange={(e) => {
+                    const caret = e.target.selectionStart ?? e.target.value.length;
                     setText(e.target.value);
-                    mention.onInputChange(
-                      e.target.value,
-                      e.target.selectionStart ?? e.target.value.length,
-                    );
+                    mention.onInputChange(e.target.value, caret);
+                    slash.onInputChange(e.target.value, caret);
                   }}
                   onKeyDown={(e) => {
                     // Dropdown aktif: panah/enter/tab/escape dikelola autocomplete.
+                    if (slash.handleKeyDown(e)) return;
                     if (mention.handleKeyDown(e)) return;
                     if (e.key === "Enter" && !e.shiftKey) {
                       e.preventDefault();
@@ -480,7 +516,10 @@ export function SessionComposer({
                       highlightRef.current.scrollTop = e.currentTarget.scrollTop;
                     }
                   }}
-                  onBlur={() => mention.close()}
+                  onBlur={() => {
+                    mention.close();
+                    slash.close();
+                  }}
                   placeholder={composerPlaceholder({
                     busy,
                     canInput,

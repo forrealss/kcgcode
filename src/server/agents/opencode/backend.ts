@@ -22,6 +22,7 @@ import type {
   McpServerInfo,
   ModelOption,
   SkillInfo,
+  SlashCommandInfo,
   TodoItem,
 } from "../../../types";
 import type { Result, SimpleResult } from "../../result";
@@ -45,6 +46,7 @@ export interface OpencodeApi {
     switchModel(input: Record<string, unknown>): Promise<unknown>;
     switchAgent(input: Record<string, unknown>): Promise<unknown>;
     prompt(input: Record<string, unknown>): Promise<unknown>;
+    command(input: Record<string, unknown>): Promise<unknown>;
     interrupt(input: { sessionID: string }): Promise<unknown>;
     instructions: {
       entry: {
@@ -66,6 +68,7 @@ export interface OpencodeApi {
   agent: { list(input: Record<string, unknown>): Promise<unknown> };
   mcp: { list(input: Record<string, unknown>): Promise<unknown> };
   skill: { list(input: Record<string, unknown>): Promise<unknown> };
+  command: { list(input: Record<string, unknown>): Promise<unknown> };
   file: { find(input: Record<string, unknown>): Promise<unknown> };
   vcs: { status(input: Record<string, unknown>): Promise<unknown> };
   location: { reload(input: Record<string, unknown>): Promise<unknown> };
@@ -98,6 +101,15 @@ export interface OpencodeBackendOptions {
 
 /** Kunci instruksi Project yang dipasang KCG pada Session opencode. */
 export const INSTRUCTIONS_KEY = "kcg-project";
+
+/** Umur cache nama slash command (rute prompt `/nama`) per Project. */
+const COMMANDS_CACHE_MS = 60_000;
+
+/** `/nama args` di awal teks -> nama + argumen; selain itu null. */
+export function parseSlashCommand(text: string): { name: string; args: string } | null {
+  const m = /^\/([^\s/][^\s]*)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  return m ? { name: m[1] as string, args: (m[2] ?? "").trim() } : null;
+}
 
 /** Nama tool task list opencode. */
 const TODO_TOOL = "todowrite";
@@ -341,6 +353,31 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
 
     const ok = <T>(r: Result<T>): SimpleResult =>
       r.ok ? { ok: true } : { ok: false, error: r.error };
+    /** Slash command terakhir (untuk merutekan prompt `/nama`). */
+    let commandsCache: { at: number; names: Set<string> } | null = null;
+
+    async function listCommands(): Promise<Result<SlashCommandInfo[]>> {
+      const res = await call("AGENT_LIST_COMMANDS_FAILED", (a) => a.command.list(location));
+      if (!res.ok) return res;
+      const out: SlashCommandInfo[] = [];
+      for (const raw of list(res.data)) {
+        const c = rec(raw);
+        const name = str(c.name);
+        if (!name) continue;
+        out.push({ name, description: str(c.description), argumentHint: null });
+      }
+      out.sort((x, y) => x.name.localeCompare(y.name));
+      commandsCache = { at: Date.now(), names: new Set(out.map((c) => c.name)) };
+      return { ok: true, data: out };
+    }
+
+    /** Nama `/nama` dikenal opencode? Daftar gagal dimuat -> dianggap teks biasa. */
+    async function isCommand(name: string): Promise<boolean> {
+      if (!commandsCache || Date.now() - commandsCache.at > COMMANDS_CACHE_MS) {
+        await listCommands();
+      }
+      return commandsCache?.names.has(name) ?? false;
+    }
 
     const client: AgentClient = {
       kind: "opencode",
@@ -444,14 +481,25 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
         },
         async prompt(input) {
           sessionDirs.set(input.sessionID, dirKey);
+          const files = input.files?.length
+            ? { files: input.files.map((f) => ({ uri: f.uri, name: f.name })) }
+            : {};
+          // `/nama args` milik opencode dijalankan lewat `session.command`
+          // (TUI opencode melakukan hal yang sama); `/usr/bin …` dsb. tetap teks.
+          const slash = parseSlashCommand(input.text);
+          if (slash && (await isCommand(slash.name))) {
+            const res = await call("AGENT_PROMPT_FAILED", (a) =>
+              a.session.command({
+                sessionID: input.sessionID,
+                name: slash.name,
+                text: slash.args,
+                ...files,
+              }),
+            );
+            return ok(res);
+          }
           const res = await call("AGENT_PROMPT_FAILED", (a) =>
-            a.session.prompt({
-              sessionID: input.sessionID,
-              text: input.text,
-              ...(input.files?.length
-                ? { files: input.files.map((f) => ({ uri: f.uri, name: f.name })) }
-                : {}),
-            }),
+            a.session.prompt({ sessionID: input.sessionID, text: input.text, ...files }),
           );
           return ok(res);
         },
@@ -587,6 +635,7 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
           return { ok: true, data: out.sort((x, y) => x.name.localeCompare(y.name)) };
         },
       },
+      command: { list: listCommands },
       file: {
         async find(query) {
           const res = await call("AGENT_FIND_FILES_FAILED", (a) =>

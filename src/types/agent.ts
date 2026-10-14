@@ -31,6 +31,22 @@ export interface AgentOption {
   description: string | null;
 }
 
+/**
+ * Satu slash command yang bisa diketik di awal pesan composer (`/name args`):
+ * command bawaan agent, command kustom (user/project/plugin), atau skill.
+ */
+export interface SlashCommandInfo {
+  /** Nama tanpa `/` (mis. `review`, `remotion:remotion-docs`). */
+  name: string;
+  description: string | null;
+  /** Petunjuk argumen (mis. `[pr#]`); null = tanpa petunjuk. */
+  argumentHint: string | null;
+  /** Nama lain yang menjalankan command yang sama (mis. `cost` -> `usage`). */
+  aliases?: string[];
+  /** Command bawaan agent; tidak ada = kustom (user/project/plugin/skill). */
+  builtin?: boolean;
+}
+
 /** Satu MCP server Project beserta status koneksinya. */
 export type McpServerInfo = McpServerState;
 

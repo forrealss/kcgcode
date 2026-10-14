@@ -31,6 +31,7 @@ import type {
   PermissionUpdate,
   SDKMessage,
   SDKUserMessage,
+  SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   deleteSession as sdkDeleteSession,
@@ -42,6 +43,7 @@ import type {
   McpServerInfo,
   ModelOption,
   PermissionModeOption,
+  SlashCommandInfo,
   TodoItem,
 } from "../../../types";
 import type { Result, SimpleResult } from "../../result";
@@ -66,7 +68,7 @@ export const CLAUDE_PROVIDER_ID = "claude-code";
 export const CLAUDE_IDLE_CLOSE_MS = 10 * 60_000;
 /** Batas tunggu request kontrol SDK (daftar model, status MCP, interrupt). */
 const CONTROL_TIMEOUT_MS = 30_000;
-/** Cache daftar model (spawn proses hanya untuk daftar itu mahal). */
+/** Cache daftar model & slash command (spawn proses hanya untuk daftar itu mahal). */
 const MODELS_CACHE_MS = 5 * 60_000;
 /** Baris stderr terakhir yang disimpan untuk pesan error crash. */
 const STDERR_TAIL_LINES = 20;
@@ -111,6 +113,37 @@ export const CLAUDE_PERMISSION_MODES: PermissionModeOption[] = [
 
 const PERMISSION_MODE_IDS = new Set(CLAUDE_PERMISSION_MODES.map((m) => m.id));
 
+/**
+ * Slash command bawaan yang tidak ditawarkan di composer:
+ * - `clear` mengganti id session Claude Code diam-diam (Session KCG akan
+ *   tetap me-resume transcript lama);
+ * - `model` / `effort` punya pemilih sendiri di KCG — lewat slash, pilihan
+ *   tersimpan di KCG tidak ikut berubah;
+ * - `color` / `focus` / `heapdump` hanya bermakna di terminal;
+ * - `workflow-launch-exec` & nama berawalan `__` = command internal CLI.
+ */
+const HIDDEN_COMMANDS = new Set([
+  "clear",
+  "model",
+  "effort",
+  "color",
+  "focus",
+  "heapdump",
+  "workflow-launch-exec",
+]);
+
+/** Slash command SDK -> tipe tampilan; command tersembunyi -> null. */
+export function slashCommandInfo(c: SlashCommand): SlashCommandInfo | null {
+  if (c.name.startsWith("__") || (c.builtin === true && HIDDEN_COMMANDS.has(c.name))) return null;
+  return {
+    name: c.name,
+    description: c.description?.trim() || null,
+    argumentHint: c.argumentHint?.trim() || null,
+    ...(c.aliases?.length ? { aliases: c.aliases } : {}),
+    ...(c.builtin ? { builtin: true } : {}),
+  };
+}
+
 /** Tingkat effort Claude Code (`EffortLevel` SDK); nilai lain diabaikan. */
 const EFFORT_LEVELS = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
 
@@ -129,6 +162,7 @@ export interface ClaudeQueryLike extends AsyncIterable<SDKMessage> {
   /** Lapisan flag settings (dipakai untuk `effortLevel`; `null` = default model). */
   applyFlagSettings(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
   supportedModels(): Promise<ModelInfo[]>;
+  supportedCommands(): Promise<SlashCommand[]>;
   mcpServerStatus(): Promise<McpServerStatus[]>;
   close(): void;
 }
@@ -520,6 +554,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   /** Status MCP terakhir dari pesan `system/init`. */
   let lastMcp: McpServerInfo[] = [];
   let modelsCache: { at: number; data: ModelOption[] } | null = null;
+  let commandsCache: { at: number; data: SlashCommandInfo[] } | null = null;
   let fileCache: { at: number; files: string[] } | null = null;
 
   function emit(ev: AgentEvent): void {
@@ -685,6 +720,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         lastMcp = servers
           .filter((s): s is { name: string; status: string } => typeof s?.name === "string")
           .map((s) => ({ name: s.name, status: mcpStatus(String(s.status)), error: null }));
+        return;
+      }
+      if (m.subtype === "commands_changed" && Array.isArray(m.commands)) {
+        // Daftar berubah di tengah sesi (mis. skill baru ditemukan) — ganti cache.
+        commandsCache = { at: now(), data: toCommandInfos(m.commands as SlashCommand[]) };
         return;
       }
       if (m.subtype === "session_state_changed") {
@@ -999,6 +1039,23 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     }
   }
 
+  function toCommandInfos(commands: SlashCommand[]): SlashCommandInfo[] {
+    return commands.map(slashCommandInfo).filter((c): c is SlashCommandInfo => c !== null);
+  }
+
+  async function listCommands(): Promise<Result<SlashCommandInfo[]>> {
+    if (commandsCache && now() - commandsCache.at < MODELS_CACHE_MS) {
+      return { ok: true, data: commandsCache.data };
+    }
+    try {
+      const data = toCommandInfos(await withAnyQuery((q) => q.supportedCommands()));
+      commandsCache = { at: now(), data };
+      return { ok: true, data };
+    } catch (e) {
+      return { ok: false, error: `CC_COMMANDS_FAILED: ${(e as Error).message}` };
+    }
+  }
+
   async function listMcp(): Promise<Result<McpServerInfo[]>> {
     for (const live of sessions.values()) {
       if (!live.query) continue;
@@ -1268,6 +1325,8 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         }
       },
     },
+    // Slash command dijalankan CLI sendiri dari teks prompt `/nama args`.
+    command: { list: listCommands },
     file: { find: findFiles },
     vcs: {
       async status() {
@@ -1278,6 +1337,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       async reload() {
         // Skill/config dibaca ulang tiap proses `claude` baru.
         modelsCache = null;
+        commandsCache = null;
         return { ok: true };
       },
     },
