@@ -189,6 +189,171 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Glow ala Siri di dasar layar Session selama model memproses balasan
+   (`ProcessingGlow`). Masuk/keluar diurus motion; di sini hanya gerakan
+   terus-menerus.
+
+   - Tanpa `filter: blur` — kelembutan datang dari radial-gradient yang
+     memudar ke transparan, jadi tiap lapisan cukup dirasterisasi sekali lalu
+     digeser compositor (`translate`/`scale`/`opacity`). Hemat baterai untuk
+     turn panjang di HP.
+   - Tiap lapisan 3x lebar layar; satu "ubin" gradien = 1/3 lebarnya (= lebar
+     layar) diulang horizontal, lalu lapisan digeser tepat satu ubin -> loop
+     mulus. Gumpalan di tepi ubin (0% & 100%) berwarna sama sehingga kedua
+     paruhnya menyatu jadi satu gumpalan di sambungan ubin.
+   - Tiga lapisan dengan arah & kecepatan berbeda -> warna tampak berbaur
+     seperti cairan, bukan satu pita yang bergeser.
+   - prefers-reduced-motion: animasi dimatikan global (src/index.css) — glow
+     tetap tampil sebagai penanda diam.
+   --------------------------------------------------------------------------- */
+.processing-glow {
+  --glow-blue: oklch(0.66 0.2 255);
+  --glow-violet: oklch(0.6 0.26 295);
+  --glow-pink: oklch(0.67 0.25 355);
+  --glow-orange: oklch(0.78 0.17 55);
+  --glow-cyan: oklch(0.8 0.14 215);
+}
+
+.processing-glow__layer {
+  position: absolute;
+  bottom: 0;
+  /* [-0.5, 2.5] x lebar layar: setelah digeser satu ubin pun kedua tepi
+     lapisan masih di luar layar. */
+  left: -50%;
+  width: 300%;
+  background-size: calc(100% / 3) 100%;
+  background-repeat: repeat-x;
+  transform-origin: bottom;
+  will-change: translate, scale;
+}
+
+/* Kabut lebar & pelan: warna lembut yang naik paling tinggi. */
+.processing-glow__haze {
+  height: 100%;
+  background-image:
+    radial-gradient(
+      30% 68% at 0% 100%,
+      color-mix(in oklab, var(--glow-blue) 50%, transparent),
+      40%,
+      transparent
+    ),
+    radial-gradient(
+      30% 68% at 100% 100%,
+      color-mix(in oklab, var(--glow-blue) 50%, transparent),
+      40%,
+      transparent
+    ),
+    radial-gradient(
+      28% 60% at 36% 100%,
+      color-mix(in oklab, var(--glow-violet) 50%, transparent),
+      40%,
+      transparent
+    ),
+    radial-gradient(
+      30% 66% at 68% 100%,
+      color-mix(in oklab, var(--glow-pink) 45%, transparent),
+      40%,
+      transparent
+    );
+  animation:
+    glow-drift 17s linear infinite,
+    glow-breathe 3.8s ease-in-out infinite alternate;
+}
+
+/* Gumpalan terang yang lebih rendah, berlawanan arah, "membengkak". */
+.processing-glow__blobs {
+  height: 5rem;
+  background-image:
+    radial-gradient(
+      15% 100% at 0% 100%,
+      color-mix(in oklab, var(--glow-orange) 85%, transparent),
+      35%,
+      transparent
+    ),
+    radial-gradient(
+      15% 100% at 100% 100%,
+      color-mix(in oklab, var(--glow-orange) 85%, transparent),
+      35%,
+      transparent
+    ),
+    radial-gradient(
+      17% 90% at 26% 100%,
+      color-mix(in oklab, var(--glow-cyan) 85%, transparent),
+      35%,
+      transparent
+    ),
+    radial-gradient(
+      15% 100% at 51% 100%,
+      color-mix(in oklab, var(--glow-pink) 90%, transparent),
+      35%,
+      transparent
+    ),
+    radial-gradient(
+      17% 85% at 76% 100%,
+      color-mix(in oklab, var(--glow-violet) 90%, transparent),
+      35%,
+      transparent
+    );
+  animation:
+    glow-drift-reverse 11s linear infinite,
+    glow-swell 2.6s ease-in-out infinite alternate;
+}
+
+/* Garis tipis menyala tepat di tepi bawah layar (ciri khas Siri). */
+.processing-glow__edge {
+  height: 1.25rem;
+  background-image: linear-gradient(
+    90deg,
+    var(--glow-blue),
+    var(--glow-violet),
+    var(--glow-pink),
+    var(--glow-orange),
+    var(--glow-cyan),
+    var(--glow-blue)
+  );
+  mask-image: linear-gradient(to top, #000 0 2px, rgb(0 0 0 / 0.4) 3px, transparent);
+  animation: glow-drift-reverse 7s linear infinite;
+}
+
+@keyframes glow-drift {
+  from {
+    translate: 0 0;
+  }
+  to {
+    translate: calc(-100% / 3) 0;
+  }
+}
+
+@keyframes glow-drift-reverse {
+  from {
+    translate: calc(-100% / 3) 0;
+  }
+  to {
+    translate: 0 0;
+  }
+}
+
+@keyframes glow-breathe {
+  from {
+    opacity: 0.7;
+    scale: 1 0.9;
+  }
+  to {
+    opacity: 1;
+    scale: 1 1.12;
+  }
+}
+
+@keyframes glow-swell {
+  from {
+    scale: 1 0.7;
+  }
+  to {
+    scale: 1 1.25;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    View Transition homepage -> Session (`navigate(..., { transition: "to-session" })`)
    — pola "container transform": kotak composer homepage MELUAS menjadi
    seluruh area Session view, lalu isi Session muncul di dalamnya.

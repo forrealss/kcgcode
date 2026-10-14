@@ -25,6 +25,7 @@ import {
   SendHorizontalIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { HomeBackdrop } from "@/components/projects/HomeBackdrop";
 import { HomeRecentSessions } from "@/components/projects/HomeRecentSessions";
 import { AgentPicker } from "@/components/sessions/AgentPicker";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
@@ -192,13 +193,19 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   };
 
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 pb-[10dvh]">
+    // `isolate`: stacking context untuk `HomeBackdrop` (-z-10) — tergambar di
+    // belakang headline & composer, tapi tetap di atas latar halaman.
+    <div className="isolate mx-auto flex w-full max-w-2xl flex-1 flex-col justify-center gap-6 pb-[10dvh]">
       {/* HP: logo di atas headline (tengah); desktop: berdampingan. */}
       <div
         data-vt-name="home-headline"
         className="flex flex-col items-center justify-center gap-3 px-2 sm:flex-row"
       >
-        <img src={logo} alt="" aria-hidden className="size-10 shrink-0 sm:size-12" />
+        {/* Dekorasi "blueprint" berpusat di logo. */}
+        <span className="relative shrink-0">
+          <HomeBackdrop />
+          <img src={logo} alt="" aria-hidden className="size-10 sm:size-12" />
+        </span>
         <h1 className="text-balance text-center text-2xl font-semibold tracking-tight sm:text-left sm:text-3xl">
           {headline}
         </h1>

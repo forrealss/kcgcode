@@ -7,6 +7,8 @@
  * - Security (`/settings/security`): kunci aplikasi, auto-lock, passkey, dan
  *   perangkat yang login (`/settings/devices` lama -> grup ini).
  * - Notifications (`/settings/notifications`): Web Push per perangkat & suara.
+ * - Appearance (`/settings/appearance`): efek tampilan per perangkat (glow
+ *   ala Siri saat agent merespon).
  * - Workspace (`/settings/workspace`): folder tempat semua Project berada.
  * - Remote access (`/settings/remote`): tunnel publik lewat Google sign-in.
  * - About KCG Code (`/settings/about`): versi & kredit — bukan pengaturan,
@@ -23,6 +25,7 @@ import {
   ChevronLeftIcon,
   FolderIcon,
   GlobeIcon,
+  PaletteIcon,
   ShieldIcon,
   UserIcon,
 } from "lucide-react";
@@ -32,6 +35,7 @@ import { AvatarEditor } from "@/components/auth/AvatarEditor";
 import { ProfileAvatar } from "@/components/auth/ProfileAvatar";
 import { AboutGroup } from "@/components/settings/AboutGroup";
 import { AccountGroup } from "@/components/settings/AccountGroup";
+import { AppearanceGroup } from "@/components/settings/AppearanceGroup";
 import { NotificationsGroup } from "@/components/settings/NotificationsGroup";
 import { ActionRow, EntryRow, PrefsGroup } from "@/components/settings/prefs";
 import { RemoteAccessGroup } from "@/components/settings/RemoteAccessGroup";
@@ -79,6 +83,12 @@ export const SETTINGS_PANELS: readonly SettingsPageInfo[] = [
     label: "Notifications",
     description: "Alerts when an agent needs you",
     icon: BellIcon,
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Effects & animations",
+    icon: PaletteIcon,
   },
   {
     id: "workspace",
@@ -160,6 +170,7 @@ export function SettingsPage({
       {section === "profile" && <ProfileSection status={status} onOk={ok} onError={error} />}
       {section === "security" && <SecurityGroup status={status} onOk={ok} />}
       {section === "notifications" && <NotificationsGroup onError={error} />}
+      {section === "appearance" && <AppearanceGroup />}
       {section === "workspace" && <WorkspaceGroup status={status} />}
       {section === "remote" && <RemoteAccessGroup protectedApp={status.protected} />}
       {section === "about" && <AboutGroup />}
