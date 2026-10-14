@@ -61,13 +61,13 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
   webfetch: GlobeIcon,
 };
 
-function toolIcon(part: MessagePart): LucideIcon {
+export function toolIcon(part: MessagePart): LucideIcon {
   const name = (typeof part.tool === "string" ? part.tool : part.type).toLowerCase();
   return (name !== "" && TOOL_ICONS[name]) || WrenchIcon;
 }
 
 /** Ikon kecil (14px) untuk langkah timeline & indikator status. */
-function stepIcon(Icon: LucideIcon, className?: string) {
+export function stepIcon(Icon: LucideIcon, className?: string) {
   return <Icon className={cn("size-3.5 shrink-0", className)} data-icon="inline-start" />;
 }
 
@@ -76,7 +76,7 @@ function stepIcon(Icon: LucideIcon, className?: string) {
  * lengkap) tampil redup; setelah selesai tampil apa adanya — keduanya bisa
  * panjang, jadi tinggi dibatasi + scroll internal.
  */
-function ReasoningStep({ text, live = false }: { text: string; live?: boolean }) {
+export function ReasoningStep({ text, live = false }: { text: string; live?: boolean }) {
   // Reasoning yang masih di-stream ikut dihaluskan (sama seperti jawaban).
   const shown = useSmoothText(text, live);
   const dim = shown.trim() === "";
@@ -102,7 +102,7 @@ function ReasoningStep({ text, live = false }: { text: string; live?: boolean })
  * PADDING box -> `bottom-0` menyentuh dasar `pb-5`, artinya garis selalu
  * tersambung ke langkah berikutnya berapa pun tinggi kontennya.
  */
-function renderTimelineStep(
+export function renderTimelineStep(
   icon: ReactNode,
   content: ReactNode,
   opts?: { last?: boolean; streaming?: boolean },

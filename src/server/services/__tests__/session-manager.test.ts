@@ -962,6 +962,111 @@ test("session.retry.scheduled -> onError banner ramah, turn tetap hidup sampai s
   }
 });
 
+test("compact: status compacting via hook & context; penanda tersimpan; gagal -> banner", async () => {
+  const changes: [string, boolean][] = [];
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    { onCompactionChange: (id, on) => changes.push([id, on]) },
+  );
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    client.usage = {
+      usedTokens: 50_000,
+      maxTokens: 200_000,
+      percent: 25,
+      autoCompactAt: null,
+      model: "m",
+      categories: [],
+      measuredAt: 1,
+    };
+    await h.sm.sendFreeTextInput(sid, "/compact");
+    await flush();
+    client.emit(ev.step("ses_remote1", "msg_a1"));
+    client.emit({
+      type: "agent.compaction",
+      data: { sessionID: "ses_remote1", phase: "started", trigger: "manual" },
+    });
+    const during = await h.sm.sessionContext(sid);
+    expect(during.ok && [during.data.compacting, during.data.usage?.percent]).toEqual([true, 25]);
+    client.emit({
+      type: "agent.compaction",
+      data: {
+        sessionID: "ses_remote1",
+        phase: "ended",
+        trigger: "manual",
+        assistantMessageID: "msg_a1",
+        preTokens: 33_333,
+        postTokens: 3_847,
+      },
+    });
+    client.emit(ev.idle("ses_remote1"));
+    expect(changes).toEqual([
+      [sid, true],
+      [sid, false],
+    ]);
+    const after = await h.sm.sessionContext(sid);
+    expect(after.ok && after.data.compacting).toBe(false);
+    const assistant = h.messages.find((m) => m.role === "assistant");
+    expect(assistant?.parts).toEqual([
+      {
+        id: "prt_msg_a1_compaction_0",
+        type: "compaction",
+        trigger: "manual",
+        preTokens: 33_333,
+        postTokens: 3_847,
+        time: { created: 1000 },
+        messageID: "msg_a1",
+      },
+    ]);
+    expect(h.errors).toEqual([]);
+
+    // Compact gagal -> banner; dibatalkan user -> tanpa banner.
+    client.emit({
+      type: "agent.compaction",
+      data: {
+        sessionID: "ses_remote1",
+        phase: "failed",
+        trigger: "auto",
+        error: { type: "compaction.unavailable", message: "Nothing to compact" },
+      },
+    });
+    client.emit({
+      type: "agent.compaction",
+      data: {
+        sessionID: "ses_remote1",
+        phase: "failed",
+        trigger: "manual",
+        error: { type: "aborted", message: "x" },
+      },
+    });
+    expect(h.errors).toEqual([[sid, "Couldn't compact the conversation: Nothing to compact"]]);
+  } finally {
+    h.close();
+  }
+});
+
+test("compact tanpa pesan assistant (opencode) -> penanda di pesan tersendiri", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    const client = clientOf(h);
+    await h.sm.sendFreeTextInput(sid, "/compact");
+    await flush();
+    client.emit({
+      type: "agent.compaction",
+      data: { sessionID: "ses_remote1", phase: "ended", trigger: "manual", preTokens: 9_000 },
+    });
+    client.emit(ev.idle("ses_remote1"));
+    const assistant = h.messages.find((m) => m.role === "assistant");
+    expect(assistant?.id).toBe("msg_compaction_ses_remote1_1000");
+    expect(assistant?.parts.map((p) => [p.type, p.preTokens])).toEqual([["compaction", 9_000]]);
+  } finally {
+    h.close();
+  }
+});
+
 test("agent.activity / step tanpa konten -> tanpa banner, tanpa efek", async () => {
   const h = freshHarness();
   try {

@@ -29,6 +29,7 @@ import type {
   PermissionMode,
   PermissionResult,
   PermissionUpdate,
+  SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKUserMessage,
   SlashCommand,
@@ -39,6 +40,7 @@ import {
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  ContextUsage,
   FileChange,
   McpServerInfo,
   ModelOption,
@@ -58,6 +60,8 @@ import {
   type AgentForm,
   type AgentFormAnswer,
   type AgentPromptFile,
+  type AgentSubagentStatus,
+  type AgentTokenUsage,
   type ModelSelection,
 } from "../types";
 import { ClaudeTurnTranslator, permissionName, permissionTarget } from "./translate";
@@ -68,6 +72,8 @@ export const CLAUDE_PROVIDER_ID = "claude-code";
 export const CLAUDE_IDLE_CLOSE_MS = 10 * 60_000;
 /** Batas tunggu request kontrol SDK (daftar model, status MCP, interrupt). */
 const CONTROL_TIMEOUT_MS = 30_000;
+/** Pemakaian konteks diukur ulang paling sering sekali per jendela ini. */
+const USAGE_REFRESH_MS = 10_000;
 /** Cache daftar model & slash command (spawn proses hanya untuk daftar itu mahal). */
 const MODELS_CACHE_MS = 5 * 60_000;
 /** Baris stderr terakhir yang disimpan untuk pesan error crash. */
@@ -144,6 +150,118 @@ export function slashCommandInfo(c: SlashCommand): SlashCommandInfo | null {
   };
 }
 
+/**
+ * Rincian `getContextUsage` -> tipe tampilan. Hanya kategori yang benar-benar
+ * menempati window (`kind: used`) yang dihitung — tool tertunda (`deferred`),
+ * sisa ruang, dan cadangan auto-compact bukan "terpakai".
+ */
+export function contextUsageFrom(
+  res: SDKControlGetContextUsageResponse,
+  measuredAt: number,
+): ContextUsage {
+  const max = res.rawMaxTokens || res.maxTokens || null;
+  return {
+    usedTokens: res.totalTokens,
+    maxTokens: max,
+    percent: max ? Math.round(res.percentage) : null,
+    autoCompactAt: res.isAutoCompactEnabled ? (res.autoCompactThreshold ?? null) : null,
+    model: res.model || null,
+    categories: res.categories
+      .filter((c) => c.kind === "used" && c.tokens > 0)
+      .map((c) => ({ name: c.name, tokens: c.tokens }))
+      .sort((a, b) => b.tokens - a.tokens),
+    measuredAt,
+  };
+}
+
+/** Total kumulatif pemakaian query (dasar selisih per turn). */
+interface UsageTotals {
+  cost: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** Jumlahkan `modelUsage` pesan `result` (kumulatif, termasuk sub-agent). */
+function usageTotals(m: Record<string, unknown>): UsageTotals {
+  const totals: UsageTotals = {
+    cost: typeof m.total_cost_usd === "number" ? m.total_cost_usd : 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+  };
+  const byModel = (m.modelUsage ?? {}) as Record<string, Record<string, unknown>>;
+  const num = (v: unknown) => (typeof v === "number" ? v : 0);
+  for (const u of Object.values(byModel)) {
+    totals.input += num(u?.inputTokens);
+    totals.output += num(u?.outputTokens);
+    totals.cacheRead += num(u?.cacheReadInputTokens);
+    totals.cacheWrite += num(u?.cacheCreationInputTokens);
+  }
+  return totals;
+}
+
+/**
+ * Pemakaian satu turn dari pesan `result`. `total_cost_usd`/`modelUsage`
+ * kumulatif sepanjang proses (dan proses resume melanjutkan total
+ * transcript), jadi per turn = selisih terhadap `base`. Tanpa dasar (resume
+ * setelah server KCG restart) dipakai `usage` per turn — hanya loop utama,
+ * tanpa biaya.
+ */
+export function turnUsageFrom(
+  m: Record<string, unknown>,
+  base: UsageTotals | null,
+): { cost?: number; tokens: AgentTokenUsage } {
+  const now = usageTotals(m);
+  if (base === null) {
+    const u = (m.usage ?? {}) as Record<string, unknown>;
+    const num = (v: unknown) => (typeof v === "number" ? v : 0);
+    return {
+      tokens: {
+        input: num(u.input_tokens),
+        output: num(u.output_tokens),
+        reasoning: 0,
+        cache: { read: num(u.cache_read_input_tokens), write: num(u.cache_creation_input_tokens) },
+      },
+    };
+  }
+  const d = (a: number, b: number) => Math.max(0, a - b);
+  return {
+    cost: d(now.cost, base.cost),
+    tokens: {
+      input: d(now.input, base.input),
+      output: d(now.output, base.output),
+      reasoning: 0,
+      cache: { read: d(now.cacheRead, base.cacheRead), write: d(now.cacheWrite, base.cacheWrite) },
+    },
+  };
+}
+
+const ZERO_USAGE: UsageTotals = { cost: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+/** Status task CLI -> status sub-agent. */
+function subagentStatus(status: unknown): AgentSubagentStatus | undefined {
+  switch (status) {
+    case "running":
+    case "pending":
+      return "running";
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "stopped":
+    case "killed":
+      return "stopped";
+    default:
+      return undefined;
+  }
+}
+
+/** Prompt `/compact [instruksi]` = compact manual. */
+const COMPACT_PROMPT = /^\/compact(?:\s|$)/;
+
 /** Tingkat effort Claude Code (`EffortLevel` SDK); nilai lain diabaikan. */
 const EFFORT_LEVELS = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
 
@@ -163,6 +281,9 @@ export interface ClaudeQueryLike extends AsyncIterable<SDKMessage> {
   applyFlagSettings(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
   supportedModels(): Promise<ModelInfo[]>;
   supportedCommands(): Promise<SlashCommand[]>;
+  getContextUsage(opts?: {
+    detail?: "summary" | "full";
+  }): Promise<SDKControlGetContextUsageResponse>;
   mcpServerStatus(): Promise<McpServerStatus[]>;
   close(): void;
 }
@@ -282,6 +403,22 @@ interface LiveSession {
   /** Proses sengaja ditutup (bukan crash). */
   closing: boolean;
   todos: TodoItem[];
+  /** Pemakaian context window terakhir (bertahan walau proses ditutup). */
+  usage: ContextUsage | null;
+  /** Pengukuran pemakaian sedang berjalan (cegah request ganda). */
+  usageInFlight: Promise<void> | null;
+  /** Compact sedang berjalan + pemicunya. */
+  compacting: "manual" | "auto" | null;
+  /** Prompt terakhir adalah `/compact` (compact berikutnya = manual). */
+  manualCompact: boolean;
+  /** Total kumulatif pemakaian proses aktif (dasar selisih per turn). */
+  usageBase: UsageTotals | null;
+  /** Proses aktif melanjutkan transcript dengan total yang belum diketahui. */
+  usageBaseUnknown: boolean;
+  /** Task sub-agent (`task_id` -> tool call `Agent`). */
+  taskTools: Map<string, string>;
+  /** Task latar belakang yang masih berjalan (proses jangan ditutup). */
+  backgroundTasks: Set<string>;
   stderr: string[];
   idleTimer: unknown;
   /** Selesai saat stream proses aktif berakhir (proses keluar). */
@@ -592,6 +729,14 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         turnError: null,
         closing: false,
         todos: [],
+        usage: null,
+        usageInFlight: null,
+        compacting: null,
+        manualCompact: false,
+        usageBase: null,
+        usageBaseUnknown: false,
+        taskTools: new Map(),
+        backgroundTasks: new Set(),
         stderr: [],
         idleTimer: undefined,
         pumpDone: null,
@@ -640,7 +785,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     cancelIdleClose(live);
     live.idleTimer = setTimeoutFn(() => {
       live.idleTimer = undefined;
-      if (!live.running) closeQuery(live);
+      if (live.running) return;
+      // Sub-agent / task latar belakang masih bekerja: menutup proses akan
+      // membunuhnya — tunggu satu jendela idle lagi.
+      if (live.backgroundTasks.size > 0) scheduleIdleClose(live);
+      else closeQuery(live);
     }, idleCloseMs);
   }
 
@@ -659,9 +808,64 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     live.interruptSettled = null;
   }
 
+  /** Pancarkan perubahan compact; `ended`/`failed` menutup status compacting. */
+  function emitCompaction(
+    live: LiveSession,
+    phase: "started" | "ended" | "failed",
+    extra: { preTokens?: number; postTokens?: number; error?: AgentError } = {},
+  ): void {
+    const trigger = live.compacting ?? "auto";
+    if (phase !== "started") {
+      live.compacting = null;
+      live.manualCompact = false;
+    }
+    const assistantMessageID = live.translator.currentMessageId;
+    emit({
+      type: "agent.compaction",
+      data: {
+        sessionID: live.id,
+        phase,
+        trigger,
+        ...(assistantMessageID ? { assistantMessageID } : {}),
+        ...extra,
+      },
+    });
+  }
+
+  /**
+   * Ukur ulang pemakaian context window dari proses yang hidup (`summary`:
+   * dari usage respons terakhir + estimasi lokal, tanpa request hitung
+   * token). Gagal -> pakai angka terakhir.
+   */
+  function refreshUsage(live: LiveSession): Promise<void> {
+    const q = live.query;
+    if (!q) return Promise.resolve();
+    live.usageInFlight ??= withTimeout(
+      q.getContextUsage({ detail: "summary" }),
+      CONTROL_TIMEOUT_MS,
+      "getContextUsage",
+    )
+      .then((res) => {
+        live.usage = contextUsageFrom(res, now());
+      })
+      .catch(() => {})
+      .finally(() => {
+        live.usageInFlight = null;
+      });
+    return live.usageInFlight;
+  }
+
   /** Turn selesai: succeeded / failed (error tertunda) / interrupted. */
   function emitIdle(live: LiveSession): void {
     live.running = false;
+    // Compact yang tidak sempat selesai (interrupt / proses berhenti) ditutup
+    // tanpa penanda "compacted".
+    if (live.compacting !== null) {
+      emitCompaction(live, "failed", {
+        error: { type: "aborted", message: "Compaction was interrupted." },
+      });
+    }
+    live.manualCompact = false;
     const sessionID = live.id;
     const error = live.turnError;
     live.turnError = null;
@@ -673,6 +877,71 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     }
     if (error) emit({ type: "session.execution.failed", data: { sessionID, error } });
     else emit({ type: "session.execution.succeeded", data: { sessionID } });
+    live.translator.endTurn();
+  }
+
+  /**
+   * Pesan `task_*` CLI untuk task sub-agent (`local_agent`) ->
+   * `agent.subagent`. Task lain (shell latar belakang, monitor) hanya dicatat
+   * agar proses tidak ditutup saat masih berjalan.
+   */
+  function handleTask(live: LiveSession, m: Record<string, unknown>): void {
+    const taskId = typeof m.task_id === "string" ? m.task_id : null;
+    if (!taskId) return;
+    const usage = (m.usage ?? {}) as Record<string, unknown>;
+    const stats = {
+      ...(typeof usage.total_tokens === "number" ? { tokens: usage.total_tokens } : {}),
+      ...(typeof usage.tool_uses === "number" ? { toolUses: usage.tool_uses } : {}),
+      ...(typeof usage.duration_ms === "number" ? { durationMs: usage.duration_ms } : {}),
+    };
+    if (m.subtype === "task_started") {
+      if (m.is_backgrounded === true) live.backgroundTasks.add(taskId);
+      const isAgent = m.task_type === "local_agent" || typeof m.subagent_type === "string";
+      if (!isAgent || typeof m.tool_use_id !== "string") return;
+      live.taskTools.set(taskId, m.tool_use_id);
+      live.translator.subagent({
+        toolID: m.tool_use_id,
+        status: "running",
+        ...(typeof m.subagent_type === "string" ? { agentType: m.subagent_type } : {}),
+        ...(typeof m.description === "string" ? { description: m.description } : {}),
+        background: m.is_backgrounded === true,
+      });
+      return;
+    }
+    const toolID = live.taskTools.get(taskId);
+    const patch = (m.patch ?? {}) as Record<string, unknown>;
+    const status = subagentStatus(m.subtype === "task_updated" ? patch.status : m.status);
+    const ended = status !== undefined && status !== "running";
+    if (ended) live.backgroundTasks.delete(taskId);
+    if (toolID) {
+      if (m.subtype === "task_progress") {
+        live.translator.subagent({
+          toolID,
+          ...stats,
+          ...(typeof m.last_tool_name === "string" ? { lastTool: m.last_tool_name } : {}),
+        });
+      } else if (m.subtype === "task_updated" && status) {
+        live.translator.subagent({ toolID, status });
+      } else if (m.subtype === "task_notification") {
+        live.translator.subagent({
+          toolID,
+          ...(status ? { status } : {}),
+          ...stats,
+          ...(typeof m.summary === "string" && m.summary.trim() !== ""
+            ? { summary: m.summary }
+            : {}),
+        });
+      }
+    }
+    // Sub-agent latar belakang yang membuka turn saat agent utama idle:
+    // tutup turn begitu semua task selesai (CLI membuka turn baru sendiri
+    // bila agent utama dibangunkan oleh hasilnya).
+    if (ended && !live.running && live.backgroundTasks.size === 0) {
+      if (live.translator.currentMessageId !== null) {
+        emit({ type: "session.execution.succeeded", data: { sessionID: live.id } });
+        live.translator.endTurn();
+      }
+    }
   }
 
   /**
@@ -722,6 +991,32 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
           .map((s) => ({ name: s.name, status: mcpStatus(String(s.status)), error: null }));
         return;
       }
+      if (m.subtype === "status") {
+        if (m.status === "compacting" && live.compacting === null) {
+          live.compacting = live.manualCompact ? "manual" : "auto";
+          emitCompaction(live, "started");
+        } else if (m.compact_result === "failed" && live.compacting !== null) {
+          const message =
+            typeof m.compact_error === "string" && m.compact_error.trim() !== ""
+              ? m.compact_error
+              : "Claude Code could not compact the conversation.";
+          emitCompaction(live, "failed", { error: { type: "compaction.failed", message } });
+        }
+        // `compact_result: success` -> penanda dikirim saat `compact_boundary`.
+      }
+      if (m.subtype === "compact_boundary") {
+        const meta = (m.compact_metadata ?? {}) as Record<string, unknown>;
+        live.compacting ??= meta.trigger === "manual" ? "manual" : "auto";
+        emitCompaction(live, "ended", {
+          ...(typeof meta.pre_tokens === "number" ? { preTokens: meta.pre_tokens } : {}),
+          ...(typeof meta.post_tokens === "number" ? { postTokens: meta.post_tokens } : {}),
+        });
+        return;
+      }
+      if (typeof m.subtype === "string" && m.subtype.startsWith("task_")) {
+        handleTask(live, m);
+        return;
+      }
       if (m.subtype === "commands_changed" && Array.isArray(m.commands)) {
         // Daftar berubah di tengah sesi (mis. skill baru ditemukan) — ganti cache.
         commandsCache = { at: now(), data: toCommandInfos(m.commands as SlashCommand[]) };
@@ -735,6 +1030,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         } else if (m.state === "idle") {
           emitIdle(live);
           scheduleIdleClose(live);
+          void refreshUsage(live);
         }
         return;
       }
@@ -756,6 +1052,17 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     }
 
     if (m.type === "result") {
+      // Pemakaian turn (token & biaya) -> `session.step.ended` pesan turn.
+      const assistantMessageID = live.translator.currentMessageId;
+      const usage = turnUsageFrom(m, live.usageBaseUnknown ? null : (live.usageBase ?? ZERO_USAGE));
+      live.usageBase = usageTotals(m);
+      live.usageBaseUnknown = false;
+      if (assistantMessageID) {
+        emit({
+          type: "session.step.ended",
+          data: { sessionID: live.id, assistantMessageID, finish: "stop", ...usage },
+        });
+      }
       // Turn yang di-interrupt: hasilnya (biasanya error_during_execution)
       // bukan kegagalan yang perlu banner.
       if (!live.skipNextIdle && (m.subtype !== "success" || m.is_error === true)) {
@@ -907,6 +1214,9 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       },
     };
     const q = runQuery({ prompt: input, options });
+    // Resume dengan total kumulatif yang belum diketahui (mis. setelah server
+    // KCG restart): turn pertama tidak bisa dihitung selisihnya.
+    live.usageBaseUnknown = live.persisted && live.usageBase === null;
     live.query = q;
     live.input = input;
     live.model = model;
@@ -973,6 +1283,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         }
       }
       live.turnError = null;
+      live.manualCompact = COMPACT_PROMPT.test(input.text.trim());
       live.translator.beginTurn();
       live.input?.push({
         type: "user",
@@ -1289,6 +1600,15 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
       interrupt,
       async todos(sessionId) {
         return { ok: true, data: sessions.get(sessionId)?.todos ?? [] };
+      },
+      async contextUsage(sessionId) {
+        const live = sessions.get(sessionId);
+        if (!live) return { ok: true, data: null };
+        // Proses hidup & angka lama/belum ada -> ukur ulang; selain itu cache
+        // (juga setelah proses ditutup idle — angka terakhir tetap berlaku).
+        const stale = live.usage === null || now() - live.usage.measuredAt > USAGE_REFRESH_MS;
+        if (live.query && stale) await refreshUsage(live);
+        return { ok: true, data: live.usage };
       },
     },
     permission: {

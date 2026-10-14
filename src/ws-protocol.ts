@@ -75,6 +75,8 @@ export type ServerMessage =
   | { type: "session_title"; sessionId: string; title: string }
   /** Permission mode Session berubah (oleh user atau agent; null = default). */
   | { type: "session_permission_mode"; sessionId: string; mode: string | null }
+  /** Agent mulai (`true`) / selesai (`false`) meringkas riwayat Session (compact). */
+  | { type: "session_compaction"; sessionId: string; compacting: boolean }
   /** Status turn: `active: true` = model sedang merespon; `false` = berhenti. */
   | { type: "turn_active"; sessionId: string; active: boolean }
   /** Session dihapus permanen — subscriber harus meninggalkan halamannya. */

@@ -9,6 +9,7 @@
  */
 import type {
   AgentOption,
+  ContextUsage,
   FileChange,
   McpServerInfo,
   ModelOption,
@@ -43,6 +44,8 @@ export interface FakeAgentClient extends AgentClient {
   /** Jeda simulasi sebelum tiap prompt selesai (ms) — uji race. */
   promptDelays: number[];
   todos: TodoItem[];
+  /** Pemakaian context window yang dilaporkan `session.contextUsage`. */
+  usage: ContextUsage | null;
   fileChanges: FileChange[];
   availableFiles: string[];
   availableModels: ModelOption[];
@@ -112,6 +115,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
     goneRequests: new Set<string>(),
     promptDelays: [],
     todos: [],
+    usage: null,
     fileChanges: [],
     availableFiles: [
       "src/App.tsx",
@@ -215,6 +219,9 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
       async todos(sessionID) {
         calls.push(`session.todos:${sessionID}`);
         return { ok: true, data: client.todos };
+      },
+      async contextUsage() {
+        return { ok: true, data: client.usage };
       },
     },
     permission: {

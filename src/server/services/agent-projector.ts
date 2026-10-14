@@ -17,11 +17,30 @@
  * - tool call `C` -> part `prt_C` (`type: "tool"`) dengan
  *   `state.status` pending -> running -> completed|error.
  *
+ * - sub-agent: part kontennya membawa `parentToolID` (id tool call `task` /
+ *   `Agent`) — dari event (Claude) atau dari tautan Session anak opencode ke
+ *   tool call `task` yang membuatnya. Status/statistiknya (`agent.subagent`,
+ *   token step Session anak) -> part `subagent` (`prt_<msg>_subagent_<tool>`)
+ *   di pesan turn berjalan; yang terbaru berlaku.
+ * - pemakaian turn: `session.step.ended` (cost/tokens) Session akar & anak
+ *   dijumlahkan -> part `usage` di pesan terakhir saat turn berakhir.
+ * - turn yang dimulai agent sendiri (tanpa prompt dari bridge) dibuka lewat
+ *   `beginTurn` saat `session.execution.started` Session akar.
+ * - compact (`agent.compaction`) -> status "compacting" Session lokal; saat
+ *   selesai, part `compaction` (penanda "conversation compacted" beserta
+ *   ukuran konteks sebelum/sesudah) di pesan turn yang sedang berjalan.
+ *
  * Akhir turn hanya dari Session AKAR: sub-agent (child session) selesai lebih
  * dulu dari induknya.
  */
 import type { InteractivePrompt, MessagePart } from "../../types";
-import type { AgentEvent, AgentEventData, AgentForm, AgentToolContent } from "../agents/types";
+import type {
+  AgentEvent,
+  AgentEventData,
+  AgentForm,
+  AgentTokenUsage,
+  AgentToolContent,
+} from "../agents/types";
 import {
   describeAgentError,
   isPlaceholderTitle,
@@ -47,6 +66,10 @@ export interface AgentProjectorOptions {
   setTitle(sessionId: string, title: string): void;
   /** Permission mode yang berlaku di agent berubah (Session akar). */
   setPermissionMode?(sessionId: string, mode: string): void;
+  /** Agent mulai / selesai meringkas riwayat Session (compact). */
+  setCompacting?(sessionId: string, compacting: boolean): void;
+  /** Buka turn untuk eksekusi yang dimulai agent sendiri (tanpa prompt bridge). */
+  beginTurn?(sessionId: string): void;
   /** Simpan prompt baru; kembalikan false bila duplikat. */
   insertPrompt(prompt: InteractivePrompt): boolean;
   onPrompt?: (prompt: InteractivePrompt) => void;
@@ -87,6 +110,26 @@ export class AgentEventProjector {
    * harus ditujukan ke sana.
    */
   private readonly promptOwners = new Map<string, string>();
+  /** Pesan assistant terakhir per Session agent (tempat penanda compact). */
+  private readonly lastMessages = new Map<string, string>();
+  /** Session anak opencode -> tool call `task` yang membuatnya. */
+  private readonly childTools = new Map<string, string>();
+  /** Tool call `task` per Session agent yang belum punya Session anak (FIFO). */
+  private readonly pendingTasks = new Map<string, string[]>();
+  /** Info sub-agent terakumulasi per tool call (status, token, …). */
+  private readonly subagents = new Map<string, Record<string, unknown>>();
+  /** Pemakaian turn berjalan per Session lokal (akar + anak). */
+  private readonly turnUsage = new Map<
+    string,
+    {
+      cost: number | null;
+      input: number;
+      output: number;
+      reasoning: number;
+      read: number;
+      write: number;
+    }
+  >();
 
   constructor(private readonly opts: AgentProjectorOptions) {}
 
@@ -108,6 +151,7 @@ export class AgentEventProjector {
 
   /** Buang state rakitan milik Session agent (turn ditutup). */
   private reset(agentSessionID: string): void {
+    this.lastMessages.delete(agentSessionID);
     const prefix = `${agentSessionID}:`;
     for (const key of [...this.messages.keys()]) {
       if (!key.startsWith(prefix)) continue;
@@ -133,6 +177,56 @@ export class AgentEventProjector {
     return state;
   }
 
+  /** `parentToolID` konten: dari event, atau tautan Session anak (opencode). */
+  private parentField(agentSessionID: string, explicit?: string): { parentToolID?: string } {
+    const parent = explicit ?? this.childTools.get(agentSessionID);
+    return parent ? { parentToolID: parent } : {};
+  }
+
+  /**
+   * Gabungkan info sub-agent lalu tulis part `subagent` (info lengkap) ke
+   * pesan turn berjalan — satu part per tool call per pesan.
+   */
+  private putSubagent(
+    agentSessionID: string,
+    messageID: string | undefined,
+    toolID: string,
+    patch: Record<string, unknown>,
+  ): void {
+    const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined));
+    const info = { ...(this.subagents.get(toolID) ?? {}), ...defined };
+    this.subagents.set(toolID, info);
+    const msgId = messageID ?? this.lastMessages.get(agentSessionID);
+    if (!msgId) return;
+    const state = this.message(agentSessionID, msgId);
+    if (!state) return;
+    this.put(state, msgId, {
+      ...info,
+      id: `prt_${msgId}_subagent_${toolID}`,
+      type: "subagent",
+      toolID,
+    });
+  }
+
+  /** Tambahkan pemakaian satu step ke turn berjalan Session lokal. */
+  private addUsage(sessionId: string, cost: number | undefined, tokens: AgentTokenUsage): void {
+    const cur = this.turnUsage.get(sessionId) ?? {
+      cost: null,
+      input: 0,
+      output: 0,
+      reasoning: 0,
+      read: 0,
+      write: 0,
+    };
+    if (typeof cost === "number") cur.cost = (cur.cost ?? 0) + cost;
+    cur.input += tokens.input;
+    cur.output += tokens.output;
+    cur.reasoning += tokens.reasoning;
+    cur.read += tokens.cache.read;
+    cur.write += tokens.cache.write;
+    this.turnUsage.set(sessionId, cur);
+  }
+
   private put(state: MessageState, messageID: string, part: MessagePart): void {
     const id = part.id as string;
     state.parts.set(id, part);
@@ -148,7 +242,13 @@ export class AgentEventProjector {
     const id = `prt_${data.assistantMessageID}_${kind}_${data.ordinal}`;
     if (state.parts.has(id)) return;
     // Belum dikirim: menunggu token pertama.
-    state.parts.set(id, { id, type: kind, text: "", time: { start: this.opts.now() } });
+    state.parts.set(id, {
+      id,
+      type: kind,
+      text: "",
+      time: { start: this.opts.now() },
+      ...this.parentField(data.sessionID, data.parentToolID),
+    });
   }
 
   private textDelta(data: AgentEventData<"session.text.delta">, kind: "text" | "reasoning"): void {
@@ -161,6 +261,7 @@ export class AgentEventProjector {
       type: kind,
       text: "",
       time: { start: this.opts.now() },
+      ...this.parentField(data.sessionID, data.parentToolID),
     };
     if (!state.emitted.has(id)) {
       state.emitted.add(id);
@@ -184,6 +285,7 @@ export class AgentEventProjector {
       type: kind,
       text: data.text,
       time: { start, end: this.opts.now() },
+      ...this.parentField(data.sessionID, data.parentToolID ?? (prev?.parentToolID as string)),
     });
   }
 
@@ -192,6 +294,7 @@ export class AgentEventProjector {
     messageID: string,
     toolId: string,
     state: Record<string, unknown>,
+    parentToolID?: string,
   ): void {
     const msg = this.message(agentSessionID, messageID);
     if (!msg) return;
@@ -205,10 +308,74 @@ export class AgentEventProjector {
       type: "tool",
       tool: this.toolNames.get(toolId) ?? (prev?.tool as string | undefined) ?? "tool",
       callID: toolId,
+      ...this.parentField(agentSessionID, parentToolID ?? (prev?.parentToolID as string)),
       state: {
         ...prevState,
         ...state,
         time: { start: time.start ?? this.opts.now(), ...(state.time as object) },
+      },
+    });
+  }
+
+  /**
+   * Compact Session akar: status compacting, penanda di timeline saat selesai,
+   * atau banner bila gagal (kecuali dibatalkan user).
+   */
+  private compaction(data: AgentEventData<"agent.compaction">): void {
+    const agentSessionID = data.sessionID;
+    const sessionId = this.opts.resolve(agentSessionID);
+    if (!sessionId || !this.opts.isRoot(sessionId, agentSessionID)) return;
+    const turns = this.opts.turns;
+    turns.keepAlive(sessionId);
+    this.opts.setCompacting?.(sessionId, data.phase === "started");
+    if (data.phase === "failed") {
+      if (data.error?.type !== "aborted") {
+        this.opts.onError?.(
+          sessionId,
+          `Couldn't compact the conversation: ${data.error?.message ?? "unknown error"}`,
+        );
+      }
+      return;
+    }
+    if (data.phase !== "ended") return;
+    // Penanda ditempel ke pesan turn berjalan; tanpa pesan (compact sebagai
+    // satu-satunya isi turn di opencode) dibuat pesan assistant tersendiri.
+    let messageID = data.assistantMessageID ?? this.lastMessages.get(agentSessionID);
+    if (!messageID) {
+      messageID = `msg_compaction_${agentSessionID}_${this.opts.now()}`;
+      this.lastMessages.set(agentSessionID, messageID);
+      turns.noteAssistantMessage(sessionId, messageID);
+    }
+    const state = this.message(agentSessionID, messageID);
+    if (!state) return;
+    const n = [...state.parts.values()].filter((p) => p.type === "compaction").length;
+    this.put(state, messageID, {
+      id: `prt_${messageID}_compaction_${n}`,
+      type: "compaction",
+      trigger: data.trigger,
+      ...(data.preTokens !== undefined ? { preTokens: data.preTokens } : {}),
+      ...(data.postTokens !== undefined ? { postTokens: data.postTokens } : {}),
+      time: { created: this.opts.now() },
+    });
+  }
+
+  /** Tulis part `usage` turn (bila ada pemakaian) ke pesan terakhir turn. */
+  private flushUsage(sessionId: string, agentSessionID: string): void {
+    const usage = this.turnUsage.get(sessionId);
+    this.turnUsage.delete(sessionId);
+    const msgId = this.lastMessages.get(agentSessionID);
+    if (!usage || !msgId) return;
+    const state = this.message(agentSessionID, msgId);
+    if (!state) return;
+    this.put(state, msgId, {
+      id: `prt_${msgId}_usage`,
+      type: "usage",
+      ...(usage.cost !== null ? { cost: usage.cost } : {}),
+      tokens: {
+        input: usage.input,
+        output: usage.output,
+        reasoning: usage.reasoning,
+        cache: { read: usage.read, write: usage.write },
       },
     });
   }
@@ -219,7 +386,14 @@ export class AgentEventProjector {
     switch (ev.type) {
       case "session.created": {
         const { sessionID, parentID } = ev.data;
-        if (!parentID || this.opts.resolve(sessionID)) return;
+        if (!parentID) return;
+        // Sub-agent opencode: Session anak milik tool call `task` induk yang
+        // belum punya anak (urutan pemanggilan = urutan pembuatan).
+        if (!this.childTools.has(sessionID)) {
+          const toolID = this.pendingTasks.get(parentID)?.shift();
+          if (toolID) this.childTools.set(sessionID, toolID);
+        }
+        if (this.opts.resolve(sessionID)) return;
         const owner = this.opts.resolve(parentID);
         if (owner) this.opts.mapChild(sessionID, owner);
         return;
@@ -234,7 +408,43 @@ export class AgentEventProjector {
       }
       case "session.step.started": {
         const sessionId = this.opts.resolve(ev.data.sessionID);
-        if (sessionId) turns.noteAssistantMessage(sessionId, ev.data.assistantMessageID);
+        if (!sessionId) return;
+        this.lastMessages.set(ev.data.sessionID, ev.data.assistantMessageID);
+        turns.noteAssistantMessage(sessionId, ev.data.assistantMessageID);
+        return;
+      }
+      case "agent.compaction":
+        this.compaction(ev.data);
+        return;
+      case "agent.subagent": {
+        const { sessionID, assistantMessageID, toolID, ...patch } = ev.data;
+        const sessionId = this.opts.resolve(sessionID);
+        if (!sessionId) return;
+        turns.keepAlive(sessionId);
+        this.putSubagent(sessionID, assistantMessageID, toolID, patch);
+        return;
+      }
+      case "session.step.ended": {
+        const sessionId = this.opts.resolve(ev.data.sessionID);
+        if (!sessionId) return;
+        turns.keepAlive(sessionId);
+        const { tokens, cost } = ev.data;
+        if (!tokens) return;
+        this.addUsage(sessionId, cost, tokens);
+        // Step Session anak opencode = kerja sub-agent: token ke kartunya.
+        const toolID = this.childTools.get(ev.data.sessionID);
+        if (toolID) {
+          const prev = this.subagents.get(toolID)?.tokens;
+          const used =
+            tokens.input +
+            tokens.output +
+            tokens.reasoning +
+            tokens.cache.read +
+            tokens.cache.write;
+          this.putSubagent(ev.data.sessionID, ev.data.assistantMessageID, toolID, {
+            tokens: (typeof prev === "number" ? prev : 0) + used,
+          });
+        }
         return;
       }
       case "session.text.started":
@@ -257,18 +467,31 @@ export class AgentEventProjector {
         return;
       case "session.tool.input.started":
         this.toolNames.set(ev.data.id, ev.data.name);
-        this.toolPart(ev.data.sessionID, ev.data.assistantMessageID, ev.data.id, {
-          status: "pending",
-          input: {},
-        });
+        this.toolPart(
+          ev.data.sessionID,
+          ev.data.assistantMessageID,
+          ev.data.id,
+          { status: "pending", input: {} },
+          ev.data.parentToolID,
+        );
         return;
-      case "session.tool.called":
+      case "session.tool.called": {
         if (ev.data.name) this.toolNames.set(ev.data.id, ev.data.name);
-        this.toolPart(ev.data.sessionID, ev.data.assistantMessageID, ev.data.id, {
-          status: "running",
-          input: ev.data.input,
-        });
+        this.toolPart(
+          ev.data.sessionID,
+          ev.data.assistantMessageID,
+          ev.data.id,
+          { status: "running", input: ev.data.input },
+          ev.data.parentToolID,
+        );
+        // Tool `task` opencode akan membuat Session anak — tautkan saat dibuat.
+        if (this.toolNames.get(ev.data.id) === "task") {
+          const queue = this.pendingTasks.get(ev.data.sessionID) ?? [];
+          if (!queue.includes(ev.data.id)) queue.push(ev.data.id);
+          this.pendingTasks.set(ev.data.sessionID, queue);
+        }
         return;
+      }
       case "session.tool.success":
         this.toolPart(ev.data.sessionID, ev.data.assistantMessageID, ev.data.id, {
           status: "completed",
@@ -301,7 +524,10 @@ export class AgentEventProjector {
         const agentSessionID = ev.data.sessionID;
         const sessionId = this.opts.resolve(agentSessionID);
         if (!sessionId || !this.opts.isRoot(sessionId, agentSessionID)) return;
+        this.flushUsage(sessionId, agentSessionID);
         this.reset(agentSessionID);
+        // Compact tidak mungkin berlanjut setelah eksekusi berakhir.
+        this.opts.setCompacting?.(sessionId, false);
         if (ev.type === "session.execution.succeeded") {
           turns.finish(sessionId, "idle");
         } else if (ev.type === "session.execution.failed") {
@@ -354,8 +580,19 @@ export class AgentEventProjector {
       case "permission.replied":
         this.promptOwners.delete(ev.data.requestID);
         return;
-      case "session.execution.started":
-      case "session.step.ended":
+      case "session.execution.started": {
+        const sessionId = this.opts.resolve(ev.data.sessionID);
+        if (!sessionId) return;
+        // Eksekusi tanpa prompt dari bridge (mis. agent dibangunkan hasil
+        // sub-agent latar belakang): buka turn agar kontennya tersimpan.
+        if (this.opts.isRoot(sessionId, ev.data.sessionID)) {
+          // Pemakaian dihitung per eksekusi Session akar.
+          this.turnUsage.delete(sessionId);
+          if (!turns.has(sessionId)) this.opts.beginTurn?.(sessionId);
+        }
+        turns.keepAlive(sessionId);
+        return;
+      }
       case "session.step.failed":
       case "session.tool.progress":
       case "agent.activity":

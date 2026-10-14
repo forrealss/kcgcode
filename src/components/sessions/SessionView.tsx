@@ -23,7 +23,7 @@
  *   menyempit & percakapan tetap terpusat di sisa ruang, tidak tertutup
  *   kartu. Di bawah `lg` (HP & tablet) tampil sebagai bottom sheet.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
 import {
   ContextPanel,
@@ -81,6 +81,19 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   // terlalu sempit, jadi kartu tampil sebagai bottom sheet (seperti HP).
   const sidePanel = useMediaQuery(SIDE_PANEL_QUERY);
   const sessionCtx = useSessionContext(session.id, contextOpen, chat.generating);
+  // Turn / compact baru selesai -> pemakaian context berubah: muat ulang panel
+  // sekarang, tidak menunggu interval poll idle.
+  const { refresh: refreshContext } = sessionCtx;
+  useEffect(() => {
+    if (!chat.generating) refreshContext();
+  }, [chat.generating, refreshContext]);
+  /** Ringkas riwayat = slash command `/compact` lewat jalur input biasa. */
+  const compactProps = {
+    onCompact: () =>
+      chat.send({ type: "input", sessionId: session.id, text: "/compact", files: [], images: [] }),
+    canCompact: chat.canInput,
+    compacting: chat.compacting,
+  };
   /**
    * Reference diturunkan dari parts pesan yang sudah ada di timeline
    * (tanpa request tambahan). `session.cwd` dipakai untuk mengubah path
@@ -173,6 +186,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                 collapsible={chat.collapsible}
                 onToggle={chat.toggleBlock}
                 generating={chat.generating}
+                compacting={chat.compacting}
               />
 
               {/* Question pending: panel DOCKED menggantikan composer — jawaban
@@ -221,6 +235,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               context={sessionCtx.context}
               references={references}
               loading={sessionCtx.loading}
+              {...compactProps}
             />
           </>
         ) : contextOpen ? (
@@ -230,6 +245,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               references={references}
               loading={sessionCtx.loading}
               onClose={() => setContextOpen(false)}
+              {...compactProps}
             />
           </div>
         ) : (

@@ -144,6 +144,7 @@ function fakeApi(pid = 100) {
       switchAgent: rec("session.switchAgent"),
       prompt: rec("session.prompt"),
       command: rec("session.command"),
+      compact: rec("session.compact"),
       interrupt: rec("session.interrupt", { interrupted: true }),
       instructions: {
         entry: { put: rec("instructions.put"), remove: rec("instructions.remove") },
@@ -160,6 +161,7 @@ function fakeApi(pid = 100) {
             name: "Big Pickle",
             status: "active",
             variants: [{ id: "low" }, { id: "high", body: { effort: "high" } }, {}],
+            limit: { context: 200_000, output: 32_000 },
           },
           { id: "small", providerID: "opencode", name: "Small", status: "active", variants: [] },
           { id: "old", providerID: "opencode", name: "Old", status: "deprecated" },
@@ -360,6 +362,87 @@ describe("createOpencodeBackend", () => {
     });
   });
 
+  test("pemakaian konteks = token step terakhir vs limit.context model; reset setelah compact", async () => {
+    const { backend, apis } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    const events: AgentEvent[] = [];
+    r.data.event.subscribe((e) => events.push(e));
+    expect(await r.data.session.contextUsage("ses_1")).toEqual({ ok: true, data: null });
+    const loc = { location: { directory: PROJ } };
+    const step = { sessionID: "ses_1", assistantMessageID: "m1" };
+    apis[0]?.push({
+      type: "session.step.started",
+      ...loc,
+      data: { ...step, model: { id: "big-pickle", providerID: "opencode" } },
+    });
+    apis[0]?.push({
+      type: "session.step.ended",
+      ...loc,
+      data: {
+        ...step,
+        finish: "stop",
+        cost: 0,
+        tokens: { input: 1_000, output: 500, reasoning: 100, cache: { read: 48_000, write: 400 } },
+      },
+    });
+    await tick();
+    const usage = await r.data.session.contextUsage("ses_1");
+    expect(usage.ok && usage.data).toMatchObject({
+      usedTokens: 50_000,
+      maxTokens: 200_000,
+      percent: 25,
+      autoCompactAt: null,
+      model: "big-pickle",
+      categories: [],
+    });
+
+    // Event compaction v2 -> `agent.compaction`; ukuran sebelum dari step terakhir.
+    apis[0]?.push({
+      type: "session.compaction.started",
+      ...loc,
+      data: { sessionID: "ses_1", reason: "manual", recent: "" },
+    });
+    apis[0]?.push({
+      type: "session.compaction.ended",
+      ...loc,
+      data: { sessionID: "ses_1", reason: "manual", text: "ringkasan", recent: "" },
+    });
+    apis[0]?.push({
+      type: "session.compaction.failed",
+      ...loc,
+      data: {
+        sessionID: "ses_1",
+        reason: "auto",
+        error: { type: "compaction.unavailable", message: "Nothing to compact" },
+      },
+    });
+    await tick();
+    expect(events.filter((e) => e.type === "agent.compaction").map((e) => e.data)).toEqual([
+      { sessionID: "ses_1", phase: "started", trigger: "manual" },
+      { sessionID: "ses_1", phase: "ended", trigger: "manual", preTokens: 50_000 },
+      {
+        sessionID: "ses_1",
+        phase: "failed",
+        trigger: "auto",
+        error: { type: "compaction.unavailable", message: "Nothing to compact" },
+      },
+    ]);
+    // Angka lama tidak berlaku lagi sampai step berikutnya.
+    expect(await r.data.session.contextUsage("ses_1")).toEqual({ ok: true, data: null });
+  });
+
+  test("`/compact` -> API compact opencode (bukan session.command)", async () => {
+    const { backend, apis } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    await r.data.session.prompt({ sessionID: "ses_1", text: "/compact" });
+    const names = (apis[0]?.calls ?? []).map(([n]) => n);
+    expect(names).toContain("session.compact");
+    expect(names).not.toContain("session.command");
+    expect(names).not.toContain("session.prompt");
+  });
+
   test("reply request yang sudah tidak ditunggu -> AGENT_REQUEST_GONE; hapus session hilang = ok", async () => {
     const { backend, apis } = setup();
     const r = await backend.ensure("p1", PROJ);
@@ -428,6 +511,13 @@ describe("createOpencodeBackend", () => {
     expect(await r.data.command.list()).toEqual({
       ok: true,
       data: [
+        // `/compact` ditambahkan adapter (API compact opencode).
+        {
+          name: "compact",
+          description: "Summarize the conversation so far to free up context",
+          argumentHint: null,
+          builtin: true,
+        },
         { name: "init", description: null, argumentHint: null },
         { name: "review", description: "Review changes", argumentHint: null },
       ],

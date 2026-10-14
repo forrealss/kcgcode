@@ -36,6 +36,13 @@ const PASS_THROUGH = new Set<AgentEventType>([
   "form.cancelled",
 ]);
 
+/** Event compaction v2 -> fase `agent.compaction`. */
+const COMPACTION_PHASE: Record<string, "started" | "ended" | "failed"> = {
+  "session.compaction.started": "started",
+  "session.compaction.ended": "ended",
+  "session.compaction.failed": "failed",
+};
+
 type Raw = { type?: unknown; data?: unknown; location?: unknown };
 
 function asRecord(v: unknown): Record<string, unknown> | null {
@@ -102,8 +109,32 @@ export function translateOpencodeEvent(raw: unknown): AgentEvent | null {
     const form = toAgentForm(data.form);
     return form ? { type: "form.created", data: { form }, ...location } : null;
   }
-  if (!PASS_THROUGH.has(r.type as AgentEventType)) return null;
   // `sessionID` wajib untuk perutean ke Session lokal.
   if (typeof data.sessionID !== "string") return null;
+  const phase = COMPACTION_PHASE[r.type];
+  if (phase) {
+    const err = asRecord(data.error);
+    return {
+      type: "agent.compaction",
+      data: {
+        sessionID: data.sessionID,
+        phase,
+        trigger: data.reason === "manual" ? "manual" : "auto",
+        ...(phase === "failed"
+          ? {
+              error: {
+                type: typeof err?.type === "string" ? err.type : "compaction.failed",
+                message:
+                  typeof err?.message === "string" && err.message !== ""
+                    ? err.message
+                    : "Compaction failed.",
+              },
+            }
+          : {}),
+      },
+      ...location,
+    };
+  }
+  if (!PASS_THROUGH.has(r.type as AgentEventType)) return null;
   return { type: r.type, data, ...location } as AgentEvent;
 }

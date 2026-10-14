@@ -18,12 +18,14 @@ import {
 } from "@/components/ui/message-scroller";
 import type { CollapsibleState } from "@/lib/collapsible";
 import { TIMELINE_MAX_W } from "@/lib/layout";
+import { indexSubagents } from "@/lib/subagents";
 import { groupTurns, lastAssistantGroup, textOf, turnStatus } from "@/lib/turns";
 import { cn } from "@/lib/utils";
 import type { SessionMessage, SessionStatus } from "@/types";
 import { AssistantTurn } from "./AssistantTurn";
 import { Mascot } from "./Mascot";
 import { MessageRail, type UserMessageMark } from "./MessageRail";
+import { SubagentIndexContext } from "./SubagentCard";
 import { UserMessage } from "./UserMessage";
 
 export interface SessionTimelineProps {
@@ -37,6 +39,8 @@ export interface SessionTimelineProps {
   onToggle: (key: string) => void;
   /** Model sedang merespon (turn aktif + Session running). */
   generating: boolean;
+  /** Agent sedang meringkas riwayat (compact) — label maskot khusus. */
+  compacting?: boolean;
 }
 
 export function SessionTimeline({
@@ -46,6 +50,7 @@ export function SessionTimeline({
   collapsible,
   onToggle,
   generating,
+  compacting = false,
 }: SessionTimelineProps) {
   /**
    * Ambang "menempel ke bawah" (dan kemunculan tombol panah) = setinggi SATU
@@ -68,6 +73,8 @@ export function SessionTimeline({
   }, []);
 
   const groups = useMemo(() => groupTurns(messages), [messages]);
+  /** Info & kerja sub-agent seluruh Session (kartu sub-agent bisa merujuk turn lain). */
+  const subagents = useMemo(() => indexSubagents(messages), [messages]);
   const lastTurn = lastAssistantGroup(groups);
 
   /**
@@ -142,8 +149,12 @@ export function SessionTimeline({
    * konten baru -> "Starting…" (lihat fallback di bawah).
    */
   const liveTurn = lastTurn?.messages.some((m) => m.streaming === true) ? lastTurn : null;
+  // Compact berjalan (manual maupun otomatis) lebih informatif daripada
+  // status turn generik — prosesnya bisa memakan waktu cukup lama.
   const mascotStatus = generating
-    ? ((liveTurn ? turnStatus(liveTurn.messages, true) : null) ?? "Starting…")
+    ? compacting
+      ? "Compacting conversation…"
+      : ((liveTurn ? turnStatus(liveTurn.messages, true) : null) ?? "Starting…")
     : null;
 
   return (
@@ -154,68 +165,70 @@ export function SessionTimeline({
     // TIMELINE bertambah (pesan baru/streaming/status/error), bukan saat
     // toggle collapsible. `scrollEdgeThreshold` tetap dipakai untuk ambang
     // tombol panah (1 viewport).
-    <MessageScrollerProvider autoScroll={false} scrollEdgeThreshold={viewportHeight}>
-      {/* Pengganti auto-follow bawaan — lihat komentar komponen di bawah. */}
-      <AutoScrollFollow
-        messages={messages}
-        status={status}
-        error={error}
-        viewportRef={viewportRef}
-      />
-      <MessageScroller className="min-h-0 flex-1">
-        <MessageScrollerViewport ref={viewportRef}>
-          {/* `TIMELINE_MAX_W mx-auto`: di layar lebar baris teks yang membentang
+    <SubagentIndexContext.Provider value={subagents}>
+      <MessageScrollerProvider autoScroll={false} scrollEdgeThreshold={viewportHeight}>
+        {/* Pengganti auto-follow bawaan — lihat komentar komponen di bawah. */}
+        <AutoScrollFollow
+          messages={messages}
+          status={status}
+          error={error}
+          viewportRef={viewportRef}
+        />
+        <MessageScroller className="min-h-0 flex-1">
+          <MessageScrollerViewport ref={viewportRef}>
+            {/* `TIMELINE_MAX_W mx-auto`: di layar lebar baris teks yang membentang
               penuh sulit dibaca; kolom percakapan dibatasi dan dipusatkan
               seperti aplikasi chat lain, sementara scrollbar tetap di tepi. */}
-          <MessageScrollerContent
-            className={cn("mx-auto w-full gap-6 px-3 py-4 sm:gap-8 sm:px-4", TIMELINE_MAX_W)}
-          >
-            {error && (
-              <MessageScrollerItem messageId="error">
-                <p className="text-sm text-destructive">{error}</p>
-              </MessageScrollerItem>
-            )}
-            {groups.map((group) =>
-              group.kind === "user" ? (
-                <div
-                  key={group.message.id}
-                  ref={(el) => registerMarkEl(group.message.id, el)}
-                  // `scroll-mt-4`: cadangan bila lompat dilakukan browser.
-                  className="scroll-mt-4"
-                >
-                  <UserMessage message={group.message} />
-                </div>
-              ) : (
-                <AssistantTurn
-                  key={group.id}
-                  group={group}
-                  collapsible={collapsible}
-                  onToggle={onToggle}
-                />
-              ),
-            )}
-            {/* Maskot GLOBAL — selalu menjadi item paling bawah di scroller,
+            <MessageScrollerContent
+              className={cn("mx-auto w-full gap-6 px-3 py-4 sm:gap-8 sm:px-4", TIMELINE_MAX_W)}
+            >
+              {error && (
+                <MessageScrollerItem messageId="error">
+                  <p className="text-sm text-destructive">{error}</p>
+                </MessageScrollerItem>
+              )}
+              {groups.map((group) =>
+                group.kind === "user" ? (
+                  <div
+                    key={group.message.id}
+                    ref={(el) => registerMarkEl(group.message.id, el)}
+                    // `scroll-mt-4`: cadangan bila lompat dilakukan browser.
+                    className="scroll-mt-4"
+                  >
+                    <UserMessage message={group.message} />
+                  </div>
+                ) : (
+                  <AssistantTurn
+                    key={group.id}
+                    group={group}
+                    collapsible={collapsible}
+                    onToggle={onToggle}
+                  />
+                ),
+              )}
+              {/* Maskot GLOBAL — selalu menjadi item paling bawah di scroller,
                 ikut scroll bersama konten (ala Claude). Status:
                 - "Starting…" saat generating tapi respons belum datang
                 - mascotStatus (Working/Thinking/Writing/tool) saat ada turn aktif
                 - standby (logo diam) setelah selesai, selama ada riwayat */}
-            {messages.length > 0 && (
-              <MessageScrollerItem messageId="mascot">
-                <Mascot
-                  label={generating ? (mascotStatus ?? "Starting…") : null}
-                  active={generating}
-                  standby
-                  className="px-1"
-                />
-              </MessageScrollerItem>
-            )}
-          </MessageScrollerContent>
-        </MessageScrollerViewport>
-        {/* Rail penanda pesan user (tepi kiri area percakapan). */}
-        <MessageRail marks={marks} activeId={activeMark} onJump={jumpTo} />
-        <MessageScrollerButton />
-      </MessageScroller>
-    </MessageScrollerProvider>
+              {messages.length > 0 && (
+                <MessageScrollerItem messageId="mascot">
+                  <Mascot
+                    label={generating ? (mascotStatus ?? "Starting…") : null}
+                    active={generating}
+                    standby
+                    className="px-1"
+                  />
+                </MessageScrollerItem>
+              )}
+            </MessageScrollerContent>
+          </MessageScrollerViewport>
+          {/* Rail penanda pesan user (tepi kiri area percakapan). */}
+          <MessageRail marks={marks} activeId={activeMark} onJump={jumpTo} />
+          <MessageScrollerButton />
+        </MessageScroller>
+      </MessageScrollerProvider>
+    </SubagentIndexContext.Provider>
   );
 }
 

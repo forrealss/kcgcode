@@ -51,6 +51,8 @@ export interface SessionChat {
   /** Permission mode Session (null = default agent) — tersinkron dari WS. */
   permissionMode: string | null;
   setPermissionMode: (mode: string | null) => void;
+  /** Agent sedang meringkas riwayat (compact) — WS `session_compaction`. */
+  compacting: boolean;
   /** Model sedang merespon: turn aktif atau masih ada pesan streaming. */
   busy: boolean;
   /** Model sedang merespon DAN Session berjalan (untuk tombol Stop). */
@@ -141,6 +143,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
   const [permissionMode, setPermissionMode] = useState<string | null>(
     session.permissionMode ?? null,
   );
+  const [compacting, setCompacting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Error resolusi prompt — tampil di kartunya (bukan banner global). */
   const [promptError, setPromptError] = useState<string | null>(null);
@@ -209,11 +212,18 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
           if (msg.sessionId !== session.id) break;
           setStatus(msg.status);
           // Session non-running -> tidak mungkin ada model yang merespon.
-          if (msg.status !== "running") setTurnActive(false);
+          if (msg.status !== "running") {
+            setTurnActive(false);
+            setCompacting(false);
+          }
           break;
         case "session_permission_mode":
           if (msg.sessionId !== session.id) break;
           setPermissionMode(msg.mode);
+          break;
+        case "session_compaction":
+          if (msg.sessionId !== session.id) break;
+          setCompacting(msg.compacting);
           break;
         case "turn_active":
           setTurnActive(msg.active);
@@ -417,6 +427,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     status,
     permissionMode,
     setPermissionMode,
+    compacting,
     busy,
     generating,
     canInput,

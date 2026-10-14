@@ -15,6 +15,7 @@
 import type {
   AgentOption,
   AgentType,
+  ContextUsage,
   FileChange,
   McpServerInfo,
   ModelOption,
@@ -86,8 +87,24 @@ export type AgentFormValue = string | number | boolean | string[];
 /** Jawaban form per `field.key`. */
 export type AgentFormAnswer = Record<string, AgentFormValue>;
 
+/** Pemakaian token satu step (opencode v2 `TokenUsageInfo`). */
+export interface AgentTokenUsage {
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: { read: number; write: number };
+}
+
+/** Status sub-agent (tool `task` / `Agent`). */
+export type AgentSubagentStatus = "running" | "completed" | "failed" | "stopped";
+
 type SessionData<T = unknown> = { sessionID: string } & T;
-type StepData<T = unknown> = SessionData<{ assistantMessageID: string } & T>;
+/**
+ * Data event dalam satu pesan assistant. `parentToolID` = id tool call
+ * sub-agent (`task` / `Agent`) yang menghasilkan konten ini — kosong untuk
+ * konten agent utama.
+ */
+type StepData<T = unknown> = SessionData<{ assistantMessageID: string; parentToolID?: string } & T>;
 
 /** Penanda event (union terdiskriminasi `type` -> `data`). */
 interface Ev<T extends string, D> {
@@ -108,7 +125,8 @@ export type AgentEvent =
       SessionData<{ reason: "user" | "shutdown" | "superseded" | "inactivity" | (string & {}) }>
     >
   | Ev<"session.step.started", StepData<{ agent?: string; model?: AgentModelRef }>>
-  | Ev<"session.step.ended", StepData<{ finish?: string }>>
+  /** Akhir satu step; `cost`/`tokens` = pemakaian step itu (bukan kumulatif). */
+  | Ev<"session.step.ended", StepData<{ finish?: string; cost?: number; tokens?: AgentTokenUsage }>>
   | Ev<"session.step.failed", StepData<{ error: AgentError }>>
   | Ev<"session.text.started", StepData<{ ordinal: number }>>
   | Ev<"session.text.delta", StepData<{ ordinal: number; delta: string }>>
@@ -153,7 +171,44 @@ export type AgentEvent =
    * Permission mode Session yang BERLAKU di agent berubah — termasuk
    * perubahan oleh agent sendiri (mis. rencana disetujui -> `acceptEdits`).
    */
-  | Ev<"agent.permission_mode.changed", SessionData<{ mode: string }>>;
+  | Ev<"agent.permission_mode.changed", SessionData<{ mode: string }>>
+  /**
+   * Agent meringkas riwayat Session (compact) — manual (`/compact`) maupun
+   * otomatis saat context window hampir penuh. `ended` membawa ukuran
+   * konteks sebelum/sesudah bila diketahui; `assistantMessageID` = pesan
+   * turn tempat penanda compact ditempel (bila agent tahu).
+   */
+  /**
+   * Status & statistik sub-agent berubah (sebagian field; digabung dengan yang
+   * sudah diketahui). `toolID` = tool call `task` / `Agent` pemicunya.
+   */
+  | Ev<
+      "agent.subagent",
+      SessionData<{
+        toolID: string;
+        assistantMessageID?: string;
+        status?: AgentSubagentStatus;
+        agentType?: string;
+        description?: string;
+        tokens?: number;
+        toolUses?: number;
+        durationMs?: number;
+        lastTool?: string;
+        summary?: string;
+        background?: boolean;
+      }>
+    >
+  | Ev<
+      "agent.compaction",
+      SessionData<{
+        phase: "started" | "ended" | "failed";
+        trigger: "manual" | "auto";
+        assistantMessageID?: string;
+        preTokens?: number;
+        postTokens?: number;
+        error?: AgentError;
+      }>
+    >;
 
 export type AgentEventType = AgentEvent["type"];
 
@@ -249,6 +304,12 @@ export interface AgentClient {
     interrupt(sessionID: string): Promise<SimpleResult>;
     /** Task list Session (kosong bila agent belum memakainya). */
     todos(sessionID: string): Promise<Result<TodoItem[]>>;
+    /**
+     * Pemakaian context window terakhir yang diketahui (`null` = belum
+     * terukur). Murah: dipanggil tiap poll panel konteks — agent memakai
+     * cache. Compact dijalankan lewat prompt slash command `/compact`.
+     */
+    contextUsage(sessionID: string): Promise<Result<ContextUsage | null>>;
   };
   permission: {
     reply(input: {

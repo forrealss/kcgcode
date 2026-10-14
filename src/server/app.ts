@@ -249,6 +249,8 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     onTitleChange: (sessionId, title) => gateway.notifySessionTitle(sessionId, title),
     onPermissionModeChange: (sessionId, mode) =>
       gateway.notifySessionPermissionMode(sessionId, mode),
+    onCompactionChange: (sessionId, compacting) =>
+      gateway.notifySessionCompaction(sessionId, compacting),
     onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
     // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).

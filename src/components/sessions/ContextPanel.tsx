@@ -4,6 +4,9 @@
  * dibuka, sehingga pesan & input tidak pernah tertutup kartu.
  *
  * Susunan (dari yang paling sering dilirik ke yang paling jarang):
+ * - **Context window** : pemakaian context window (meter + rincian kategori)
+ *                     dan tombol compact (`/compact`) beserta status
+ *                     "Compacting…" selama agent meringkas riwayat.
  * - **Environment** : perubahan file (+/-), cabang git, status push/pull.
  * - **Task list**   : `todowrite` agent + progres "selesai / total".
  * - **MCP**         : server MCP; ringkasan "x/y connected" di judul. Yang
@@ -23,8 +26,9 @@
  *   penutupnya tombol X di kartu. Esc juga menutup.
  * - Mobile: isi yang sama tampil sebagai bottom sheet (`ContextSheet`).
  *
- * Kartu ini hanya informasi (belum ada aksi git): barisnya tidak dibuat
- * seperti tombol supaya tidak menyiratkan aksi yang belum ada.
+ * Selain tombol compact, kartu ini hanya informasi (belum ada aksi git):
+ * barisnya tidak dibuat seperti tombol supaya tidak menyiratkan aksi yang
+ * belum ada.
  */
 import {
   CheckIcon,
@@ -32,6 +36,8 @@ import {
   CircleIcon,
   FileDiffIcon,
   FileTextIcon,
+  FoldVerticalIcon,
+  GaugeIcon,
   GitBranchIcon,
   LoaderIcon,
   MenuIcon,
@@ -51,10 +57,12 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { formatTokens, usageLevel } from "@/lib/context-usage";
 import { MCP_STATUS_DOT, MCP_STATUS_LABEL } from "@/lib/project-extensions";
 import { baseName, type FileReference } from "@/lib/references";
 import { cn } from "@/lib/utils";
-import type { McpServerState, SessionContext, TodoItem } from "@/types";
+import type { ContextUsage, McpServerState, SessionContext, TodoItem } from "@/types";
 
 // ----------------------------------------------------------- trigger ----
 
@@ -83,6 +91,12 @@ export interface ContextPanelProps {
   references: FileReference[];
   loading: boolean;
   onClose: () => void;
+  /** Ringkas riwayat Session (`/compact`); tanpa nilai = tombol tidak tampil. */
+  onCompact?: () => void;
+  /** Compact boleh dijalankan sekarang (Session aktif, model tidak sedang merespon). */
+  canCompact?: boolean;
+  /** Agent sedang compact (WS — lebih segar daripada `context.compacting`). */
+  compacting?: boolean;
 }
 
 /**
@@ -94,12 +108,22 @@ function ContextSections({
   context,
   references,
   loading,
+  onCompact,
+  canCompact = false,
+  compacting = false,
   /** Cadangkan ruang tombol X di judul bagian pertama (kartu desktop). */
   reserveClose = false,
 }: Omit<ContextPanelProps, "onClose"> & { reserveClose?: boolean }) {
   if (loading && context === null) return <CardSkeleton />;
   return (
     <div className={cn("flex flex-col gap-4", reserveClose && "[&>*:first-child>button]:pe-7")}>
+      <UsageSection
+        usage={context?.usage ?? null}
+        live={context?.live ?? false}
+        compacting={compacting || (context?.compacting ?? false)}
+        onCompact={onCompact}
+        canCompact={canCompact}
+      />
       <EnvironmentSection context={context} />
       <TaskSection todos={context?.todos ?? []} live={context?.live ?? false} />
       <McpSection servers={context?.mcp ?? []} live={context?.live ?? false} />
@@ -109,7 +133,7 @@ function ContextSections({
 }
 
 /** Kartu desktop: kolom kanan, berdampingan dengan percakapan. */
-export function ContextPanel({ context, references, loading, onClose }: ContextPanelProps) {
+export function ContextPanel({ onClose, ...props }: ContextPanelProps) {
   // Esc menutup kartu (pola sama dengan popover/sheet aplikasi).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -144,7 +168,7 @@ export function ContextPanel({ context, references, loading, onClose }: ContextP
       </Button>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pt-2 pb-3 [scrollbar-width:thin]">
-        <ContextSections context={context} references={references} loading={loading} reserveClose />
+        <ContextSections {...props} reserveClose />
       </div>
     </m.aside>
   );
@@ -158,9 +182,7 @@ export function ContextPanel({ context, references, loading, onClose }: ContextP
 export function ContextSheet({
   open,
   onOpenChange,
-  context,
-  references,
-  loading,
+  ...props
 }: Omit<ContextPanelProps, "onClose"> & {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -174,11 +196,11 @@ export function ContextSheet({
         <SheetHeader className="sr-only">
           <SheetTitle>Session context</SheetTitle>
           <SheetDescription>
-            Environment, MCP servers, task list, and files read by the agent.
+            Context window, environment, MCP servers, task list, and files read by the agent.
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 overflow-y-auto overscroll-contain px-3 pt-2 pb-1">
-          <ContextSections context={context} references={references} loading={loading} />
+          <ContextSections {...props} />
         </div>
       </SheetContent>
     </Sheet>
@@ -186,6 +208,162 @@ export function ContextSheet({
 }
 
 // ----------------------------------------------------------- sections ----
+
+/** Warna isi meter per tingkat pemakaian (AdwLevelBar low/high/full). */
+const LEVEL_FILL = {
+  normal: "bg-primary",
+  warning: "bg-amber-500",
+  critical: "bg-destructive",
+} as const;
+
+/** Batas kategori rincian yang ditampilkan (terbesar dulu). */
+const MAX_CATEGORIES = 4;
+
+function UsageSection({
+  usage,
+  live,
+  compacting,
+  onCompact,
+  canCompact,
+}: {
+  usage: ContextUsage | null;
+  live: boolean;
+  compacting: boolean;
+  onCompact?: () => void;
+  canCompact: boolean;
+}) {
+  const summary =
+    usage === null
+      ? undefined
+      : usage.percent !== null
+        ? `${usage.percent}%`
+        : `${formatTokens(usage.usedTokens)} tokens`;
+  const compactRow = onCompact && (
+    <li className="px-2.5 py-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={onCompact}
+        disabled={!canCompact || compacting}
+        title="Summarize the conversation so far to free up context (/compact)"
+        className="h-8 w-full rounded-lg text-[12.5px]"
+      >
+        {compacting ? (
+          <Spinner data-icon="inline-start" />
+        ) : (
+          <FoldVerticalIcon data-icon="inline-start" />
+        )}
+        {compacting ? "Compacting…" : "Compact conversation"}
+      </Button>
+    </li>
+  );
+
+  return (
+    <Section title="Context window" summary={summary}>
+      {usage === null ? (
+        <Box>
+          <Row
+            icon={<GaugeIcon />}
+            label={
+              compacting
+                ? "Compacting the conversation…"
+                : live
+                  ? "Measured after the agent replies"
+                  : "Start the session to see usage"
+            }
+            muted
+          />
+          {compactRow}
+        </Box>
+      ) : (
+        <Box>
+          <UsageMeter usage={usage} />
+          {usage.categories.slice(0, MAX_CATEGORIES).map((c) => (
+            <Row
+              key={c.name}
+              icon={<CircleIcon className="!size-2 fill-current" />}
+              label={c.name}
+              muted
+              value={
+                <span className="text-[11.5px] text-muted-foreground tabular-nums">
+                  {formatTokens(c.tokens)}
+                </span>
+              }
+            />
+          ))}
+          {compactRow}
+        </Box>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * Meter pemakaian (AdwLevelBar): token terpakai / ukuran window, model, dan
+ * garis penanda ambang auto-compact bila diketahui.
+ */
+function UsageMeter({ usage }: { usage: ContextUsage }) {
+  const level = usageLevel(usage.percent);
+  const fill = Math.min(100, usage.percent ?? 0);
+  const autoAt =
+    usage.autoCompactAt !== null && usage.maxTokens
+      ? Math.min(100, (usage.autoCompactAt / usage.maxTokens) * 100)
+      : null;
+  return (
+    <li className="flex flex-col gap-1.5 px-2.5 py-2 text-[12.5px]">
+      <div className="flex min-w-0 items-baseline justify-between gap-2">
+        <span className="truncate tabular-nums">
+          {formatTokens(usage.usedTokens)}
+          {usage.maxTokens !== null && (
+            <span className="text-muted-foreground">
+              {" "}
+              of {formatTokens(usage.maxTokens)} tokens
+            </span>
+          )}
+        </span>
+        {usage.model && (
+          <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground">
+            {usage.model}
+          </span>
+        )}
+      </div>
+      {usage.percent !== null && (
+        // biome-ignore lint/a11y/useSemanticElements: <meter> native sulit diberi gaya AdwLevelBar lintas browser.
+        <div
+          role="meter"
+          aria-label="Context window usage"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={fill}
+          aria-valuetext={`${usage.percent}% used`}
+          className="relative h-1.5 overflow-hidden rounded-full bg-foreground/10"
+        >
+          <span
+            aria-hidden
+            className={cn(
+              "absolute inset-y-0 left-0 rounded-full transition-[width] duration-300",
+              LEVEL_FILL[level],
+            )}
+            style={{ width: `${fill}%` }}
+          />
+          {autoAt !== null && (
+            <span
+              aria-hidden
+              className="absolute inset-y-0 w-px bg-foreground/50"
+              style={{ left: `${autoAt}%` }}
+            />
+          )}
+        </div>
+      )}
+      {usage.autoCompactAt !== null && (
+        <span className="text-[11px] text-muted-foreground">
+          Auto-compacts at {formatTokens(usage.autoCompactAt)}
+        </span>
+      )}
+    </li>
+  );
+}
 
 function EnvironmentSection({ context }: { context: SessionContext | null }) {
   const changed = context?.changes ?? [];

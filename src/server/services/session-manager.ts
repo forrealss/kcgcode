@@ -173,6 +173,8 @@ export interface SessionManagerOptions {
    * rencana disetujui). Disambungkan ke WebSocket_Gateway.
    */
   onPermissionModeChange?: (sessionId: string, mode: string | null) => void;
+  /** Hook status compact Session berubah (mulai / selesai meringkas riwayat). */
+  onCompactionChange?: (sessionId: string, compacting: boolean) => void;
   /** Hook Session dihapus permanen — disambungkan ke WebSocket_Gateway. */
   onDeleted?: (sessionId: string) => void;
   /** Hook error asinkron (mis. balasan model gagal) — disambungkan ke gateway. */
@@ -339,6 +341,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   const onStatusChange = opts.onStatusChange;
   const onTitleChange = opts.onTitleChange;
   const onPermissionModeChange = opts.onPermissionModeChange;
+  const onCompactionChange = opts.onCompactionChange;
+  /** Session lokal yang riwayatnya sedang diringkas agent (compact). */
+  const compacting = new Set<string>();
   const onDeleted = opts.onDeleted;
   const onError = opts.onError;
 
@@ -447,6 +452,19 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (!cur.ok || cur.data.permissionMode === mode) return;
       if (!store.updateSessionPermissionMode(sessionId, mode).ok) return;
       onPermissionModeChange?.(sessionId, mode);
+    },
+    // Eksekusi yang dimulai agent sendiri (mis. dibangunkan hasil sub-agent
+    // latar belakang) — turn dibuka agar kontennya tidak terbuang.
+    beginTurn: (sessionId) => {
+      if (!turns.has(sessionId)) {
+        turns.begin(sessionId, turnIdleTimeoutMs, friendlySendError("TURN_TIMEOUT"));
+      }
+    },
+    setCompacting: (sessionId, on) => {
+      if (compacting.has(sessionId) === on) return;
+      if (on) compacting.add(sessionId);
+      else compacting.delete(sessionId);
+      onCompactionChange?.(sessionId, on);
     },
     setTitle: (sessionId, title) => {
       const cur = store.getSession(sessionId);
@@ -862,11 +880,12 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     // Task list disimpan per Session agent (opencode `ses_...` / UUID Claude).
     const remoteId = cur.data.ocSessionId ?? sessionId;
 
-    const [git, todos, changes, mcp] = await Promise.all([
+    const [git, todos, changes, mcp, usage] = await Promise.all([
       readGitInfo(cwd).catch(() => EMPTY_GIT_INFO),
       client ? client.session.todos(remoteId) : Promise.resolve(null),
       client ? client.vcs.status() : Promise.resolve(null),
       client ? client.mcp.list() : Promise.resolve(null),
+      client ? client.session.contextUsage(remoteId) : Promise.resolve(null),
     ]);
 
     return {
@@ -876,6 +895,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         todos: todos?.ok ? todos.data : [],
         changes: changes?.ok ? changes.data : [],
         mcp: mcp?.ok ? mcp.data : [],
+        usage: usage?.ok ? usage.data : null,
+        compacting: compacting.has(sessionId),
         /** Panel perlu tahu data tool belum tersedia vs memang kosong. */
         live: client !== undefined,
       },

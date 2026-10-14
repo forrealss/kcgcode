@@ -81,6 +81,7 @@ export interface WebSocketGateway {
   notifySessionTitle(sessionId: string, title: string): void;
   /** Permission mode Session berubah — dikirim ke koneksi yang attach Session. */
   notifySessionPermissionMode(sessionId: string, mode: string | null): void;
+  notifySessionCompaction(sessionId: string, compacting: boolean): void;
   /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
   notifyTurnActive(sessionId: string, active: boolean): void;
   notifySessionDeleted(sessionId: string): void;
@@ -328,6 +329,10 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     broadcast(sessionId, () => ({ type: "session_permission_mode", sessionId, mode }));
   }
 
+  function notifySessionCompaction(sessionId: string, compacting: boolean): void {
+    broadcast(sessionId, () => ({ type: "session_compaction", sessionId, compacting }));
+  }
+
   function notifyTurnActive(sessionId: string, active: boolean): void {
     broadcast(sessionId, () => ({ type: "turn_active", sessionId, active }));
   }
@@ -389,6 +394,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifySessionStatus,
     notifySessionTitle,
     notifySessionPermissionMode,
+    notifySessionCompaction,
     notifyTurnActive,
     notifySessionDeleted,
     notifyDataChanged,

@@ -13,6 +13,10 @@ export type TurnSegment =
   | { kind: "reasoning"; key: string; part: MessagePart }
   | { kind: "tool"; key: string; part: MessagePart }
   | { kind: "error"; key: string; part: MessagePart }
+  /** Penanda riwayat diringkas (compact) — part `compaction`. */
+  | { kind: "compaction"; key: string; part: MessagePart }
+  /** Tool call sub-agent (`task`) — kartu ringkas, detail di sheet. */
+  | { kind: "subagent"; key: string; part: MessagePart }
   | {
       kind: "text";
       key: string;
@@ -31,8 +35,11 @@ export interface TurnBlock {
   /** Key unik blok (dari key segmen pertama). */
   key: string;
   steps: Extract<TurnSegment, { kind: "reasoning" | "tool" }>[];
-  /** Teks atau error setelah kluster steps ini (bisa null kalau blok masih streaming). */
-  content: Extract<TurnSegment, { kind: "text" | "error" }> | null;
+  /**
+   * Teks, error, atau penanda compact setelah kluster steps ini (bisa null
+   * kalau blok masih streaming).
+   */
+  content: Extract<TurnSegment, { kind: "text" | "error" | "compaction" | "subagent" }> | null;
 }
 
 /** Sekelompok pesan assistant berurutan dari satu turn balasan model. */

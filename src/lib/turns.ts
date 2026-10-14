@@ -5,6 +5,7 @@
  * dipisah agar dapat diuji `bun test` tanpa render. Tipe hasil (`TurnSegment`,
  * `TurnBlock`, `MessageGroup`, dst.) ada di `src/types/turns.ts`.
  */
+import { isMetaPart, isSubagentTool } from "@/lib/subagents";
 import type {
   AssistantTurnGroup,
   MessageGroup,
@@ -44,7 +45,14 @@ export function turnSegments(messages: readonly SessionMessage[]): TurnSegment[]
   for (const msg of messages) {
     msg.parts.forEach((part, i) => {
       const key = `${msg.id}:${part.id ?? i}`;
-      if (part.type === "reasoning" || part.type === "error") {
+      // Kerja sub-agent tampil di kartunya (detail), bukan di alur turn;
+      // part metadata (status sub-agent, pemakaian) tidak dirender langsung.
+      if (typeof part.parentToolID === "string" || isMetaPart(part)) return;
+      if (isSubagentTool(part)) {
+        segments.push({ kind: "subagent", key, part });
+        return;
+      }
+      if (part.type === "reasoning" || part.type === "error" || part.type === "compaction") {
         segments.push({ kind: part.type, key, part });
         return;
       }
@@ -141,6 +149,8 @@ export function hasVisibleContent(segments: readonly TurnSegment[]): boolean {
     (s) =>
       s.kind === "tool" ||
       s.kind === "error" ||
+      s.kind === "compaction" ||
+      s.kind === "subagent" ||
       (s.kind === "reasoning" && (partText(s.part) ?? "").trim() !== "") ||
       (s.kind === "text" && s.text.trim() !== ""),
   );
@@ -167,6 +177,14 @@ export function turnStatus(messages: readonly SessionMessage[], streaming: boole
     if (seg.kind === "text") return "Writing…";
     if (seg.kind === "reasoning") return "Thinking…";
     if (seg.kind === "tool") return toolLabel(seg.part);
+    // Riwayat baru saja diringkas; model melanjutkan pekerjaan.
+    if (seg.kind === "compaction") return "Working…";
+    if (seg.kind === "subagent") {
+      const input = (seg.part.state?.input ?? {}) as { description?: unknown };
+      return typeof input.description === "string" && input.description.trim() !== ""
+        ? `Sub-agent: ${input.description}`
+        : "Running sub-agent…";
+    }
     // error: proses berhenti di error -> selesai.
     return null;
   }
@@ -214,7 +232,12 @@ export function turnBlocks(segments: readonly TurnSegment[]): TurnBlock[] {
   for (const seg of segments) {
     if (seg.kind === "reasoning" || seg.kind === "tool") {
       pendingSteps.push(seg);
-    } else if (seg.kind === "text" || seg.kind === "error") {
+    } else if (
+      seg.kind === "text" ||
+      seg.kind === "error" ||
+      seg.kind === "compaction" ||
+      seg.kind === "subagent"
+    ) {
       blocks.push({
         key: pendingSteps[0]?.key ?? seg.key,
         steps: pendingSteps,

@@ -18,6 +18,7 @@ import { OpenCode } from "@opencode/client";
 import { Service } from "@opencode/client/service";
 import type {
   AgentOption,
+  ContextUsage,
   FileChange,
   McpServerInfo,
   ModelOption,
@@ -47,6 +48,7 @@ export interface OpencodeApi {
     switchAgent(input: Record<string, unknown>): Promise<unknown>;
     prompt(input: Record<string, unknown>): Promise<unknown>;
     command(input: Record<string, unknown>): Promise<unknown>;
+    compact(input: Record<string, unknown>): Promise<unknown>;
     interrupt(input: { sessionID: string }): Promise<unknown>;
     instructions: {
       entry: {
@@ -104,6 +106,29 @@ export const INSTRUCTIONS_KEY = "kcg-project";
 
 /** Umur cache nama slash command (rute prompt `/nama`) per Project. */
 const COMMANDS_CACHE_MS = 60_000;
+/** Jeda minimum memuat ulang batas context model yang belum dikenal. */
+const LIMITS_RELOAD_MS = 5 * 60_000;
+
+/**
+ * `/compact` — opencode tidak mendaftarkannya sebagai command, tapi punya
+ * API compact sendiri (`session.compact`); ditawarkan di autocomplete dan
+ * dirutekan ke API itu.
+ */
+export const COMPACT_COMMAND: SlashCommandInfo = {
+  name: "compact",
+  description: "Summarize the conversation so far to free up context",
+  argumentHint: null,
+  builtin: true,
+};
+
+/** Token context window dari usage step (input + output + reasoning + cache). */
+export function stepContextTokens(tokens: unknown): number | null {
+  const t = rec(tokens);
+  const cache = rec(t.cache);
+  const parts = [t.input, t.output, t.reasoning, cache.read, cache.write];
+  if (!parts.some((v) => typeof v === "number")) return null;
+  return parts.reduce<number>((sum, v) => sum + (typeof v === "number" ? v : 0), 0);
+}
 
 /** `/nama args` di awal teks -> nama + argumen; selain itu null. */
 export function parseSlashCommand(text: string): { name: string; args: string } | null {
@@ -198,6 +223,13 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
   const todos = new Map<string, TodoItem[]>();
   /** Tool call `todowrite` yang sedang berjalan. */
   const todoCalls = new Set<string>();
+  /** Model step terakhir per Session opencode (`provider/id`). */
+  const stepModels = new Map<string, { id: string; providerID: string }>();
+  /** Token context step terakhir per Session opencode. */
+  const stepTokens = new Map<string, { tokens: number; at: number }>();
+  /** Batas context window per model (`provider/id`), dari daftar model. */
+  const contextLimits = new Map<string, number>();
+  let limitsLoadedAt = 0;
   const lostCbs = new Set<(projectId: string) => void>();
 
   function notifyLost(): void {
@@ -226,6 +258,7 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
     if (ev.location) sessionDirs.set(sessionID, directoryKey(ev.location.directory));
     const dirKey = sessionDirs.get(sessionID);
     if (!dirKey) return; // Session milik aplikasi opencode lain / belum dikenal.
+    trackUsage(ev);
     emit(dirKey, ev);
     // Task list opencode tidak punya endpoint v2: rakit dari tool `todowrite`.
     if (ev.type === "session.tool.input.started" && ev.data.name === TODO_TOOL) {
@@ -237,6 +270,23 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
         todos.set(sessionID, items);
         emit(dirKey, { type: "agent.todos.updated", data: { sessionID, todos: items } });
       }
+    }
+  }
+
+  /**
+   * Pemakaian context opencode = token step terakhir (bukan total Session).
+   * Setelah compact angka lama tidak berlaku sampai step berikutnya.
+   */
+  function trackUsage(ev: AgentEvent): void {
+    if (ev.type === "session.step.started" && ev.data.model) {
+      stepModels.set(ev.data.sessionID, ev.data.model);
+    } else if (ev.type === "session.step.ended") {
+      const tokens = stepContextTokens((ev.data as { tokens?: unknown }).tokens);
+      if (tokens !== null) stepTokens.set(ev.data.sessionID, { tokens, at: Date.now() });
+    } else if (ev.type === "agent.compaction" && ev.data.phase === "ended") {
+      const before = stepTokens.get(ev.data.sessionID);
+      if (before) ev.data.preTokens = before.tokens;
+      stepTokens.delete(ev.data.sessionID);
     }
   }
 
@@ -366,6 +416,7 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
         if (!name) continue;
         out.push({ name, description: str(c.description), argumentHint: null });
       }
+      if (!out.some((c) => c.name === COMPACT_COMMAND.name)) out.push(COMPACT_COMMAND);
       out.sort((x, y) => x.name.localeCompare(y.name));
       commandsCache = { at: Date.now(), names: new Set(out.map((c) => c.name)) };
       return { ok: true, data: out };
@@ -487,6 +538,15 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
           // `/nama args` milik opencode dijalankan lewat `session.command`
           // (TUI opencode melakukan hal yang sama); `/usr/bin …` dsb. tetap teks.
           const slash = parseSlashCommand(input.text);
+          // Compact memakai API compact opencode (berjalan sebagai eksekusi
+          // biasa: execution.started -> compaction.* -> execution.succeeded).
+          if (slash?.name === COMPACT_COMMAND.name) {
+            return ok(
+              await call("AGENT_PROMPT_FAILED", (a) =>
+                a.session.compact({ sessionID: input.sessionID }),
+              ),
+            );
+          }
           if (slash && (await isCommand(slash.name))) {
             const res = await call("AGENT_PROMPT_FAILED", (a) =>
               a.session.command({
@@ -515,6 +575,27 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
         },
         async todos(sessionID) {
           return { ok: true, data: todos.get(sessionID) ?? [] };
+        },
+        async contextUsage(sessionID) {
+          const used = stepTokens.get(sessionID);
+          if (!used) return { ok: true, data: null };
+          const model = stepModels.get(sessionID);
+          const key = model ? `${model.providerID}/${model.id}` : null;
+          // Batas model belum dikenal -> muat daftar model (dibatasi frekuensinya).
+          if (key && !contextLimits.has(key) && Date.now() - limitsLoadedAt > LIMITS_RELOAD_MS) {
+            await client.model.list();
+          }
+          const max = key ? (contextLimits.get(key) ?? null) : null;
+          const usage: ContextUsage = {
+            usedTokens: used.tokens,
+            maxTokens: max,
+            percent: max ? Math.round((used.tokens / max) * 100) : null,
+            autoCompactAt: null,
+            model: model?.id ?? null,
+            categories: [],
+            measuredAt: used.at,
+          };
+          return { ok: true, data: usage };
         },
       },
       permission: {
@@ -554,6 +635,10 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
             const id = str(m.id);
             const providerID = str(m.providerID);
             if (!id || !providerID) continue;
+            const limit = rec(m.limit).context;
+            if (typeof limit === "number" && limit > 0) {
+              contextLimits.set(`${providerID}/${id}`, limit);
+            }
             if (m.enabled === false || m.status === "deprecated") continue;
             const efforts = (Array.isArray(m.variants) ? m.variants : [])
               .map((v) => str(rec(v).id))
@@ -567,6 +652,7 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
               ...(def.id === id && def.providerID === providerID ? { isDefault: true } : {}),
             });
           }
+          limitsLoadedAt = Date.now();
           return { ok: true, data: out };
         },
       },
