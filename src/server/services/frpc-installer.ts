@@ -74,6 +74,19 @@ export function frpAssetFor(
   };
 }
 
+/**
+ * Binary `tar` untuk ekstraksi. Windows: pakai bsdtar bawaan (System32) —
+ * GNU tar dari Git for Windows yang mungkin lebih dulu di PATH tidak bisa
+ * membuka `.zip` dan menganggap `C:\…` sebagai host remote.
+ */
+export function tarCommand(): string {
+  if (process.platform === "win32") {
+    const systemTar = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+    if (existsSync(systemTar)) return systemTar;
+  }
+  return "tar";
+}
+
 export interface FrpcInstallerOptions {
   binDir?: string;
   fetch?: typeof fetch;
@@ -124,7 +137,8 @@ export function createFrpcInstaller(opts: FrpcInstallerOptions = {}): FrpcInstal
     try {
       const archive = path.join(work, asset.file);
       await Bun.write(archive, bytes);
-      const proc = Bun.spawn(["tar", "-xf", archive, "-C", work], {
+      const proc = Bun.spawn([tarCommand(), "-xf", archive, "-C", work], {
+        windowsHide: true,
         stdout: "ignore",
         stderr: "pipe",
       });

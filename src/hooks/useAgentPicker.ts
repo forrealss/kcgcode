@@ -9,8 +9,7 @@
 import { useCallback, useRef, useState } from "react";
 import { agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
-import type { AgentOption } from "@/server/services/opencode-client";
-import type { AgentType } from "@/types";
+import type { AgentOption, AgentType } from "@/types";
 
 export interface UseAgentPickerResult {
   agents: AgentOption[] | null;

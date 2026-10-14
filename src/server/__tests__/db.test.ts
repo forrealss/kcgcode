@@ -14,6 +14,19 @@ import fc from "fast-check";
 import { openSessionStore } from "../../db";
 import type { InteractivePrompt, Session, SessionMessage, SessionStatus } from "../../types";
 
+/**
+ * Hapus direktori sementara. Windows: bun:sqlite menahan handle file sampai
+ * semua statement repo di-GC walau `close()` sudah dipanggil, sehingga `rm`
+ * bisa EBUSY — sisa di tmpdir tidak memengaruhi hasil test.
+ */
+function rmTmp(dir: string): void {
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch (err) {
+    if (process.platform !== "win32") throw err;
+  }
+}
+
 function makeSession(id = "s1", status: SessionStatus = "running"): Session {
   return {
     id,
@@ -392,7 +405,7 @@ test("migrasi: DB lama (skema PTY) dibuka dengan store baru -> kolom & tabel dit
   expect(oldProj.ok && oldProj.data.instructions).toBeNull();
   expect(store.updateProjectInstructions("p1", "hi").ok).toBe(true);
   store.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmTmp(dir);
 });
 
 function dbExec(dbPath: string, sql: string): Record<string, unknown>[] {
@@ -431,7 +444,7 @@ test("4.4: kegagalan tulis tidak menghapus data lama (simulasi db tertutup)", ()
   expect(hist.ok).toBe(true);
   if (hist.ok) expect(hist.data.map((h) => h.status)).toEqual(["running"]);
   store2.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmTmp(dir);
 });
 
 test("4.4: persistensi setelah restart server (file sqlite yang sama)", () => {
@@ -455,7 +468,7 @@ test("4.4: persistensi setelah restart server (file sqlite yang sama)", () => {
   expect(hist.ok).toBe(true);
   if (hist.ok) expect(hist.data.map((h) => h.status)).toEqual(["running", "crashed"]);
   store2.close();
-  rmSync(dir, { recursive: true, force: true });
+  rmTmp(dir);
 });
 
 test("migrasi onboarded_at: instalasi lama (sudah punya project/kunci) ditandai selesai", () => {

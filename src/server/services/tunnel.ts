@@ -179,6 +179,7 @@ export function classifyFrpcLine(
 
 const DEFAULT_SPAWN = (bin: string, configPath: string): FrpcProcessLike => {
   const proc = Bun.spawn([bin, "-c", configPath], {
+    windowsHide: true,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

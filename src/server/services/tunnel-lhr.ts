@@ -138,6 +138,7 @@ export function parseLhrLine(line: string): LhrEvent {
 
 const DEFAULT_SPAWN = (args: string[]): SshProcessLike => {
   const proc = Bun.spawn(["ssh", ...args], {
+    windowsHide: true,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",

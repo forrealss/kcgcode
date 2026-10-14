@@ -3,9 +3,8 @@
  * tanpa DOM, dipisah agar dapat diuji `bun test`.
  */
 import { AGENT_TYPES } from "@/lib/agent-types";
-import type { SkillInfo } from "@/server/services/opencode-client";
 import type { AuditStatus, RegistrySkill } from "@/server/services/skills-registry";
-import type { AgentType, Project } from "@/types";
+import type { AgentType, Project, SkillInfo } from "@/types";
 
 /** Kunci localStorage Project terakhir yang dipilih di halaman Skills. */
 export const LAST_SKILLS_PROJECT_KEY = "kcg-skills-project";

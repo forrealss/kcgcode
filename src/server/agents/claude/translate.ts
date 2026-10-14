@@ -1,33 +1,30 @@
 /**
- * Penerjemah pesan Claude Agent SDK -> event bergaya opencode.
+ * Penerjemah pesan Claude Agent SDK -> `AgentEvent` (bentuk opencode v2).
  *
- * Session_Manager & TurnStream dibangun di atas event SSE opencode
- * (`message.updated`, `message.part.updated`, `message.part.delta`,
- * `session.idle`, `session.error`, `session.status`). Agar backend Claude
- * Code bisa memakai jalur yang sama tanpa cabang khusus, setiap `SDKMessage`
- * diterjemahkan ke event tersebut di sini — fungsi/kelas murni tanpa I/O.
+ * Fungsi/kelas murni tanpa I/O. Pemetaan (terverifikasi terhadap stream SDK
+ * 0.3.x):
+ * - Satu turn = satu "step" dengan pesan assistant lokal (`msg_<uuid>`):
+ *   `session.execution.started` + `session.step.started`. Seluruh pesan API
+ *   Anthropic dalam turn (termasuk sub-agent) menjadi konten pesan itu.
+ * - `stream_event` text/thinking -> `session.text.*` / `session.reasoning.*`
+ *   (started saat token pertama, delta per token, ended dengan teks penuh).
+ *   Pesan `assistant` membawa blok yang SAMA secara utuh: blok dari pesan API
+ *   yang sudah di-stream dilewati agar tidak terduplikasi.
+ * - `tool_use` -> `session.tool.input.started` + `session.tool.called`;
+ *   `tool_result` -> `session.tool.success` / `session.tool.failed`.
+ * - `system/api_retry` -> `session.retry.scheduled`.
  *
- * Pemetaan (terverifikasi terhadap stream SDK 0.3.x):
- * - Satu turn = SATU pesan assistant lokal (`msg_<uuid>`); seluruh pesan API
- *   Anthropic dalam turn (termasuk sub-agent) menjadi parts pesan itu.
- * - `stream_event` text/thinking -> part `text`/`reasoning` + delta token.
- *   Pesan `assistant` membawa blok yang SAMA secara utuh: blok teks dari
- *   pesan API yang sudah di-stream dilewati agar tidak terduplikasi.
- * - `tool_use` (dari pesan `assistant`, input lengkap) -> part `tool`
- *   status running; `tool_result` (pesan `user`) -> status completed/error.
- * - Nama tool & key input dinormalisasi ke gaya opencode (`Read` -> `read`,
- *   `file_path` -> `filePath`) agar renderer, Reference, dan label izin
- *   yang sudah ada langsung bekerja.
- * - `system/api_retry` -> `session.status` retry (banner retry provider).
+ * Nama tool & key input dinormalisasi (`Read` -> `read`, `file_path` ->
+ * `filePath`) agar renderer, Reference, dan label izin langsung bekerja.
  */
 import { randomUUID } from "node:crypto";
-import type { MessagePart } from "../../types";
-import type { OpenCodeEvent, OpenCodeTodo } from "./opencode-client";
+import type { TodoItem } from "../../../types";
+import type { AgentEvent } from "../types";
 
-/** Batas panjang output tool yang disimpan (hindari blob raksasa di DB). */
+/** Batas panjang output tool yang diteruskan (hindari blob raksasa di DB). */
 export const TOOL_OUTPUT_MAX_LENGTH = 50_000;
 
-/** Nama tool Claude Code -> nama tool gaya opencode (dipakai UI). */
+/** Nama tool Claude Code -> nama tool yang dipakai UI. */
 const TOOL_NAMES: Record<string, string> = {
   Read: "read",
   Write: "write",
@@ -54,16 +51,16 @@ export function toolName(name: string): string {
 }
 
 /**
- * Nama permission gaya opencode untuk kartu izin — `parsePermissionTitle`
- * di UI memetakan nama ini ke label & tingkat risiko. Tool penulis file
- * dikelompokkan ke `edit` seperti di opencode.
+ * Nama permission untuk kartu izin — `parsePermissionTitle` di UI memetakan
+ * nama ini ke label & tingkat risiko. Tool penulis file dikelompokkan ke
+ * `edit`.
  */
 export function permissionName(name: string): string {
   const mapped = toolName(name);
   return mapped === "write" ? "edit" : mapped;
 }
 
-/** Salinan input tool dengan alias key gaya opencode (`filePath`). */
+/** Salinan input tool dengan alias key `filePath`. */
 export function normalizeToolInput(input: unknown): Record<string, unknown> {
   if (typeof input !== "object" || input === null) return {};
   const out: Record<string, unknown> = { ...(input as Record<string, unknown>) };
@@ -82,11 +79,11 @@ export function permissionTarget(input: Record<string, unknown>): string | null 
 }
 
 /** Task list dari input `TodoWrite` (`{ todos: [{ content, status }] }`). */
-export function todosFromInput(input: unknown): OpenCodeTodo[] | null {
+export function todosFromInput(input: unknown): TodoItem[] | null {
   if (typeof input !== "object" || input === null) return null;
   const raw = (input as { todos?: unknown }).todos;
   if (!Array.isArray(raw)) return null;
-  const out: OpenCodeTodo[] = [];
+  const out: TodoItem[] = [];
   for (const t of raw) {
     if (typeof t !== "object" || t === null) continue;
     const { content, status, priority } = t as Record<string, unknown>;
@@ -128,54 +125,54 @@ export function toolResultText(content: unknown): string {
 /** Hasil sampingan satu pesan SDK yang perlu disimpan klien. */
 export interface TranslateEffects {
   /** Task list terbaru (TodoWrite). */
-  todos?: OpenCodeTodo[];
+  todos?: TodoItem[];
 }
 
 /** Blok streaming yang sedang dibangun (text/reasoning). */
 interface StreamBlock {
-  part: MessagePart;
-  /**
-   * Part sudah dikirim. Blok baru dikirim saat token pertama tiba: thinking
-   * yang disembunyikan provider (tanpa delta) tidak menjadi part kosong.
-   */
-  emitted: boolean;
+  kind: "text" | "reasoning";
+  ordinal: number;
+  text: string;
+  /** `*.started` sudah dikirim (token pertama sudah tiba). */
+  started: boolean;
 }
 
 type Msg = Record<string, unknown>;
 
-/**
- * Penerjemah stateful per Session Claude Code. `emit` menerima event gaya
- * opencode yang sudah memuat `sessionID`.
- */
+/** Penerjemah stateful per Session Claude Code. */
 export class ClaudeTurnTranslator {
   /** Id pesan assistant lokal turn aktif; null = belum ada turn. */
   private messageId: string | null = null;
   /** Id pesan API Anthropic yang teksnya sudah di-stream (lewati di `assistant`). */
   private readonly streamed = new Set<string>();
-  /** Blok streaming aktif per pesan API: `${apiMsgId}:${index}` -> part. */
+  /** Blok streaming aktif per pesan API: `${apiMsgId}:${index}`. */
   private readonly blocks = new Map<string, StreamBlock>();
   /** Pesan API aktif per jalur (induk / sub-agent `parent_tool_use_id`). */
   private readonly currentApiMsg = new Map<string, string>();
-  /** Part tool per tool_use id (untuk melengkapi hasilnya). */
-  private readonly tools = new Map<string, MessagePart>();
+  /** Ordinal berikutnya per jenis blok pada pesan lokal. */
+  private ordinals = { text: 0, reasoning: 0 };
 
   constructor(
     private readonly sessionID: string,
-    private readonly emit: (ev: OpenCodeEvent) => void,
-    private readonly now: () => number = Date.now,
+    private readonly emit: (ev: AgentEvent) => void,
   ) {}
 
-  /** Mulai turn baru: pesan assistant lokal baru + `message.updated`. */
+  /** Id pesan assistant turn aktif (null = belum ada turn). */
+  get currentMessageId(): string | null {
+    return this.messageId;
+  }
+
+  /** Mulai turn baru: eksekusi + step dengan pesan assistant lokal baru. */
   beginTurn(): void {
     this.messageId = `msg_${randomUUID()}`;
     this.streamed.clear();
     this.blocks.clear();
     this.currentApiMsg.clear();
-    this.tools.clear();
+    this.ordinals = { text: 0, reasoning: 0 };
+    this.emit({ type: "session.execution.started", data: { sessionID: this.sessionID } });
     this.emit({
-      type: "message.updated",
-      sessionID: this.sessionID,
-      info: { id: this.messageId, role: "assistant" },
+      type: "session.step.started",
+      data: { sessionID: this.sessionID, assistantMessageID: this.messageId },
     });
   }
 
@@ -185,25 +182,18 @@ export class ClaudeTurnTranslator {
     return this.messageId as string;
   }
 
-  private emitPart(part: MessagePart): void {
-    const messageID = this.ensureTurn();
-    this.emit({
-      type: "message.part.updated",
-      sessionID: this.sessionID,
-      part: { ...part, messageID },
-    });
-  }
-
-  private emitDelta(partID: string, delta: string): void {
-    if (this.messageId === null || delta === "") return;
-    this.emit({
-      type: "message.part.delta",
-      sessionID: this.sessionID,
-      messageID: this.messageId,
-      partID,
-      field: "text",
-      delta,
-    });
+  /** Kirim satu blok teks utuh (tanpa streaming). */
+  private emitWholeText(kind: "text" | "reasoning", text: string): void {
+    const assistantMessageID = this.ensureTurn();
+    const ordinal = this.ordinals[kind]++;
+    const base = { sessionID: this.sessionID, assistantMessageID, ordinal };
+    if (kind === "text") {
+      this.emit({ type: "session.text.started", data: base });
+      this.emit({ type: "session.text.ended", data: { ...base, text } });
+    } else {
+      this.emit({ type: "session.reasoning.started", data: base });
+      this.emit({ type: "session.reasoning.ended", data: { ...base, text } });
+    }
   }
 
   /** Terjemahkan satu pesan SDK; kembalikan efek samping untuk klien. */
@@ -242,20 +232,15 @@ export class ClaudeTurnTranslator {
     const key = `${apiMsgId}:${ev.index}`;
     if (ev.type === "content_block_start") {
       const block = ev.content_block as { type?: unknown } | undefined;
-      const type =
-        block?.type === "text" ? "text" : block?.type === "thinking" ? "reasoning" : null;
-      if (type === null) return; // tool_use dirakit dari pesan `assistant`
-      const part: MessagePart = {
-        id: `prt_${apiMsgId}_${ev.index}`,
-        type,
-        text: "",
-        time: { start: this.now() },
-      };
-      this.blocks.set(key, { part, emitted: false });
+      const kind = block?.type === "text" ? "text" : block?.type === "thinking" ? "reasoning" : null;
+      if (kind === null) return; // tool_use dirakit dari pesan `assistant`
+      this.ensureTurn();
+      this.blocks.set(key, { kind, ordinal: this.ordinals[kind]++, text: "", started: false });
       return;
     }
     const cur = this.blocks.get(key);
-    if (!cur) return;
+    if (!cur || this.messageId === null) return;
+    const base = { sessionID: this.sessionID, assistantMessageID: this.messageId, ordinal: cur.ordinal };
     if (ev.type === "content_block_delta") {
       const delta = ev.delta as { type?: unknown; text?: unknown; thinking?: unknown } | undefined;
       const piece =
@@ -265,19 +250,27 @@ export class ClaudeTurnTranslator {
             ? delta.thinking
             : "";
       if (piece === "") return;
-      if (!cur.emitted) {
-        cur.emitted = true;
-        this.emitPart(cur.part);
+      if (!cur.started) {
+        cur.started = true;
+        this.emit({
+          type: cur.kind === "text" ? "session.text.started" : "session.reasoning.started",
+          data: base,
+        });
       }
-      cur.part = { ...cur.part, text: `${cur.part.text ?? ""}${piece}` };
-      this.emitDelta(cur.part.id as string, piece);
+      cur.text += piece;
+      this.emit({
+        type: cur.kind === "text" ? "session.text.delta" : "session.reasoning.delta",
+        data: { ...base, delta: piece },
+      });
       return;
     }
     if (ev.type === "content_block_stop") {
       this.blocks.delete(key);
-      if (!cur.emitted) return; // tanpa token sama sekali
-      cur.part = { ...cur.part, time: { ...cur.part.time, end: this.now() } };
-      this.emitPart(cur.part);
+      if (!cur.started) return; // tanpa token sama sekali
+      this.emit({
+        type: cur.kind === "text" ? "session.text.ended" : "session.reasoning.ended",
+        data: { ...base, text: cur.text },
+      });
     }
   }
 
@@ -286,71 +279,59 @@ export class ClaudeTurnTranslator {
     if (!message || !Array.isArray(message.content)) return {};
     const apiMsgId = typeof message.id === "string" ? message.id : null;
     const wasStreamed = apiMsgId !== null && this.streamed.has(apiMsgId);
-    const uuid = typeof msg.uuid === "string" ? msg.uuid : randomUUID();
     const effects: TranslateEffects = {};
-    message.content.forEach((raw, i) => {
-      if (typeof raw !== "object" || raw === null) return;
+    for (const raw of message.content) {
+      if (typeof raw !== "object" || raw === null) continue;
       const block = raw as Msg;
       if (block.type === "text" || block.type === "thinking") {
         // Sudah tampil lewat stream_event — jangan diulang.
-        if (wasStreamed) return;
+        if (wasStreamed) continue;
         const text = block.type === "text" ? block.text : block.thinking;
-        if (typeof text !== "string" || text === "") return;
-        const t = this.now();
-        this.emitPart({
-          id: `prt_${uuid}_${i}`,
-          type: block.type === "text" ? "text" : "reasoning",
-          text,
-          time: { start: t, end: t },
-        });
-        return;
+        if (typeof text !== "string" || text === "") continue;
+        this.emitWholeText(block.type === "text" ? "text" : "reasoning", text);
+        continue;
       }
       if (block.type === "tool_use" || block.type === "server_tool_use") {
-        if (typeof block.id !== "string" || typeof block.name !== "string") return;
-        const input = normalizeToolInput(block.input);
-        const part: MessagePart = {
-          id: `prt_${block.id}`,
-          type: "tool",
-          tool: toolName(block.name),
-          callID: block.id,
-          state: { status: "running", input, time: { start: this.now() } },
-        };
-        this.tools.set(block.id, part);
-        this.emitPart(part);
+        if (typeof block.id !== "string" || typeof block.name !== "string") continue;
+        const assistantMessageID = this.ensureTurn();
+        const name = toolName(block.name);
+        const base = { sessionID: this.sessionID, assistantMessageID, id: block.id };
+        this.emit({ type: "session.tool.input.started", data: { ...base, name } });
+        this.emit({
+          type: "session.tool.called",
+          data: { ...base, name, input: normalizeToolInput(block.input) },
+        });
         if (block.name === "TodoWrite") {
           const todos = todosFromInput(block.input);
           if (todos) effects.todos = todos;
         }
       }
-    });
+    }
     return effects;
   }
 
   private handleUser(msg: Msg): void {
     const message = msg.message as { content?: unknown } | undefined;
-    if (!message || !Array.isArray(message.content)) return;
+    if (!message || !Array.isArray(message.content) || this.messageId === null) return;
     for (const raw of message.content) {
       if (typeof raw !== "object" || raw === null) continue;
       const block = raw as Msg;
       if (block.type !== "tool_result" || typeof block.tool_use_id !== "string") continue;
-      const part = this.tools.get(block.tool_use_id);
-      if (!part) continue;
-      const prev = (part.state ?? {}) as { input?: Record<string, unknown>; time?: unknown };
-      const startedAt =
-        typeof prev.time === "object" && prev.time !== null
-          ? (prev.time as { start?: number }).start
-          : undefined;
-      const done: MessagePart = {
-        ...part,
-        state: {
-          status: block.is_error === true ? "error" : "completed",
-          input: prev.input,
-          output: toolResultText(block.content),
-          time: { start: startedAt, end: this.now() },
-        },
+      const base = {
+        sessionID: this.sessionID,
+        assistantMessageID: this.messageId,
+        id: block.tool_use_id,
       };
-      this.tools.set(block.tool_use_id, done);
-      this.emitPart(done);
+      const output = toolResultText(block.content);
+      const content = output ? [{ type: "text", text: output }] : [];
+      if (block.is_error === true) {
+        this.emit({
+          type: "session.tool.failed",
+          data: { ...base, error: { type: "tool", message: output || "Tool failed" }, content },
+        });
+      } else {
+        this.emit({ type: "session.tool.success", data: { ...base, content } });
+      }
     }
   }
 
@@ -358,12 +339,11 @@ export class ClaudeTurnTranslator {
     const status = typeof msg.error_status === "number" ? ` (HTTP ${msg.error_status})` : "";
     const reason = typeof msg.error === "string" ? msg.error.replace(/_/g, " ") : "request failed";
     this.emit({
-      type: "session.status",
-      sessionID: this.sessionID,
-      status: {
-        type: "retry",
-        attempt: typeof msg.attempt === "number" ? msg.attempt : undefined,
-        message: `${reason}${status}`,
+      type: "session.retry.scheduled",
+      data: {
+        sessionID: this.sessionID,
+        attempt: typeof msg.attempt === "number" ? msg.attempt : 1,
+        error: { type: "provider.retry", message: `${reason}${status}` },
       },
     });
   }

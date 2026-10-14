@@ -34,8 +34,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { activeModelLabel, keyOfSessionModel, shortModelName } from "@/lib/model-picker";
-import type { ModelOption } from "@/server/services/opencode-client";
-import type { AgentType, SessionModel } from "@/types";
+import type { AgentType, ModelOption, SessionModel } from "@/types";
 
 export interface ModelPickerProps {
   projectId: string;

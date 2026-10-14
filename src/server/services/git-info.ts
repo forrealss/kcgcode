@@ -30,6 +30,7 @@ export const EMPTY_GIT_INFO: GitState = {
 async function git(cwd: string, args: string[]): Promise<string | null> {
   try {
     const proc = Bun.spawn(["git", ...args], {
+      windowsHide: true,
       cwd,
       stdout: "pipe",
       stderr: "ignore",

@@ -1,13 +1,13 @@
 /**
  * Integration test end-to-end alur utama (task 20.2) + wiring otentikasi.
  *
- * Skenario dengan `OpenCodeServerManager` + `OpenCodeClient` mock:
+ * Skenario dengan backend agent palsu (`fake-agent.ts`):
  * buat Project (POST /api/projects) -> buat Session (POST /api/sessions)
  * -> `attach` via WebSocket -> kirim `input` -> terima pesan terstruktur
  * -> event `permission.asked` -> respon prompt -> `stop`.
  *
  * Server nyata (`Bun.serve` via `createKcgServer`) + WebSocket client nyata;
- * hanya komponen opencode headless yang di-mock.
+ * hanya agent yang di-mock.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -17,235 +17,73 @@ import { openSessionStore, type SessionStore } from "../../db";
 import type { Project, Session, SessionContext } from "../../types";
 import type { ServerMessage } from "../../ws-protocol";
 import { createKcgServer, type KcgServer } from "../app";
-import type {
-  OpenCodeClient,
-  OpenCodeEvent,
-  OpenCodeFileChange,
-  OpenCodeTodo,
-} from "../services/opencode-client";
-import type { OpenCodeServerManager } from "../services/opencode-server";
 import type { SkillsRegistry } from "../services/skills-registry";
+import {
+  type FakeAgentClient,
+  type FakeBackend,
+  makeFakeBackend,
+  makeFakeClient,
+  replyEvents,
+} from "./fake-agent";
 
 // ---------------------------------------------------------------------------
-// Mock OpenCodeClient + OpenCodeServerManager
+// Agent palsu e2e
 // ---------------------------------------------------------------------------
 
-interface FakeClient extends OpenCodeClient {
-  emit(ev: OpenCodeEvent): void;
-  sendMessageCalls: string[];
-  replyPermissionCalls: [string, string][];
-  abortCalls: string[];
-  deleteCalls: string[];
-  /** Referensi file yang dikirim ke tiap promptAsync. */
-  promptFilesCalls: { filename: string; mime: string; url: string }[][];
-  /** Apakah `getSession` melaporkan session remote masih ada (default: ya). */
-  getSessionOk: boolean;
-  /** Task list & perubahan file untuk panel konteks Session. */
-  todos: OpenCodeTodo[];
-  fileChanges: OpenCodeFileChange[];
+interface E2EClient extends FakeAgentClient {
   /**
-   * Prompt berikutnya gagal diproses opencode: alih-alih sukses, server
-   * memancarkan `session.error` (meniru kegagalan diam-diam di sisi model).
+   * Prompt berikutnya gagal diproses agent: alih-alih membalas, agent
+   * memancarkan `session.execution.failed` (kegagalan diam-diam di model).
    */
   failNextPrompt: boolean;
 }
 
-function makeFakeClient(projectId: string): FakeClient {
-  let eventCb: ((ev: OpenCodeEvent) => void) | null = null;
-  const client: FakeClient = {
-    sendMessageCalls: [],
-    replyPermissionCalls: [],
-    abortCalls: [],
-    deleteCalls: [],
-    promptFilesCalls: [],
-    getSessionOk: true,
-    failNextPrompt: false,
-    todos: [],
-    fileChanges: [],
-    async createSession() {
-      return { ok: true, data: { id: `ses_${projectId}`, directory: "/proj" } };
-    },
-    async getSession(_sessionId) {
-      return client.getSessionOk ? { ok: true } : { ok: false, error: "OC_SESSION_NOT_FOUND" };
-    },
-    async deleteSession(sessionId) {
-      client.deleteCalls.push(sessionId);
-      return { ok: true };
-    },
-    async findFiles(query) {
-      return { ok: true, data: query ? ["src/App.tsx"] : [] };
-    },
-    async listTodos() {
-      return { ok: true, data: client.todos };
-    },
-    async fileStatus() {
-      return { ok: true, data: client.fileChanges };
-    },
-    async listModels() {
-      return {
-        ok: true,
-        data: [
-          {
-            providerID: "kcgcode",
-            providerName: "kcgcode",
-            modelID: "kiro/claude-opus-5",
-            name: "Claude Opus 5",
-          },
-        ],
-      };
-    },
-    async listAgents() {
-      return {
-        ok: true,
-        data: [
-          { name: "build", mode: "primary" as const, description: "Full tool access" },
-          { name: "plan", mode: "primary" as const, description: "Planning only" },
-        ],
-      };
-    },
-    async listMcp() {
-      return { ok: true, data: [{ name: "context7", status: "connected" as const, error: null }] };
-    },
-    async disposeInstance() {
-      return { ok: true };
-    },
-    async listSkills() {
-      return {
-        ok: true,
-        data: [
-          {
-            name: "shadcn",
-            description: "UI kit",
-            location: "/x/SKILL.md",
-            source: "project" as const,
-          },
-        ],
-      };
-    },
-    async sendMessage(_sessionId, text) {
-      client.sendMessageCalls.push(text);
-      return {
-        ok: true,
-        data: {
-          info: { id: `msg_${projectId}`, role: "assistant" },
-          parts: [{ type: "text", text: `balasan: ${text}` }],
-        },
-      };
-    },
-    /**
-     * Meniru server sungguhan: prompt diterima (204), balasan mengalir lewat
-     * SSE, lalu `session.idle` menutup turn. Bila `failNextPrompt`, prompt
-     * justru gagal diproses — server memancarkan `session.error`.
-     */
-    async promptAsync(sessionId, text, _model, files) {
-      client.sendMessageCalls.push(text);
-      client.promptFilesCalls.push(files ?? []);
+/**
+ * Meniru agent sungguhan: prompt diterima, balasan mengalir lewat event,
+ * lalu `session.execution.succeeded` menutup turn.
+ */
+function makeE2EClient(projectId: string): E2EClient {
+  const client = makeFakeClient({
+    createSessionResult: { ok: true, id: `ses_${projectId}` },
+    mcpServers: [{ name: "context7", status: "connected", error: null }],
+    skillList: [
+      { name: "shadcn", description: "UI kit", location: "/x/SKILL.md", source: "project" },
+    ],
+  }) as E2EClient;
+  client.failNextPrompt = false;
+  client.onPrompt = (sessionID, text) => {
+    queueMicrotask(() => {
       if (client.failNextPrompt) {
         client.failNextPrompt = false;
-        queueMicrotask(() => {
-          client.emit({
-            type: "session.error",
-            sessionID: sessionId,
+        client.emit({ type: "session.execution.started", data: { sessionID } });
+        client.emit({
+          type: "session.execution.failed",
+          data: {
+            sessionID,
             error: {
-              name: "UnknownError",
-              data: {
-                message:
-                  'TypeError: File URL host must be "localhost" or empty on linux\n    at SessionPrompt.resolveUserPart',
-              },
+              type: "unknown",
+              message:
+                'TypeError: File URL host must be "localhost" or empty on linux\n    at SessionPrompt.resolveUserPart',
             },
-          });
-          // Error turn KCG Code bersifat "ditunda" — pesan error baru ditulis
-          // saat turn ditutup tanpa konten baru (TurnStream.finish -> idle).
-          // Tanpa idle, banner terkirim tapi history tetap kosong dan test menunggu 3 detik sia-sia.
-          client.emit({ type: "session.idle", sessionID: sessionId });
+          },
         });
-        return { ok: true, data: null };
+        return;
       }
-      const messageID = `msg_${projectId}`;
-      queueMicrotask(() => {
-        client.emit({
-          type: "message.updated",
-          sessionID: sessionId,
-          info: { id: messageID, role: "assistant" },
-        });
-        client.emit({
-          type: "message.part.updated",
-          sessionID: sessionId,
-          part: { type: "text", id: "prt_1", text: `balasan: ${text}`, messageID },
-        });
-        client.emit({ type: "session.idle", sessionID: sessionId });
-      });
-      return { ok: true, data: null };
-    },
-    async replyPermission(requestId, reply) {
-      client.replyPermissionCalls.push([requestId, reply]);
-      return { ok: true, data: null };
-    },
-    async replyQuestion() {
-      return { ok: true, data: null };
-    },
-    async rejectQuestion() {
-      return { ok: true, data: null };
-    },
-    async abortSession(sessionId) {
-      client.abortCalls.push(sessionId);
-      return { ok: true, data: null };
-    },
-    subscribeEvents(cb) {
-      eventCb = cb;
-      return () => {
-        eventCb = null;
-      };
-    },
-    async health() {
-      return true;
-    },
-    emit(ev: OpenCodeEvent) {
-      eventCb?.(ev);
-    },
+      for (const ev of replyEvents(sessionID, `msg_${projectId}`, `balasan: ${text}`)) {
+        client.emit(ev);
+      }
+    });
   };
   return client;
 }
 
-interface FakeServers {
-  manager: OpenCodeServerManager;
-  clients: Map<string, FakeClient>;
-  stopped: string[];
+function makeE2EBackend(kind: "opencode" | "claude-code"): FakeBackend {
+  return makeFakeBackend(kind, (projectId) => makeE2EClient(projectId));
 }
 
-function makeFakeServers(): FakeServers {
-  const clients = new Map<string, FakeClient>();
-  const stopped: string[] = [];
-  return {
-    stopped,
-    clients,
-    manager: {
-      async ensureServer(projectId, _projectPath) {
-        let client = clients.get(projectId);
-        if (!client) {
-          client = makeFakeClient(projectId);
-          clients.set(projectId, client);
-        }
-        return { ok: true, data: { projectId, baseUrl: "http://x", client } };
-      },
-      async ensureFreshServer(projectId, projectPath) {
-        return this.ensureServer(projectId, projectPath);
-      },
-      getServer(projectId) {
-        const client = clients.get(projectId);
-        return client ? { projectId, baseUrl: "http://x", client } : undefined;
-      },
-      async stopServer(projectId) {
-        stopped.push(projectId);
-        clients.delete(projectId);
-      },
-      async stopAll() {
-        for (const id of [...clients.keys()]) stopped.push(id);
-        clients.clear();
-      },
-      onServerExit() {},
-    },
-  };
+/** Client e2e milik Project (undefined bila belum dibuat). */
+function e2eClient(backend: FakeBackend, projectId: string): E2EClient | undefined {
+  return backend.clients.get(projectId) as E2EClient | undefined;
 }
 
 async function waitFor(pred: () => boolean, timeoutMs = 3000, label = "kondisi"): Promise<void> {
@@ -260,8 +98,8 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
   let store: SessionStore;
   let app: KcgServer;
   let root: string;
-  let servers: FakeServers;
-  let claudeServers: FakeServers;
+  let opencode: FakeBackend;
+  let claude: FakeBackend;
   /** Instalasi yang diminta ke Skills_Registry palsu: [cwd, source, skill]. */
   const installCalls: [string, string, string][] = [];
   const skillsRegistry: SkillsRegistry = {
@@ -297,13 +135,13 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     store = openSessionStore(":memory:");
     root = mkdtempSync(path.join(tmpdir(), "kcg-e2e2-"));
     mkdirSync(path.join(root, "proj"), { recursive: true });
-    servers = makeFakeServers();
-    claudeServers = makeFakeServers();
+    opencode = makeE2EBackend("opencode");
+    claude = makeE2EBackend("claude-code");
     app = createKcgServer({
       config: { sandboxRoot: root, configPath: "test" },
       store,
-      servers: servers.manager,
-      claudeServers: claudeServers.manager,
+      opencode: opencode.backend,
+      claude: claude.backend,
       uploadsRoot: path.join(root, "uploads"),
       port: 0,
       skillsRegistry,
@@ -348,7 +186,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(sessBody.session.status).toBe("running");
     expect(sessBody.session.ocSessionId).toBe(`ses_${projBody.project.id}`);
 
-    const client = servers.clients.get(projBody.project.id);
+    const client = e2eClient(opencode, projBody.project.id);
     expect(client).toBeDefined();
     if (!client) return;
 
@@ -390,9 +228,12 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     // ---- Interactive_Prompt dari event SSE terstruktur (Requirement 6) ----
     client.emit({
       type: "permission.asked",
-      requestID: "per_1",
-      sessionID: `ses_${projBody.project.id}`,
-      permission: "bash:ls",
+      data: {
+        id: "per_1",
+        sessionID: `ses_${projBody.project.id}`,
+        action: "bash",
+        resources: ["ls"],
+      },
     });
     await waitFor(() => msgs.some((m) => m.type === "prompt"), 3000, "pesan prompt");
     const promptMsg = msgs.find((m): m is Extract<ServerMessage, { type: "prompt" }> => {
@@ -411,12 +252,12 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
       }),
     );
     await waitFor(() => msgs.some((m) => m.type === "prompt_resolved"), 3000, "prompt_resolved");
-    expect(client.replyPermissionCalls).toContainEqual(["per_1", "once"]);
+    expect(client.calls).toContain("permission.reply:per_1:once");
 
     // ---- stopSession (Requirement 1.6) — POST /stop, data tetap ada ----
     const stopRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}/stop`, { method: "POST" });
     expect(stopRes.status).toBe(200);
-    expect(client.abortCalls).toContain(`ses_${projBody.project.id}`);
+    expect(client.calls).toContain(`session.interrupt:ses_${projBody.project.id}`);
     await waitFor(
       () => msgs.some((m) => m.type === "session_status" && m.status === "stopped"),
       3000,
@@ -451,7 +292,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     // ---- deleteSession: hapus permanen (remote + lokal) ----
     const delRes = await fetch(`${baseUrl()}/api/sessions/${sessionId}`, { method: "DELETE" });
     expect(delRes.status).toBe(200);
-    expect(client.deleteCalls).toContain(`ses_${projBody.project.id}`);
+    expect(client.calls).toContain(`session.remove:ses_${projBody.project.id}`);
     // Session hilang dari daftar.
     const afterDel = (await (await fetch(`${baseUrl()}/api/sessions`)).json()) as {
       sessions: Session[];
@@ -555,15 +396,15 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(imagePart?.filename).toBe("foto.png");
     expect(typeof imagePart?.url).toBe("string");
 
-    // Fake server menerima ref file image pada promptAsync.
-    const client = servers.clients.get(projBody.project.id);
+    // Agent palsu menerima ref file image pada prompt.
+    const client = e2eClient(opencode, projBody.project.id);
     expect(client?.promptFilesCalls.at(-1)).toContainEqual(
-      expect.objectContaining({ mime: "image/png", filename: "foto.png" }),
+      expect.objectContaining({ mime: "image/png", name: "foto.png" }),
     );
     ws.close();
   });
 
-  test("prompt gagal (session.error) -> error ke client + pesan error di history", async () => {
+  test("prompt gagal (session.execution.failed) -> error ke client + pesan error di history", async () => {
     // Path unik agar tidak bertabrakan dengan test lain (store dipakai bersama).
     mkdirSync(path.join(root, "proj-gagal"), { recursive: true });
     const projRes = await fetch(`${baseUrl()}/api/projects`, {
@@ -581,7 +422,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     expect(sessRes.status).toBe(201);
     const sessBody = (await sessRes.json()) as { session: Session };
     const sessionId = sessBody.session.id;
-    const client = servers.clients.get(projBody.project.id);
+    const client = e2eClient(opencode, projBody.project.id);
     if (!client) throw new Error("client p1 tidak ada");
     client.failNextPrompt = true;
 
@@ -858,7 +699,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
 
     // Data tool berasal dari fake client Project ini (server headless-nya
     // sudah dibuat saat Session dibuat).
-    const client = servers.clients.get(proj.project.id);
+    const client = e2eClient(opencode, proj.project.id);
     if (!client) throw new Error("fake client tidak ada");
     client.todos = [
       { content: "Tulis tes", status: "in_progress", priority: "high" },
@@ -902,7 +743,7 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
         body: JSON.stringify({ agentType: "opencode", projectId: proj.project.id }),
       })
     ).json()) as { session: Session };
-    const client = servers.clients.get(proj.project.id);
+    const client = e2eClient(opencode, proj.project.id);
     expect(client).toBeDefined();
 
     const del = await fetch(`${baseUrl()}/api/projects/${proj.project.id}`, { method: "DELETE" });
@@ -910,9 +751,9 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
 
     // Session lokal + sesi remote opencode ikut terhapus.
     expect(store.getSession(sess.session.id).ok).toBe(false);
-    expect(client?.deleteCalls).toContain(sess.session.ocSessionId ?? "");
+    expect(client?.calls).toContain(`session.remove:${sess.session.ocSessionId ?? ""}`);
     // Server headless Project dihentikan (tidak lagi memakan memori).
-    expect(servers.stopped).toContain(proj.project.id);
+    expect(opencode.released).toContain(proj.project.id);
     // Project hilang dari daftar, tapi direktori kerjanya TIDAK dihapus.
     expect(store.listProjects().some((p) => p.id === proj.project.id)).toBe(false);
     expect(existsSync(dir)).toBe(true);

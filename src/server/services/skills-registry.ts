@@ -314,21 +314,36 @@ export function installEnv(base: Record<string, string | undefined>): Record<str
  * (`detached`). Timeout & pembatalan membunuh SELURUH group — `bunx` ->
  * `node` -> `git` — karena membunuh anak langsung saja membuat cucu tetap
  * hidup memegang pipe stdout/stderr sehingga proses tak pernah "selesai".
+ *
+ * Windows: tanpa `detached` (DETACHED_PROCESS membuat anak tanpa console
+ * sehingga cucu `node` memunculkan jendela console baru); pohon proses
+ * dibunuh lewat `taskkill /T`.
  */
 export const defaultSpawn: SpawnFn = async (args, cwd, timeoutMs, onLine, signal) => {
+  const isWindows = process.platform === "win32";
   const proc = Bun.spawn(args, {
+    windowsHide: true,
     cwd,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
     env: installEnv(process.env),
-    detached: true,
+    detached: !isWindows,
   });
   let killed = false;
   const killGroup = () => {
     if (killed) return;
     killed = true;
     try {
+      if (isWindows) {
+        Bun.spawnSync(["taskkill", "/PID", String(proc.pid), "/T", "/F"], {
+          stdout: "ignore",
+          stderr: "ignore",
+          windowsHide: true,
+        });
+        proc.kill("SIGKILL");
+        return;
+      }
       process.kill(-proc.pid, "SIGKILL");
     } catch {
       // Group sudah tidak ada — cukup bunuh proses langsung (idempoten).

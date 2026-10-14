@@ -130,9 +130,9 @@ export function errorStatus(code: string): number {
       return 429;
     case "SKILL_INSTALL_FAILED":
       return 502;
-    // Server headless menolak operasi (mis. hapus session remote gagal).
-    case "OC_DELETE_SESSION_FAILED":
-      return 502;
+    // CLI agent tidak terpasang / versinya tidak didukung.
+    case "OPENCODE_NOT_FOUND":
+      return 503;
     case "UNSUPPORTED_IMAGE_MIME":
     case "EMPTY_UPLOAD":
       return 400;
@@ -145,6 +145,15 @@ export function errorStatus(code: string): number {
     default:
       // Kegagalan layanan skills.sh (hulu) -> 502.
       if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
+        return 502;
+      }
+      if (code.startsWith("OPENCODE_UPGRADE_REQUIRED")) return 503;
+      // Agent menolak / gagal menjalankan operasi (mis. hapus session remote).
+      if (
+        code.startsWith("AGENT_") ||
+        code.startsWith("CC_") ||
+        code.startsWith("SERVER_START_FAILED")
+      ) {
         return 502;
       }
       return 500;

@@ -1,133 +1,76 @@
 /**
- * Interpretasi event SSE opencode — fungsi murni (tanpa state).
+ * Interpretasi event agent (bentuk opencode v2) — fungsi murni (tanpa state).
  *
  * Dipisah dari `session-manager.ts` agar dapat diuji & dibaca tersendiri:
- * - Pemetaan event `permission.asked` / `question.asked` (v1 & v2) menjadi
- *   `InteractivePrompt` + kunci pengelompokan kartu kembar.
- * - Deskripsi ramah error `session.error` dan kegagalan kirim prompt.
+ * - Pemetaan `permission.asked` / `form.created` menjadi `InteractivePrompt`
+ *   + kunci pengelompokan kartu kembar, dan jawaban kartu kembali ke
+ *   `AgentFormAnswer`.
+ * - Deskripsi ramah error terstruktur (`AgentError`), retry provider, dan
+ *   kegagalan kirim prompt.
  */
-import { randomUUID } from "node:crypto";
-import { type InteractivePrompt, normalizePromptOptions, type PromptQuestion } from "../../types";
-import type { OpenCodeEvent } from "./opencode-client";
+import {
+  type InteractivePrompt,
+  normalizePromptOptions,
+  type PromptQuestion,
+  type PromptResponse,
+} from "../../types";
+import type { AgentError, AgentForm, AgentFormAnswer, AgentFormField } from "../agents/types";
 
-/** Ambil nilai field event dengan toleransi beberapa nama kunci. */
-export function eventField(ev: OpenCodeEvent, ...keys: string[]): unknown {
-  for (const k of keys) {
-    const v = ev[k];
-    if (v !== undefined && v !== null) return v;
-  }
-  return undefined;
-}
-
-/**
- * Deskripsi singkat sebuah permission request untuk judul kartu.
- *
- * Menerima penamaan v1 (`permission` + `patterns`) maupun v2
- * (`action` + `resources`) — lihat `EventPermissionAsked` vs
- * `EventPermissionV2Asked` pada skema opencode.
- */
-export function describePermission(ev: OpenCodeEvent): string {
-  const permission = eventField(ev, "permission", "action", "name");
-  const patterns = eventField(ev, "patterns", "resources");
+/** Deskripsi singkat sebuah permission request untuk judul kartu. */
+export function describePermission(action: string, resources: readonly string[]): string {
   const parts: string[] = [];
-  if (typeof permission === "string") parts.push(permission);
-  if (Array.isArray(patterns)) {
-    for (const p of patterns.slice(0, 3)) {
-      if (typeof p === "string") parts.push(`\`${p}\``);
-    }
+  if (action.trim() !== "") parts.push(action);
+  for (const r of resources.slice(0, 3)) {
+    if (typeof r === "string" && r !== "") parts.push(`\`${r}\``);
   }
   return parts.length > 0 ? parts.join(" — ") : "Izin tool";
 }
 
-/**
- * Baris pertama pesan error dari event `session.error` opencode (bentuk SSE
- * ternormalisasi: `error: { name, data: { message } }`). Sisa `data.message`
- * berupa stack trace — tidak berguna untuk UI.
- */
-export function sessionErrorMessage(ev: OpenCodeEvent): string {
-  const err = eventField(ev, "error");
-  if (typeof err !== "object" || err === null) return "";
-  const e = err as { data?: { message?: unknown } };
-  if (typeof e.data !== "object" || e.data === null) return "";
-  const raw = e.data.message;
-  if (typeof raw !== "string" || raw.trim() === "") return "";
-  return raw.split("\n")[0]?.trim() ?? "";
+/** Baris pertama pesan error (sisanya sering stack trace / body JSON). */
+function firstLine(text: string): string {
+  return text.split("\n")[0]?.trim() ?? "";
 }
 
 /**
- * Deskripsi ramah event `session.error` opencode. Nama error (`error.name`)
- * dipetakan ke pesan Inggris yang bisa dibaca user; pesan asli (baris
- * pertama) disertakan bila ada karena sering lebih informatif
- * (mis. `TypeError: File URL host …`).
+ * Deskripsi ramah error terstruktur agent (opencode v2 `SessionStructuredError`
+ * / error Claude Code). Kategori dipetakan ke petunjuk yang bisa dibaca
+ * user; pesan asli (baris pertama) disertakan karena sering lebih informatif.
  */
-export function describeSessionError(ev: OpenCodeEvent): string {
-  const err = eventField(ev, "error");
-  const name =
-    typeof err === "object" && err !== null ? (err as { name?: unknown }).name : undefined;
-  const line = sessionErrorMessage(ev);
-  // Petunjuk ramah per nama error; null = pesan asli lebih informatif
-  // (mis. `UnknownError` yang membawa TypeError asli).
+export function describeAgentError(error: AgentError | undefined): string {
+  const type = (error?.type ?? "").toLowerCase();
+  const line = firstLine(error?.message ?? "");
   const hint = (() => {
-    switch (name) {
-      case "ProviderAuthError":
-        return "Model provider authentication failed. Check the opencode login (`opencode auth`).";
-      case "APIError":
-        return "The model provider returned an API error. Try again or switch models.";
-      case "ContentFilterError":
-        return "The model response was blocked by a content filter.";
-      case "ContextOverflowError":
-        return "The conversation context exceeded the model limit. Start a new session or compact.";
-      case "MessageOutputLengthError":
-        return "The model output exceeded the message length limit.";
-      case "MessageAbortedError":
-        return "Prompt processing was aborted.";
-      case "StructuredOutputError":
-        return "Failed to parse the model's structured output.";
-      default:
-        return null;
+    if (type === "aborted") return "Prompt processing was aborted.";
+    if (type.includes("auth"))
+      return "Model provider authentication failed. Check the agent login.";
+    if (type.includes("overflow") || type.includes("context")) {
+      return "The conversation context exceeded the model limit. Start a new session or compact.";
     }
+    if (type.includes("length")) return "The model output exceeded the message length limit.";
+    if (type.includes("filter")) return "The model response was blocked by a content filter.";
+    if (type.includes("transport")) return "Couldn't reach the model provider.";
+    if (type.startsWith("provider") || type.includes("api")) {
+      return "The model provider returned an error. Try again or switch models.";
+    }
+    return null;
   })();
   if (hint === null) return line || "Something went wrong while processing the prompt.";
   return line ? `${hint} — ${line}` : hint;
 }
 
-/** Panjang aman untuk teks retry/error yang dimasukkan ke banner (hindari JSON blob raksasa). */
+/** Panjang aman untuk teks retry yang dimasukkan ke banner. */
 const BANNER_MAX_LENGTH = 240;
 
 /**
- * Pesan ramah dari event `session.status` opencode bertipe `retry`
- * (`status: { type: "retry", attempt, message, action }`).
- *
- * Saat provider model mengembalikan error yang bisa dicoba ulang (rate limit,
- * kredit habis, cooldown akun, 5xx), opencode TIDAK langsung gagal — ia retry
- * dengan backoff (hingga 5 percobaan, menghormati header `retry-after` yang
- * bisa sangat lama). Selama retry hanya event `session.status` yang dipancarkan
- * (`busy`/`retry`), tanpa `session.error`/`session.idle` — tanpa banner ini,
- * Client diam-diam menunggu sampai retry habis atau batas idle turn.
- *
- * Mengembalikan `null` untuk status non-retry agar pemanggil cukup memfilter.
+ * Pesan banner saat provider model sedang di-retry (`session.retry.scheduled`).
+ * Selama retry turn TETAP berjalan (backoff bisa lama karena `retry-after`) —
+ * tanpa banner ini Client menunggu diam-diam.
  */
-export function retryStatusMessage(status: unknown): string | null {
-  if (typeof status !== "object" || status === null) return null;
-  const s = status as { type?: unknown; attempt?: unknown; message?: unknown; action?: unknown };
-  if (s.type !== "retry") return null;
-  // Upsell (mis. "Free limit reached") membawa `action.title` yang lebih
-  // ringkas daripada `message` mentah (yang bisa berupa JSON body error).
-  const action =
-    typeof s.action === "object" && s.action !== null
-      ? (s.action as { title?: unknown; message?: unknown })
-      : undefined;
-  const raw =
-    typeof action?.title === "string" && action.title.trim() !== ""
-      ? action.title
-      : typeof s.message === "string" && s.message.trim() !== ""
-        ? s.message
-        : null;
-  if (raw === null) return null;
-  const attempt = typeof s.attempt === "number" ? ` (attempt ${s.attempt})` : "";
-  const text = raw.split("\n")[0]?.trim() ?? raw;
-  const clipped = text.length > BANNER_MAX_LENGTH ? `${text.slice(0, BANNER_MAX_LENGTH)}…` : text;
-  return `The model provider is retrying${attempt}: ${clipped}`;
+export function retryMessage(attempt: number | undefined, error: AgentError | undefined): string {
+  const raw = firstLine(error?.message ?? "") || "request failed";
+  const clipped = raw.length > BANNER_MAX_LENGTH ? `${raw.slice(0, BANNER_MAX_LENGTH)}…` : raw;
+  const n = typeof attempt === "number" ? ` (attempt ${attempt})` : "";
+  return `The model provider is retrying${n}: ${clipped}`;
 }
 
 /** Terjemahkan kode error pengiriman prompt ke pesan yang bisa dibaca user. */
@@ -136,27 +79,25 @@ export function friendlySendError(raw: string): string {
   if (r === "TURN_TIMEOUT") {
     return "The model stopped responding — no activity for 5 minutes. Try sending the message again.";
   }
-  const asyncMatch = r.match(/^OC_PROMPT_ASYNC_FAILED(?:\((\d+)\))?(?::\s*(.*))?$/);
-  if (asyncMatch) {
-    const status = asyncMatch[1];
-    const detail = asyncMatch[2];
-    if (status) return `Failed to send the prompt to opencode (status ${status}). Try again.`;
-    if (detail)
-      return `Failed to send the prompt to opencode: ${detail.split("\n")[0]?.trim() ?? detail}`;
-    return "Failed to send the prompt to opencode. Try again.";
-  }
-  const sendFail = r.match(/^SEND_FAILED:\s*(.*)$/);
-  if (sendFail) {
-    const detail = sendFail[1];
+  // Kegagalan langkah kirim (switch model/agent, instruksi, prompt).
+  const prompt = r.match(/^AGENT_[A-Z_]+_FAILED(?::\s*(.*))?$/s);
+  if (prompt) {
+    const detail = prompt[1] ? firstLine(prompt[1]) : "";
     return detail
-      ? `Failed to send the prompt: ${detail.split("\n")[0]?.trim() ?? detail}`
-      : "Failed to send the prompt: the opencode connection is having trouble.";
+      ? `Failed to send the prompt: ${detail}`
+      : "Failed to send the prompt. Try again.";
   }
-  return r.split("\n")[0] ?? r;
+  const sendFail = r.match(/^SEND_FAILED:\s*(.*)$/s);
+  if (sendFail) {
+    const detail = sendFail[1] ? firstLine(sendFail[1]) : "";
+    return detail
+      ? `Failed to send the prompt: ${detail}`
+      : "Failed to send the prompt: the agent connection is having trouble.";
+  }
+  return firstLine(r) || r;
 }
 
 // Placeholder & deriveSessionTitle hidup di lib/session-title.ts (dipakai Client & Server).
-// Re-export di sini agar import lama (`session-events`) tetap berfungsi.
 export {
   deriveSessionTitle,
   displaySessionTitle,
@@ -164,19 +105,18 @@ export {
   SESSION_TITLE_PLACEHOLDERS,
 } from "@/lib/session-title";
 
-/** Bangun Interactive_Prompt dari event `permission.asked` (lihat juga `permissionGroupKey`). */
+/** Bangun Interactive_Prompt dari `permission.asked`. */
 export function promptFromPermission(
-  ev: OpenCodeEvent,
+  data: { id: string; action: string; resources: readonly string[] },
   sessionId: string,
   now: number,
 ): InteractivePrompt {
-  const requestId = String(eventField(ev, "requestID", "id") ?? randomUUID());
   return {
-    id: requestId,
+    id: data.id,
     sessionId,
     kind: "permission",
     type: "confirmation",
-    title: describePermission(ev),
+    title: describePermission(data.action, data.resources),
     options: null,
     status: "pending",
     createdAt: now,
@@ -184,72 +124,108 @@ export function promptFromPermission(
   };
 }
 
+/** Field form yang tampil ke user (field tersembunyi dilewati). */
+export function visibleFields(form: AgentForm): AgentFormField[] {
+  return form.fields.filter((f) => f.hidden !== true);
+}
+
+/** Opsi tampilan sebuah field: opsi eksplisit, atau Yes/No untuk boolean. */
+function fieldOptions(field: AgentFormField): { label: string; description?: string }[] {
+  if (field.options && field.options.length > 0) return field.options;
+  if (field.type === "boolean") return [{ label: "Yes" }, { label: "No" }];
+  return [];
+}
+
 /**
- * Bangun Interactive_Prompt dari event `question.asked`.
+ * Bangun Interactive_Prompt dari `form.created` (padanan v2 tool `question`).
  *
- * Skema tool `question` opencode: `questions[] = { header?, question,
- * options: [{label, description?}], multiple?, custom? }`. SELURUH
- * pertanyaan disimpan (`questions`) untuk kartu multi-question; pertanyaan
+ * SELURUH field disimpan (`questions`) untuk kartu multi-question; field
  * pertama juga disalin ke field legacy (title/options/multiple/custom) agar
- * kode lama & data DB lama tetap bekerja. Opsi dinormalisasi ke `PromptOption`
- * agar keterangan ikut tampil di kartu.
+ * kartu & data DB lama tetap bekerja.
  */
-export function promptFromQuestion(
-  ev: OpenCodeEvent,
-  sessionId: string,
-  now: number,
-): InteractivePrompt {
-  const requestId = String(eventField(ev, "requestID", "id") ?? randomUUID());
-  const questions = eventField(ev, "questions");
-  const list = Array.isArray(questions)
-    ? (questions as {
-        question?: unknown;
-        header?: unknown;
-        options?: unknown;
-        multiple?: unknown;
-        custom?: unknown;
-      }[])
-    : [];
+export function promptFromForm(form: AgentForm, sessionId: string, now: number): InteractivePrompt {
+  const list: PromptQuestion[] = visibleFields(form).map((f) => {
+    const options = normalizePromptOptions(fieldOptions(f));
+    return {
+      question: f.description ?? f.title ?? form.title,
+      header: f.description ? (f.title ?? null) : null,
+      options,
+      multiple: f.type === "multiselect" ? true : undefined,
+      // Field tanpa opsi hanya bisa dijawab bebas.
+      custom: options.length === 0 ? true : f.custom !== false,
+    };
+  });
   const first = list[0] ?? null;
-  const firstOptions = normalizePromptOptions(first?.options);
-  const legacyOptions = firstOptions.length > 0 ? firstOptions : null;
-  // Multi-question hanya disimpan bila benar-benar ada >1 pertanyaan —
-  // request tunggal cukup memakai field legacy (hemat kolom DB).
-  const multi: PromptQuestion[] | undefined =
-    list.length > 1
-      ? list.map((q) => ({
-          question: typeof q.question === "string" ? q.question : null,
-          header: typeof q.header === "string" ? q.header : null,
-          options: normalizePromptOptions(q.options),
-          multiple: q.multiple === true ? true : undefined,
-          custom: q.custom !== false,
-        }))
-      : undefined;
+  const firstOptions = first?.options ?? [];
   return {
-    id: requestId,
+    id: form.id,
     sessionId,
     kind: "question",
     type: "menu",
-    title: first && typeof first.question === "string" ? first.question : null,
-    options: legacyOptions,
-    multiple: first?.multiple === true ? true : undefined,
+    title: first?.question ?? form.title,
+    options: firstOptions.length > 0 ? firstOptions : null,
+    multiple: first?.multiple,
     custom: first?.custom !== false,
-    questions: multi,
+    questions: list.length > 1 ? list : undefined,
     status: "pending",
     createdAt: now,
     resolvedAt: null,
   };
 }
 
+/** Nilai satu field dari label-label terpilih user. */
+function fieldValue(field: AgentFormField, labels: readonly string[]) {
+  const options = field.options ?? [];
+  const optionValue = (label: string) => options.find((o) => o.label === label)?.value ?? label;
+  if (field.type === "multiselect") return labels.map(optionValue);
+  const label = labels[0] ?? "";
+  if (field.type === "boolean") return /^(yes|true|y|1)$/i.test(label);
+  if (field.type === "number" || field.type === "integer") {
+    const n = Number(label);
+    return Number.isFinite(n) ? n : label;
+  }
+  return optionValue(label);
+}
+
+/**
+ * Ubah jawaban kartu question (label per pertanyaan) menjadi jawaban form.
+ * Tanpa definisi form (mis. setelah restart server) dipakai kunci `q{i}` —
+ * konvensi field tool `question` opencode & Claude Code — dengan label
+ * sebagai nilai.
+ */
+export function formAnswerFromLabels(
+  form: AgentForm | undefined,
+  answers: readonly (readonly string[])[],
+): AgentFormAnswer {
+  const out: AgentFormAnswer = {};
+  if (!form) {
+    answers.forEach((labels, i) => {
+      out[`q${i}`] = labels.length > 1 ? [...labels] : (labels[0] ?? "");
+    });
+    return out;
+  }
+  visibleFields(form).forEach((field, i) => {
+    out[field.key] = fieldValue(field, answers[i] ?? []);
+  });
+  return out;
+}
+
+/** Label jawaban per pertanyaan dari respons kartu (null = bukan jawaban). */
+export function labelsFromResponse(response: PromptResponse): string[][] | null {
+  if (typeof response !== "object" || response === null) return null;
+  if ("answers" in response) return response.answers;
+  if ("options" in response) return [response.options];
+  return [[response.option]];
+}
+
 /**
  * Kunci pengelompokan prompt permission yang identik.
  *
- * opencode memancarkan SATU request permission per tool call, tanpa
- * deduplikasi — meminta akses yang sama berulang (mis. `bash` pada direktori
- * eksternal yang sama) membanjiri UI dengan kartu identik. Request dengan
- * kind + judul yang sama dianggap satu keputusan yang sama: tampil sebagai
- * SATU kartu, dan jawaban user diteruskan ke SELURUH request anggota grup
- * (fan-out di `resolvePrompt`) agar turn tidak menggantung.
+ * Agent memancarkan SATU request permission per tool call, tanpa
+ * deduplikasi — meminta akses yang sama berulang membanjiri UI dengan kartu
+ * identik. Request dengan kind + judul yang sama dianggap satu keputusan:
+ * tampil sebagai SATU kartu, dan jawaban user diteruskan ke SELURUH request
+ * anggota grup (fan-out di `resolvePrompt`) agar turn tidak menggantung.
  */
 export function permissionGroupKey(p: InteractivePrompt): string {
   return `${p.kind}\u0000${p.title ?? ""}`;

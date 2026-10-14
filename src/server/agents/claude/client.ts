@@ -1,24 +1,20 @@
 /**
- * Claude_Code_Client — backend Claude Code lewat Claude Agent SDK.
+ * Adapter Claude Code — Claude Agent SDK di balik kontrak `AgentClient`.
  *
- * Claude Code tidak punya mode server HTTP seperti `opencode serve`; SDK
- * menjalankan CLI `claude` sebagai subprocess per Session (`query()` dengan
- * streaming input). Modul ini membungkusnya di balik kontrak yang SAMA
- * dengan `OpenCodeClient`/`OpenCodeServerManager`, sehingga Session_Manager,
- * TurnStream, dan kartu Interactive_Prompt dipakai ulang apa adanya:
+ * Claude Code tidak punya mode server; SDK menjalankan CLI `claude` sebagai
+ * subprocess per Session (`query()` dengan streaming input):
  *
- * - "Server" per Project hanyalah objek in-process (tanpa port); proses
- *   `claude` di-spawn malas saat prompt pertama sebuah Session dan ditutup
- *   setelah idle lama — prompt berikutnya melanjutkan via `resume`.
- * - Pesan SDK diterjemahkan ke event gaya opencode (`claude-code-translate`)
- *   lalu dipancarkan ke subscriber seperti SSE `GET /event`.
- * - `canUseTool` -> event `permission.asked` / `question.asked`; Promise-nya
- *   ditahan sampai `replyPermission` / `replyQuestion` dipanggil.
+ * - Proses `claude` di-spawn malas saat prompt pertama sebuah Session dan
+ *   ditutup setelah idle lama — prompt berikutnya melanjutkan via `resume`.
+ * - Pesan SDK diterjemahkan ke `AgentEvent` (bentuk opencode v2) oleh
+ *   `ClaudeTurnTranslator`.
+ * - `canUseTool` -> `permission.asked` / `form.created` (AskUserQuestion);
+ *   Promise-nya ditahan sampai `permission.reply` / `form.reply|cancel`.
  * - Konfigurasi mengikuti Claude Code user (`settingSources` user + project
- *   + local): auth, custom inference (`env` di settings.json), model
- *   default, MCP, skill, CLAUDE.md — sama seperti `claude` di terminal.
+ *   + local): auth, custom inference, model default, MCP, skill, CLAUDE.md.
  * - Akhir turn = `session_state_changed: idle` (otoritatif, diaktifkan lewat
  *   `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS`); fallback ke pesan `result`.
+ *   Turn ditutup `session.execution.succeeded|failed|interrupted`.
  */
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
@@ -40,24 +36,28 @@ import {
   getSessionInfo as sdkGetSessionInfo,
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
-import type { SessionModel } from "../../types";
-import type { Result, SimpleResult } from "../result";
-import { ClaudeTurnTranslator, permissionName, permissionTarget } from "./claude-code-translate";
-import { mergeClaudeMcp, readClaudeMcpConfig } from "./claude-mcp";
-import { claudeGlobalSkillsDir, listClaudeSkills } from "./claude-skills";
 import type {
   AgentOption,
+  FileChange,
   McpServerInfo,
   ModelOption,
-  OpenCodeClient,
-  OpenCodeEvent,
-  OpenCodeFileChange,
-  OpenCodeFileRef,
-  OpenCodePermissionReply,
-  OpenCodeTodo,
-} from "./opencode-client";
-import { OC_REQUEST_GONE } from "./opencode-client";
-import type { OpenCodeServerHandle, OpenCodeServerManager } from "./opencode-server";
+  TodoItem,
+} from "../../../types";
+import type { Result, SimpleResult } from "../../result";
+import { mergeClaudeMcp, readClaudeMcpConfig } from "../../services/claude-mcp";
+import { claudeGlobalSkillsDir, listClaudeSkills } from "../../services/claude-skills";
+import {
+  AGENT_REQUEST_GONE,
+  type AgentBackend,
+  type AgentClient,
+  type AgentError,
+  type AgentEvent,
+  type AgentForm,
+  type AgentFormAnswer,
+  type AgentPromptFile,
+  type ModelSelection,
+} from "../types";
+import { ClaudeTurnTranslator, permissionName, permissionTarget } from "./translate";
 
 /** `providerID` model Claude Code di `SessionModel` / pemilih model. */
 export const CLAUDE_PROVIDER_ID = "claude-code";
@@ -103,7 +103,7 @@ export interface ClaudeTranscripts {
   remove(sessionId: string, dir: string): Promise<void>;
 }
 
-export interface ClaudeCodeClientOptions {
+export interface ClaudeClientOptions {
   query?: ClaudeQueryFn;
   transcripts?: ClaudeTranscripts;
   /** Lingkungan proses `claude` (default `process.env`). */
@@ -118,7 +118,7 @@ export interface ClaudeCodeClientOptions {
   clearTimeoutFn?: (handle: unknown) => void;
 }
 
-export interface ClaudeCodeClient extends OpenCodeClient {
+export interface ClaudeClient extends AgentClient {
   /** Tutup seluruh proses `claude` milik Project ini. */
   close(): Promise<void>;
 }
@@ -184,6 +184,10 @@ interface LiveSession {
   model: string | null;
   mode: string | null;
   system: string | null;
+  /** Pilihan untuk prompt berikutnya (`session.switchModel/Agent/instructions`). */
+  wantModel: string | null;
+  wantMode: string | null;
+  wantSystem: string | null;
   /** Transcript sudah ada di disk -> proses berikutnya pakai `resume`. */
   persisted: boolean;
   /** Turn sedang berjalan (dari `session_state_changed`). */
@@ -194,11 +198,11 @@ interface LiveSession {
   skipNextIdle: boolean;
   /** Selesai saat turn yang di-interrupt benar-benar berhenti (idle). */
   interruptSettled: { promise: Promise<void>; resolve: () => void } | null;
-  /** Error turn sudah dilaporkan (hindari banner ganda dari `result`). */
-  turnErrored: boolean;
+  /** Error turn pertama (dilaporkan saat turn ditutup). */
+  turnError: AgentError | null;
   /** Proses sengaja ditutup (bukan crash). */
   closing: boolean;
-  todos: OpenCodeTodo[];
+  todos: TodoItem[];
   stderr: string[];
   idleTimer: unknown;
   /** Selesai saat stream proses aktif berakhir (proses keluar). */
@@ -224,7 +228,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ]).finally(() => clearTimeout(timer));
 }
 
-/** Status MCP SDK -> status gaya opencode yang dipakai UI. */
+/** Status MCP SDK -> status yang dipakai UI. */
 function mcpStatus(status: string): McpServerInfo["status"] {
   switch (status) {
     case "connected":
@@ -250,14 +254,14 @@ const INLINE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "ima
  */
 async function buildUserContent(
   text: string,
-  files: OpenCodeFileRef[],
+  files: AgentPromptFile[],
 ): Promise<SDKUserMessage["message"]["content"]> {
   const blocks: Exclude<SDKUserMessage["message"]["content"], string> = [];
   const referenced: string[] = [];
   for (const f of files) {
     let absPath: string;
     try {
-      absPath = fileURLToPath(f.url);
+      absPath = fileURLToPath(f.uri);
     } catch {
       continue;
     }
@@ -284,7 +288,7 @@ async function buildUserContent(
         // Gagal dibaca -> rujuk path saja.
       }
     }
-    referenced.push(`- ${f.filename}: ${absPath}`);
+    referenced.push(`- ${f.name}: ${absPath}`);
   }
   const fullText =
     referenced.length === 0
@@ -298,6 +302,7 @@ async function buildUserContent(
 async function runGit(cwd: string, args: string[]): Promise<string | null> {
   try {
     const proc = Bun.spawn(["git", ...args], {
+      windowsHide: true,
       cwd,
       stdout: "pipe",
       stderr: "ignore",
@@ -313,7 +318,7 @@ async function runGit(cwd: string, args: string[]): Promise<string | null> {
 }
 
 /** File yang berubah di worktree (`git status` + `git diff --numstat HEAD`). */
-export async function gitFileStatus(cwd: string): Promise<OpenCodeFileChange[]> {
+export async function gitFileStatus(cwd: string): Promise<FileChange[]> {
   const status = await runGit(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
   if (status === null) return [];
   const counts = new Map<string, { added: number; removed: number }>();
@@ -336,7 +341,7 @@ export async function gitFileStatus(cwd: string): Promise<OpenCodeFileChange[]> 
       });
     }
   }
-  const out: OpenCodeFileChange[] = [];
+  const out: FileChange[] = [];
   const entries = status.split("\0");
   for (let i = 0; i < entries.length; i++) {
     const entry = entries[i] ?? "";
@@ -345,7 +350,7 @@ export async function gitFileStatus(cwd: string): Promise<OpenCodeFileChange[]> 
     const file = entry.slice(3);
     // Rename/copy: entri berikutnya adalah path asal — lewati.
     if (xy[0] === "R" || xy[0] === "C") i += 1;
-    const kind: OpenCodeFileChange["status"] =
+    const kind: FileChange["status"] =
       xy === "??" || xy.includes("A") ? "added" : xy.includes("D") ? "deleted" : "modified";
     const c = counts.get(file) ?? { added: 0, removed: 0 };
     out.push({ path: file, added: c.added, removed: c.removed, status: kind });
@@ -364,10 +369,43 @@ function matchScore(file: string, q: string): number | null {
   return null;
 }
 
-export function createClaudeCodeClient(
-  cwd: string,
-  opts: ClaudeCodeClientOptions = {},
-): ClaudeCodeClient {
+/** Form v2 dari input `AskUserQuestion` (`questions[]`). */
+export function formFromQuestions(
+  id: string,
+  sessionID: string,
+  input: Record<string, unknown>,
+): AgentForm {
+  const questions = Array.isArray(input.questions) ? input.questions : [];
+  return {
+    id,
+    sessionID,
+    title: "Questions",
+    metadata: { kind: "question" },
+    fields: questions.map((q, i) => {
+      const item = (q ?? {}) as Record<string, unknown>;
+      const options = Array.isArray(item.options)
+        ? item.options
+            .map((o) => (o ?? {}) as Record<string, unknown>)
+            .filter((o) => typeof o.label === "string")
+            .map((o) => ({
+              value: o.label as string,
+              label: o.label as string,
+              ...(typeof o.description === "string" ? { description: o.description } : {}),
+            }))
+        : [];
+      return {
+        key: `q${i}`,
+        type: item.multiSelect === true ? "multiselect" : "string",
+        ...(typeof item.header === "string" ? { title: item.header } : {}),
+        ...(typeof item.question === "string" ? { description: item.question } : {}),
+        options,
+        custom: true,
+      };
+    }),
+  };
+}
+
+export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}): ClaudeClient {
   const runQuery: ClaudeQueryFn =
     opts.query ?? ((params) => sdkQuery(params) as unknown as ClaudeQueryLike);
   const transcripts = opts.transcripts ?? defaultTranscripts;
@@ -380,7 +418,7 @@ export function createClaudeCodeClient(
     opts.clearTimeoutFn ??
     ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
 
-  const listeners = new Set<(ev: OpenCodeEvent) => void>();
+  const listeners = new Set<(ev: AgentEvent) => void>();
   const sessions = new Map<string, LiveSession>();
   const pending = new Map<string, PendingAsk>();
   /** Status MCP terakhir dari pesan `system/init`. */
@@ -388,12 +426,12 @@ export function createClaudeCodeClient(
   let modelsCache: { at: number; data: ModelOption[] } | null = null;
   let fileCache: { at: number; files: string[] } | null = null;
 
-  function emit(ev: OpenCodeEvent): void {
+  function emit(ev: AgentEvent): void {
     for (const cb of listeners) {
       try {
         cb(ev);
       } catch (e) {
-        console.warn("[kcg-code] claude-code event handler gagal:", e);
+        console.warn("[kcg-code] handler event claude-code gagal:", e);
       }
     }
   }
@@ -405,16 +443,19 @@ export function createClaudeCodeClient(
         id,
         query: null,
         input: null,
-        translator: new ClaudeTurnTranslator(id, emit, now),
+        translator: new ClaudeTurnTranslator(id, emit),
         model: null,
         mode: null,
         system: null,
+        wantModel: null,
+        wantMode: null,
+        wantSystem: null,
         persisted,
         running: false,
         sawState: false,
         skipNextIdle: false,
         interruptSettled: null,
-        turnErrored: false,
+        turnError: null,
         closing: false,
         todos: [],
         stderr: [],
@@ -484,29 +525,39 @@ export function createClaudeCodeClient(
     live.interruptSettled = null;
   }
 
+  /** Turn selesai: succeeded / failed (error tertunda) / interrupted. */
   function emitIdle(live: LiveSession): void {
     live.running = false;
+    const sessionID = live.id;
+    const error = live.turnError;
+    live.turnError = null;
     if (live.skipNextIdle) {
-      // Idle milik turn yang di-interrupt: turn lokal sudah dibuang.
+      // Idle milik turn yang di-interrupt.
       settleInterrupt(live);
+      emit({ type: "session.execution.interrupted", data: { sessionID, reason: "user" } });
       return;
     }
-    emit({ type: "session.idle", sessionID: live.id });
+    if (error) emit({ type: "session.execution.failed", data: { sessionID, error } });
+    else emit({ type: "session.execution.succeeded", data: { sessionID } });
   }
 
-  function emitError(live: LiveSession, message: string): void {
-    emit({
-      type: "session.error",
-      sessionID: live.id,
-      error: { name: "UnknownError", data: { message } },
-    });
+  /**
+   * Catat error turn. Turn yang berjalan ditutup `failed` saat idle (konten
+   * yang menyusul error tetap tersimpan); tanpa turn, error langsung dilaporkan.
+   */
+  function noteError(live: LiveSession, message: string, type = "unknown"): void {
+    const error: AgentError = { type, message };
+    if (live.running || live.sawState === false) {
+      live.turnError ??= error;
+      return;
+    }
+    emit({ type: "session.execution.failed", data: { sessionID: live.id, error } });
   }
 
   function handleMessage(live: LiveSession, msg: SDKMessage): void {
     const m = msg as unknown as Record<string, unknown>;
     // Tanda hidup apa pun -> reset timer idle turn (tool lama, retry, dll).
-    if (live.running)
-      emit({ type: "session.status", sessionID: live.id, status: { type: "busy" } });
+    if (live.running) emit({ type: "agent.activity", data: { sessionID: live.id } });
 
     if (m.type === "system") {
       if (m.subtype === "init") {
@@ -540,24 +591,22 @@ export function createClaudeCodeClient(
             .filter((t): t is string => typeof t === "string")
             .join("\n")
         : "";
-      live.turnErrored = true;
-      emitError(live, text.trim() || `Claude Code error: ${m.error.replace(/_/g, " ")}`);
+      const kind = m.error === "authentication_failed" ? "provider.auth" : `provider.${m.error}`;
+      noteError(live, text.trim() || `Claude Code error: ${m.error.replace(/_/g, " ")}`, kind);
       return;
     }
 
     if (m.type === "result") {
-      // Turn yang di-interrupt sudah dibuang Session_Manager: hasilnya
-      // (biasanya error_during_execution) bukan kegagalan yang perlu banner.
-      const aborted = live.skipNextIdle;
-      if (!aborted && !live.turnErrored && (m.subtype !== "success" || m.is_error === true)) {
+      // Turn yang di-interrupt: hasilnya (biasanya error_during_execution)
+      // bukan kegagalan yang perlu banner.
+      if (!live.skipNextIdle && (m.subtype !== "success" || m.is_error === true)) {
         const errors = Array.isArray(m.errors) ? m.errors.filter((e) => typeof e === "string") : [];
         const message =
           errors.join("\n") ||
           (typeof m.result === "string" && m.result) ||
           `Claude Code stopped: ${String(m.subtype).replace(/_/g, " ")}`;
-        emitError(live, message);
+        live.turnError ??= { type: String(m.subtype), message };
       }
-      live.turnErrored = false;
       // CLI lama tanpa `session_state_changed`: `result` menutup turn.
       if (!live.sawState) {
         emitIdle(live);
@@ -567,7 +616,10 @@ export function createClaudeCodeClient(
     }
 
     const effects = live.translator.handle(m);
-    if (effects.todos) live.todos = effects.todos;
+    if (effects.todos) {
+      live.todos = effects.todos;
+      emit({ type: "agent.todos.updated", data: { sessionID: live.id, todos: effects.todos } });
+    }
   }
 
   /** Baca stream proses sampai selesai; crash dilaporkan sebagai error turn. */
@@ -581,16 +633,27 @@ export function createClaudeCodeClient(
       if (live.query === q && !live.closing) {
         const tail = live.stderr.slice(-5).join("\n").trim();
         const detail = (e as Error).message ?? String(e);
-        emitError(live, `Claude Code exited unexpectedly: ${detail}${tail ? `\n${tail}` : ""}`);
+        live.turnError ??= {
+          type: "process.exited",
+          message: `Claude Code exited unexpectedly: ${detail}${tail ? `\n${tail}` : ""}`,
+        };
       }
     } finally {
       if (live.query === q) {
         const wasRunning = live.running;
+        // Stream berakhir di tengah turn tanpa ditutup sengaja = turn terputus.
+        if (wasRunning && !live.closing && !live.skipNextIdle) {
+          const tail = live.stderr.slice(-5).join("\n").trim();
+          live.turnError ??= {
+            type: "process.exited",
+            message: `Claude Code exited unexpectedly.${tail ? `\n${tail}` : ""}`,
+          };
+        }
         live.query = null;
         live.input?.close();
         live.input = null;
         dropPending(live.id, "Claude Code process ended.");
-        if (wasRunning && !live.closing) emitIdle(live);
+        if ((wasRunning || live.turnError) && !live.closing) emitIdle(live);
         live.running = false;
         settleInterrupt(live);
       }
@@ -605,7 +668,7 @@ export function createClaudeCodeClient(
     options: Parameters<CanUseTool>[2],
   ): Promise<PermissionResult> {
     const isQuestion = toolName === "AskUserQuestion";
-    const requestID = `${isQuestion ? "que" : "per"}_${randomUUID()}`;
+    const requestID = `${isQuestion ? "frm" : "per"}_${randomUUID()}`;
     const result = new Promise<PermissionResult>((resolve) => {
       pending.set(requestID, {
         sessionId: live.id,
@@ -626,46 +689,29 @@ export function createClaudeCodeClient(
     });
 
     if (isQuestion) {
-      const questions = Array.isArray(input.questions) ? input.questions : [];
-      emit({
-        type: "question.asked",
-        sessionID: live.id,
-        requestID,
-        questions: questions.map((q) => {
-          const item = (q ?? {}) as Record<string, unknown>;
-          return {
-            question: item.question,
-            header: item.header,
-            options: item.options,
-            multiple: item.multiSelect === true,
-            custom: true,
-          };
-        }),
-      });
+      emit({ type: "form.created", data: { form: formFromQuestions(requestID, live.id, input) } });
     } else {
       // Akses di luar direktori project dilaporkan CLI lewat `blockedPath`.
       const blocked = typeof options.blockedPath === "string" ? options.blockedPath : null;
       const target = blocked ?? permissionTarget(input);
       emit({
         type: "permission.asked",
-        sessionID: live.id,
-        requestID,
-        permission: blocked ? "external_directory" : permissionName(toolName),
-        patterns: target ? [target] : [],
+        data: {
+          id: requestID,
+          sessionID: live.id,
+          action: blocked ? "external_directory" : permissionName(toolName),
+          resources: target ? [target] : [],
+        },
       });
     }
     return result;
   }
 
   /** Spawn proses `claude` untuk Session (resume bila transcript sudah ada). */
-  async function startQuery(
-    live: LiveSession,
-    model: string | null,
-    mode: string | null,
-    system: string | null,
-  ): Promise<void> {
+  async function startQuery(live: LiveSession): Promise<void> {
     if (!live.persisted) live.persisted = await transcripts.exists(live.id, cwd);
     const input = new InputQueue<SDKUserMessage>();
+    const { wantModel: model, wantMode: mode, wantSystem: system } = live;
     const options: Options = {
       ...sharedOptions(),
       includePartialMessages: true,
@@ -701,29 +747,14 @@ export function createClaudeCodeClient(
     live.pumpDone = pump(live, q);
   }
 
-  function selectedModel(model?: SessionModel | null): string | null {
-    if (!model || model.providerID !== CLAUDE_PROVIDER_ID) return null;
-    return model.modelID === "default" ? null : model.modelID;
-  }
-
-  function selectedMode(agent?: string | null): string | null {
-    return agent && PERMISSION_MODES.has(agent) ? agent : null;
-  }
-
-  async function promptAsync(
-    sessionId: string,
-    text: string,
-    model?: SessionModel | null,
-    files: OpenCodeFileRef[] = [],
-    agent?: string | null,
-    system?: string | null,
-  ): Promise<Result<null>> {
-    const live = getOrCreate(sessionId, false);
-    const wantModel = selectedModel(model);
-    const wantMode = selectedMode(agent);
-    const wantSystem = system?.trim() ? system : null;
+  async function prompt(input: {
+    sessionID: string;
+    text: string;
+    files?: AgentPromptFile[];
+  }): Promise<SimpleResult> {
+    const live = getOrCreate(input.sessionID, false);
     try {
-      const content = await buildUserContent(text, files);
+      const content = await buildUserContent(input.text, input.files ?? []);
       // Prompt tepat setelah interrupt: tunggu turn lama benar-benar berhenti
       // agar idle-nya tidak menutup turn baru ini.
       if (live.interruptSettled) {
@@ -734,34 +765,34 @@ export function createClaudeCodeClient(
       cancelIdleClose(live);
       // Instruksi Project hanya bisa dipasang saat proses dibuat: bila
       // berubah dan tidak ada turn berjalan, proses diganti (resume).
-      if (live.query && live.system !== wantSystem && !live.running) closeQuery(live);
+      if (live.query && live.system !== live.wantSystem && !live.running) closeQuery(live);
       if (!live.query) {
-        await startQuery(live, wantModel, wantMode, wantSystem);
+        await startQuery(live);
       } else {
         const q = live.query;
-        if (wantModel !== live.model) {
-          await withTimeout(q.setModel(wantModel ?? undefined), CONTROL_TIMEOUT_MS, "setModel");
-          live.model = wantModel;
+        if (live.wantModel !== live.model) {
+          await withTimeout(q.setModel(live.wantModel ?? undefined), CONTROL_TIMEOUT_MS, "setModel");
+          live.model = live.wantModel;
         }
-        if (wantMode !== live.mode) {
+        if (live.wantMode !== live.mode) {
           await withTimeout(
-            q.setPermissionMode((wantMode ?? "default") as PermissionMode),
+            q.setPermissionMode((live.wantMode ?? "default") as PermissionMode),
             CONTROL_TIMEOUT_MS,
             "setPermissionMode",
           );
-          live.mode = wantMode;
+          live.mode = live.wantMode;
         }
       }
-      live.turnErrored = false;
+      live.turnError = null;
       live.translator.beginTurn();
       live.input?.push({
         type: "user",
         message: { role: "user", content },
         parent_tool_use_id: null,
       });
-      return { ok: true, data: null };
+      return { ok: true };
     } catch (e) {
-      return { ok: false, error: `Failed to start Claude Code: ${(e as Error).message}` };
+      return { ok: false, error: `AGENT_PROMPT_FAILED: Failed to start Claude Code: ${(e as Error).message}` };
     }
   }
 
@@ -845,8 +876,9 @@ export function createClaudeCodeClient(
       files = [];
       const glob = new Bun.Glob("**/*");
       for await (const f of glob.scan({ cwd, onlyFiles: true })) {
-        if (f.startsWith("node_modules/") || f.startsWith(".git/")) continue;
-        files.push(f);
+        const rel = f.replaceAll("\\", "/");
+        if (rel.startsWith("node_modules/") || rel.startsWith(".git/")) continue;
+        files.push(rel);
         if (files.length >= 20_000) break;
       }
     }
@@ -876,19 +908,16 @@ export function createClaudeCodeClient(
     return ask;
   }
 
-  async function replyPermission(
-    requestId: string,
-    reply: OpenCodePermissionReply,
-  ): Promise<Result<unknown>> {
-    const ask = takePending(requestId, "permission");
-    if (!ask) return { ok: false, error: OC_REQUEST_GONE };
-    if (reply === "reject") {
+  async function replyPermission(requestID: string, decision: "once" | "always" | "reject"): Promise<SimpleResult> {
+    const ask = takePending(requestID, "permission");
+    if (!ask) return { ok: false, error: AGENT_REQUEST_GONE };
+    if (decision === "reject") {
       ask.resolve({ behavior: "deny", message: "The user denied this tool call." });
     } else {
-      // "Always allow" berlaku selama Session (seperti opencode) — tidak
-      // menulis aturan ke file settings user dari satu ketukan di HP.
+      // "Always allow" berlaku selama Session — tidak menulis aturan ke file
+      // settings user dari satu ketukan di HP.
       const updatedPermissions =
-        reply === "always" && ask.allowAlways
+        decision === "always" && ask.allowAlways
           ? ask.suggestions?.map((s) => ({ ...s, destination: "session" as const }))
           : undefined;
       ask.resolve({
@@ -897,34 +926,29 @@ export function createClaudeCodeClient(
         ...(updatedPermissions?.length ? { updatedPermissions } : {}),
       });
     }
-    return { ok: true, data: null };
+    return { ok: true };
   }
 
-  async function replyQuestion(requestId: string, answers: string[][]): Promise<Result<unknown>> {
-    const ask = takePending(requestId, "question");
-    if (!ask) return { ok: false, error: OC_REQUEST_GONE };
+  async function replyForm(formID: string, answer: AgentFormAnswer): Promise<SimpleResult> {
+    const ask = takePending(formID, "question");
+    if (!ask) return { ok: false, error: AGENT_REQUEST_GONE };
     const questions = Array.isArray(ask.input.questions) ? ask.input.questions : [];
     // Format jawaban AskUserQuestion: teks pertanyaan -> label (multi-select
     // digabung koma).
     const map: Record<string, string> = {};
     questions.forEach((q, i) => {
       const question = (q as { question?: unknown } | null)?.question;
-      if (typeof question === "string") map[question] = (answers[i] ?? []).join(", ");
+      if (typeof question !== "string") return;
+      const value = answer[`q${i}`];
+      map[question] = Array.isArray(value) ? value.join(", ") : value === undefined ? "" : String(value);
     });
     ask.resolve({ behavior: "allow", updatedInput: { ...ask.input, answers: map } });
-    return { ok: true, data: null };
+    return { ok: true };
   }
 
-  async function rejectQuestion(requestId: string): Promise<Result<unknown>> {
-    const ask = takePending(requestId, "question");
-    if (!ask) return { ok: false, error: OC_REQUEST_GONE };
-    ask.resolve({ behavior: "deny", message: "The user dismissed the question." });
-    return { ok: true, data: null };
-  }
-
-  async function abortSession(sessionId: string): Promise<Result<unknown>> {
+  async function interrupt(sessionId: string): Promise<SimpleResult> {
     const live = sessions.get(sessionId);
-    if (!live?.query || !live.running) return { ok: true, data: null };
+    if (!live?.query || !live.running) return { ok: true };
     live.skipNextIdle = true;
     if (!live.interruptSettled) {
       let resolve = () => {};
@@ -936,13 +960,13 @@ export function createClaudeCodeClient(
     dropPending(sessionId, "Interrupted by the user.");
     try {
       await withTimeout(live.query.interrupt(), CONTROL_TIMEOUT_MS, "interrupt");
-      return { ok: true, data: null };
+      return { ok: true };
     } catch (e) {
       return { ok: false, error: `CC_ABORT_FAILED: ${(e as Error).message}` };
     }
   }
 
-  async function deleteSession(sessionId: string): Promise<SimpleResult> {
+  async function remove(sessionId: string): Promise<SimpleResult> {
     const live = sessions.get(sessionId);
     const wasLive = live?.query != null;
     if (live) {
@@ -966,62 +990,97 @@ export function createClaudeCodeClient(
     }
   }
 
+  function selectedModel(model: ModelSelection | null): string | null {
+    if (!model || model.providerID !== CLAUDE_PROVIDER_ID) return null;
+    return model.modelID === "default" ? null : model.modelID;
+  }
+
   return {
-    async createSession() {
-      // Proses `claude` baru di-spawn saat prompt pertama (`sessionId` ini).
-      const id = randomUUID();
-      getOrCreate(id, false);
-      return { ok: true, data: { id, directory: cwd } };
-    },
-    async getSession(sessionId) {
-      if (sessions.has(sessionId)) return { ok: true };
-      if (await transcripts.exists(sessionId, cwd)) {
-        getOrCreate(sessionId, true);
+    kind: "claude-code",
+    directory: cwd,
+    capabilities: { skillReload: false },
+    session: {
+      async create() {
+        // Proses `claude` baru di-spawn saat prompt pertama (`sessionId` ini).
+        const id = randomUUID();
+        getOrCreate(id, false);
+        return { ok: true, data: { id, directory: cwd } };
+      },
+      async get(sessionId) {
+        if (sessions.has(sessionId)) return { ok: true, data: { id: sessionId, directory: cwd } };
+        if (await transcripts.exists(sessionId, cwd)) {
+          getOrCreate(sessionId, true);
+          return { ok: true, data: { id: sessionId, directory: cwd } };
+        }
+        return { ok: false, error: "SESSION_NOT_FOUND" };
+      },
+      remove,
+      async switchModel(sessionId, model) {
+        getOrCreate(sessionId, false).wantModel = selectedModel(model);
         return { ok: true };
-      }
-      return { ok: false, error: "SESSION_NOT_FOUND" };
+      },
+      async switchAgent(sessionId, agent) {
+        getOrCreate(sessionId, false).wantMode = agent && PERMISSION_MODES.has(agent) ? agent : null;
+        return { ok: true };
+      },
+      async instructions(sessionId, text) {
+        getOrCreate(sessionId, false).wantSystem = text?.trim() ? text : null;
+        return { ok: true };
+      },
+      prompt,
+      interrupt,
+      async todos(sessionId) {
+        return { ok: true, data: sessions.get(sessionId)?.todos ?? [] };
+      },
     },
-    listModels,
-    async listAgents() {
-      return { ok: true, data: CLAUDE_AGENTS };
+    permission: {
+      reply: ({ requestID, decision }) => replyPermission(requestID, decision),
     },
-    listMcp,
-    async listSkills() {
-      try {
-        return { ok: true, data: await listClaudeSkills(cwd, claudeGlobalSkillsDir(baseEnv)) };
-      } catch (e) {
-        return { ok: false, error: `CC_SKILLS_FAILED: ${(e as Error).message}` };
-      }
+    form: {
+      reply: ({ formID, answer }) => replyForm(formID, answer),
+      async cancel({ formID }) {
+        const ask = takePending(formID, "question");
+        if (!ask) return { ok: false, error: AGENT_REQUEST_GONE };
+        ask.resolve({ behavior: "deny", message: "The user dismissed the question." });
+        return { ok: true };
+      },
     },
-    async disposeInstance() {
-      // Skill/config dibaca ulang tiap proses `claude` baru.
-      modelsCache = null;
-      return { ok: true };
+    model: { list: listModels },
+    agent: {
+      async list() {
+        return { ok: true, data: CLAUDE_AGENTS };
+      },
     },
-    deleteSession,
-    async sendMessage() {
-      return { ok: false, error: "CC_SYNC_MESSAGE_UNSUPPORTED" };
+    mcp: { list: listMcp },
+    skill: {
+      async list() {
+        try {
+          return { ok: true, data: await listClaudeSkills(cwd, claudeGlobalSkillsDir(baseEnv)) };
+        } catch (e) {
+          return { ok: false, error: `CC_SKILLS_FAILED: ${(e as Error).message}` };
+        }
+      },
     },
-    promptAsync,
-    findFiles,
-    async listTodos(sessionId) {
-      return { ok: true, data: sessions.get(sessionId)?.todos ?? [] };
+    file: { find: findFiles },
+    vcs: {
+      async status() {
+        return { ok: true, data: await gitFileStatus(cwd) };
+      },
     },
-    async fileStatus() {
-      return { ok: true, data: await gitFileStatus(cwd) };
+    location: {
+      async reload() {
+        // Skill/config dibaca ulang tiap proses `claude` baru.
+        modelsCache = null;
+        return { ok: true };
+      },
     },
-    replyPermission,
-    replyQuestion,
-    rejectQuestion,
-    abortSession,
-    subscribeEvents(cb) {
-      listeners.add(cb);
-      return () => {
-        listeners.delete(cb);
-      };
-    },
-    async health() {
-      return true;
+    event: {
+      subscribe(cb) {
+        listeners.add(cb);
+        return () => {
+          listeners.delete(cb);
+        };
+      },
     },
     async close() {
       for (const live of sessions.values()) {
@@ -1032,62 +1091,49 @@ export function createClaudeCodeClient(
   };
 }
 
-export interface ClaudeCodeServerManagerOptions {
-  clientFactory?: (cwd: string) => ClaudeCodeClient;
+export interface ClaudeBackendOptions {
+  clientFactory?: (cwd: string) => ClaudeClient;
 }
 
 /**
- * "Server" Claude Code per Project — kontrak sama dengan
- * `OpenCodeServerManager`, tapi tanpa proses/port: hanya klien in-process
- * yang mengelola proses `claude` per Session.
+ * Backend Claude Code — tanpa proses/port: hanya client in-process per
+ * Project yang mengelola proses `claude` per Session.
  */
-export function createClaudeCodeServerManager(
-  opts: ClaudeCodeServerManagerOptions = {},
-): OpenCodeServerManager {
-  const factory = opts.clientFactory ?? ((cwd: string) => createClaudeCodeClient(cwd));
-  const handles = new Map<
-    string,
-    { handle: OpenCodeServerHandle; client: ClaudeCodeClient; cwd: string }
-  >();
+export function createClaudeBackend(opts: ClaudeBackendOptions = {}): AgentBackend {
+  const factory = opts.clientFactory ?? ((cwd: string) => createClaudeClient(cwd));
+  const clients = new Map<string, { client: ClaudeClient; cwd: string }>();
 
-  async function ensureServer(projectId: string, projectPath: string) {
-    const cur = handles.get(projectId);
-    if (cur && cur.cwd === projectPath) return { ok: true as const, data: cur.handle };
-    let isDir = false;
-    try {
-      isDir = existsSync(projectPath) && statSync(projectPath).isDirectory();
-    } catch {
-      isDir = false;
-    }
-    if (!isDir) return { ok: false as const, error: "PROJECT_DIR_NOT_FOUND" };
-    if (cur) await cur.client.close();
-    const client = factory(path.resolve(projectPath));
-    const handle: OpenCodeServerHandle = {
-      projectId,
-      baseUrl: `claude-code://${projectPath}`,
-      client,
-    };
-    handles.set(projectId, { handle, client, cwd: projectPath });
-    return { ok: true as const, data: handle };
-  }
-
-  async function stopServer(projectId: string): Promise<void> {
-    const cur = handles.get(projectId);
+  async function release(projectId: string): Promise<void> {
+    const cur = clients.get(projectId);
     if (!cur) return;
-    handles.delete(projectId);
+    clients.delete(projectId);
     await cur.client.close();
   }
 
   return {
-    ensureServer,
-    ensureFreshServer: ensureServer,
-    getServer: (projectId) => handles.get(projectId)?.handle,
-    stopServer,
-    async stopAll() {
-      await Promise.all([...handles.keys()].map((id) => stopServer(id)));
+    kind: "claude-code",
+    async ensure(projectId, directory) {
+      const cur = clients.get(projectId);
+      if (cur && cur.cwd === directory) return { ok: true, data: cur.client };
+      let isDir = false;
+      try {
+        isDir = existsSync(directory) && statSync(directory).isDirectory();
+      } catch {
+        isDir = false;
+      }
+      if (!isDir) return { ok: false, error: "PROJECT_DIR_NOT_FOUND" };
+      if (cur) await cur.client.close();
+      const client = factory(path.resolve(directory));
+      clients.set(projectId, { client, cwd: directory });
+      return { ok: true, data: client };
     },
-    // Tidak ada proses server yang bisa keluar; crash proses `claude` per
-    // Session dilaporkan sebagai error turn (lihat `pump`).
-    onServerExit() {},
+    get: (projectId) => clients.get(projectId)?.client,
+    release,
+    async shutdown() {
+      await Promise.all([...clients.keys()].map((id) => release(id)));
+    },
+    // Tidak ada proses server yang bisa hilang; crash proses `claude` per
+    // Session dilaporkan sebagai `session.execution.failed`.
+    onLost() {},
   };
 }

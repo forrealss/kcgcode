@@ -28,8 +28,7 @@ import {
   optionKey,
 } from "@/lib/model-picker";
 import { cn } from "@/lib/utils";
-import type { ModelOption } from "@/server/services/opencode-client";
-import type { SessionModel } from "@/types";
+import type { ModelOption, SessionModel } from "@/types";
 
 export interface ModelSearchListProps {
   /** Daftar model dari server; `null` = belum dimuat. */

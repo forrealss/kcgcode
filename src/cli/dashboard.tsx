@@ -1098,7 +1098,7 @@ export async function openBrowser(url: string): Promise<void> {
     cmd = ["xdg-open", url];
   }
   try {
-    Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore" });
+    Bun.spawn(cmd, { stdout: "ignore", stderr: "ignore", windowsHide: true });
   } catch {
     // diam — user bisa buka manual
   }

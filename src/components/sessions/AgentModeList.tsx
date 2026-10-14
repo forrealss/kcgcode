@@ -21,7 +21,7 @@ import {
 import { useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
-import type { AgentOption } from "@/server/services/opencode-client";
+import type { AgentOption } from "@/types";
 
 /** Ikon per agent: khusus dulu (build/plan), sisanya fallback per mode. */
 function agentIcon(name: string, mode: AgentOption["mode"]) {

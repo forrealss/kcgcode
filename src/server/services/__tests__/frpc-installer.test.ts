@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
-import { createFrpcInstaller, FRP_VERSION } from "../frpc-installer";
+import { createFrpcInstaller, FRP_VERSION, tarCommand } from "../frpc-installer";
 
 let dirs: string[] = [];
 afterEach(() => {
@@ -18,7 +18,7 @@ async function fakeRelease(): Promise<{ bytes: ArrayBuffer; sha256: string }> {
   mkdirSync(path.join(src, name));
   await Bun.write(path.join(src, name, "frpc"), "#!/bin/sh\necho fake\n");
   const archive = path.join(src, `${name}.tar.gz`);
-  const proc = Bun.spawn(["tar", "-czf", archive, "-C", src, name]);
+  const proc = Bun.spawn([tarCommand(), "-czf", archive, "-C", src, name]);
   expect(await proc.exited).toBe(0);
   const bytes = await Bun.file(archive).arrayBuffer();
   return { bytes, sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex") };
@@ -61,7 +61,8 @@ describe("frpc installer", () => {
     expect(r.ok).toBe(true);
     const target = path.join(binDir, "frpc");
     expect(r.ok && r.data).toBe(target);
-    expect(statSync(target).mode & 0o777).toBe(0o755);
+    // Windows tidak punya bit eksekusi POSIX.
+    if (process.platform !== "win32") expect(statSync(target).mode & 0o777).toBe(0o755);
     expect(readdirSync(binDir)).toEqual(["frpc"]);
   });
 

@@ -55,7 +55,7 @@ const opts = (over: Partial<Parameters<typeof validateWorkspaceRoot>[1]> = {}) =
 
 describe("util path", () => {
   test("displayPath & expandUserPath memakai ~", () => {
-    expect(displayPath(path.join(home, "code"), home)).toBe("~/code");
+    expect(displayPath(path.join(home, "code"), home)).toBe(`~${path.sep}code`);
     expect(displayPath(home, home)).toBe("~");
     expect(displayPath("/srv/x", home)).toBe("/srv/x");
     expect(expandUserPath("~/code", home)).toBe(path.join(home, "code"));
@@ -110,7 +110,7 @@ describe("validateWorkspaceRoot", () => {
 
   test("symlink dinilai dari lokasi aslinya", () => {
     const link = path.join(home, "link-to-home");
-    symlinkSync(home, link);
+    symlinkSync(home, link, "junction"); // tanpa hak admin di Windows
     expect(validateWorkspaceRoot(link, opts())).toMatchObject({ error: "WORKSPACE_TOO_BROAD" });
   });
 
@@ -207,7 +207,7 @@ describe("rute /api/workspace", () => {
     h.pm.createProject("a", "a");
     const res = h.routes["/api/workspace"].GET();
     const body = (await res.json()) as { workspace: { display: string; projectCount: number } };
-    expect(body.workspace.display).toBe("~/code");
+    expect(body.workspace.display).toBe(`~${path.sep}code`);
     expect(body.workspace.projectCount).toBe(1);
   });
 

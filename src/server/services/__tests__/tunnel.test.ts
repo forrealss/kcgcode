@@ -274,7 +274,8 @@ describe("Tunnel_Manager", () => {
     const toml = readFileSync(cfg, "utf8");
     expect(toml).toContain('metadatas.token = "secret-1"');
     expect(toml).not.toContain('"old"');
-    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+    // Windows tidak punya mode file POSIX (selalu 0o666/0o444).
+    if (process.platform !== "win32") expect(statSync(cfg).mode & 0o777).toBe(0o600);
     expect(h.api.calls).toContain("config:dev-token-1:3000");
 
     h.procs[0]?.push("[demo] start proxy success");

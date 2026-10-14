@@ -30,8 +30,7 @@ import {
 } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { keyOfSessionModel } from "@/lib/model-picker";
-import type { ModelOption } from "@/server/services/opencode-client";
-import type { AgentType, Session, SessionModel } from "@/types";
+import type { AgentType, ModelOption, Session, SessionModel } from "@/types";
 import { ModelSearchList } from "./ModelSearchList";
 
 export interface NewSessionDialogProps {

@@ -27,6 +27,10 @@ import {
   resolveEffectiveUploadsDir,
   resolveFrpcConfigPath,
 } from "../paths";
+import { createClaudeBackend } from "./agents/claude/client";
+import { createOpencodeBackend } from "./agents/opencode/backend";
+import { checkOpencodeVersion, OPENCODE_UPGRADE_REQUIRED } from "./agents/opencode/version";
+import type { AgentBackend } from "./agents/types";
 import { resolveHostname } from "./host";
 import { authRoutes } from "./routes/auth.routes";
 import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
@@ -43,13 +47,8 @@ import { workspaceRoutes } from "./routes/workspace.routes";
 import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
 import { type AuthService, createAuthService } from "./services/auth";
 import { createPasskeyService } from "./services/auth-passkeys";
-import { createClaudeCodeServerManager } from "./services/claude-code-client";
 import { createFrpcInstaller } from "./services/frpc-installer";
 import { createNotificationService, type NotificationService } from "./services/notifications";
-import {
-  createOpenCodeServerManager,
-  type OpenCodeServerManager,
-} from "./services/opencode-server";
 import { createProjectManager, type ProjectManager } from "./services/project-manager";
 import { createSessionManager, type SessionManager } from "./services/session-manager";
 import { createSkillInstallJobs } from "./services/skill-install-jobs";
@@ -81,10 +80,10 @@ type WsData = { authSessionId: string | null };
 export interface KcgServerOptions {
   config?: AppConfig;
   store?: SessionStore;
-  /** Injeksi OpenCode_Server_Manager (untuk pengujian, task 20.2). */
-  servers?: OpenCodeServerManager;
+  /** Injeksi backend agent opencode v2 (untuk pengujian). */
+  opencode?: AgentBackend;
   /** Injeksi backend Claude Code (Agent SDK) untuk pengujian. */
-  claudeServers?: OpenCodeServerManager;
+  claude?: AgentBackend;
   /** Injeksi Skills_Registry (skills.sh + CLI `skills`) untuk pengujian. */
   skillsRegistry?: SkillsRegistry;
   /** Injeksi Auth_Service (mis. hash cepat untuk test). */
@@ -188,9 +187,27 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const uploadsRoot = opts.uploadsRoot ?? resolveEffectiveUploadsDir();
 
   const projectManager = createProjectManager(config.sandboxRoot, store);
-  const servers = opts.servers ?? createOpenCodeServerManager();
-  // Proses `claude` baru di-spawn saat Session Claude Code menerima prompt.
-  const claudeServers = opts.claudeServers ?? createClaudeCodeServerManager();
+  // Lapisan agent (acuan opencode v2): service opencode milik user dipakai
+  // bersama seluruh Project; proses `claude` di-spawn saat Session Claude
+  // Code menerima prompt.
+  const backends = {
+    opencode: opts.opencode ?? createOpencodeBackend(),
+    "claude-code": opts.claude ?? createClaudeBackend(),
+  };
+  // Peringatan dini bila CLI opencode user masih v1 (tidak didukung lagi):
+  // tanpa ini user baru tahu saat membuka Session opencode. Tidak menahan
+  // start-up; backend yang diinjeksi (test) dilewati.
+  if (!opts.opencode) {
+    void checkOpencodeVersion().then((res) => {
+      if (!res.ok && res.error.startsWith(OPENCODE_UPGRADE_REQUIRED)) {
+        const version = res.error.split(":")[1]?.trim() ?? "1.x";
+        console.warn(
+          `[kcg-code] opencode ${version} terdeteksi — KCG Code butuh opencode 2.x. ` +
+            "Jalankan `opencode upgrade` lalu restart KCG Code untuk memakai agent opencode.",
+        );
+      }
+    });
+  }
   const attachments: AttachmentManager = createAttachmentManager(uploadsRoot);
 
   // Skills_Registry & job instalasi dibuat lebih dulu: session manager
@@ -213,8 +230,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   });
   const sessionManager = createSessionManager({
     store,
-    servers,
-    claudeServers,
+    backends,
     attachments,
     onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
     onMessagePart: (sessionId, messageId, part) =>
@@ -455,7 +471,10 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     await skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
     await sessionManager.shutdown();
-    await server.stop(true);
+    // Bun (Windows): setelah server menutup sebuah WebSocket (mis. 4401 saat
+    // logout), promise `stop()` tak pernah resolve walau listener sudah
+    // tertutup — batasi waktu tunggu agar shutdown tidak menggantung.
+    await Promise.race([server.stop(true), Bun.sleep(2000)]);
     store.close();
   }
 

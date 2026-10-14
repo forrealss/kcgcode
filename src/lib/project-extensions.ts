@@ -3,13 +3,7 @@
  * tanpa DOM, dipisah agar dapat diuji `bun test`.
  */
 import { AGENT_TYPES } from "@/lib/agent-types";
-import type {
-  McpServerInfo,
-  McpStatus,
-  SkillInfo,
-  SkillSource,
-} from "@/server/services/opencode-client";
-import type { AgentType } from "@/types";
+import type { AgentType, McpServerInfo, McpStatus, SkillInfo, SkillSource } from "@/types";
 
 /** Label status MCP untuk UI. */
 export const MCP_STATUS_LABEL: Record<McpStatus, string> = {

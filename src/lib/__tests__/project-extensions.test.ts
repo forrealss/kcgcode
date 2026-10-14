@@ -2,7 +2,7 @@
  * Unit test helper panel samping Project (src/lib/project-extensions.ts).
  */
 import { describe, expect, test } from "bun:test";
-import type { SkillInfo } from "@/server/services/opencode-client";
+import type { SkillInfo } from "@/types";
 import {
   describeMcpEntries,
   describeMcpSummary,

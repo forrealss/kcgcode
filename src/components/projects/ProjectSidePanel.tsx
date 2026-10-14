@@ -44,8 +44,14 @@ import {
 import { skillsPath } from "@/lib/routes";
 import { type InstalledSkill, mergeInstalledSkills } from "@/lib/skills-catalog";
 import { cn } from "@/lib/utils";
-import type { McpServerInfo, SkillInfo, SkillSource } from "@/server/services/opencode-client";
-import type { AgentType, McpServerState, Project } from "@/types";
+import type {
+  AgentType,
+  McpServerInfo,
+  McpServerState,
+  Project,
+  SkillInfo,
+  SkillSource,
+} from "@/types";
 
 /** Skill ditampilkan terbatas dulu; sisanya lewat "Show more". */
 const SKILL_PREVIEW = 5;

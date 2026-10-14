@@ -8,8 +8,7 @@
  * pencarian, dan pengelompokan yang sama.
  */
 
-import type { ModelOption } from "@/server/services/opencode-client";
-import type { SessionModel } from "@/types";
+import type { ModelOption, SessionModel } from "@/types";
 
 /** Nilai khusus "pakai model default opencode" (mengirim `model: null`). */
 export const DEFAULT_MODEL_KEY = "default";

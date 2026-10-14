@@ -39,7 +39,12 @@ describe("listClaudeSkills", () => {
     // Pola CLI `skills --agent claude-code`: isi di .agents/skills, symlink di .claude/skills.
     writeSkill(join(project, ".agents/skills/linked"), "---\nname: linked\ndescription: L\n---\n");
     mkdirSync(join(project, ".claude/skills"), { recursive: true });
-    symlinkSync(join(project, ".agents/skills/linked"), join(project, ".claude/skills/linked"));
+    // "junction": symlink direktori tanpa hak admin di Windows (diabaikan di POSIX).
+    symlinkSync(
+      join(project, ".agents/skills/linked"),
+      join(project, ".claude/skills/linked"),
+      "junction",
+    );
     writeSkill(join(project, ".claude/skills/plain"), "no frontmatter");
     writeSkill(join(global, "global-one"), "---\nname: global-one\n---\n");
 
@@ -57,7 +62,7 @@ describe("listClaudeSkills", () => {
   });
 
   test("claudeGlobalSkillsDir menghormati CLAUDE_CONFIG_DIR", () => {
-    expect(claudeGlobalSkillsDir({ CLAUDE_CONFIG_DIR: "/cfg" })).toBe("/cfg/skills");
-    expect(claudeGlobalSkillsDir({})).toEndWith("/.claude/skills");
+    expect(claudeGlobalSkillsDir({ CLAUDE_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", "skills"));
+    expect(claudeGlobalSkillsDir({})).toEndWith(join(".claude", "skills"));
   });
 });

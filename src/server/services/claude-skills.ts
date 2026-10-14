@@ -13,7 +13,7 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { SkillInfo, SkillSource } from "./opencode-client";
+import type { SkillInfo, SkillSource } from "../../types";
 
 /** Direktori skill global Claude Code untuk `env` tertentu. */
 export function claudeGlobalSkillsDir(env: Record<string, string | undefined>): string {
@@ -70,7 +70,8 @@ async function scanDir(root: string, source: SkillSource): Promise<SkillInfo[]> 
   try {
     for await (const rel of glob.scan({ cwd: root, followSymlinks: true, onlyFiles: true })) {
       const location = join(root, rel);
-      const dirName = rel.split("/")[0] ?? rel;
+      // Bun.Glob mengembalikan `\` sebagai pemisah di Windows.
+      const dirName = rel.split(/[\\/]/)[0] ?? rel;
       let meta: ReturnType<typeof parseSkillFrontmatter> = { name: null, description: null };
       try {
         meta = parseSkillFrontmatter(await Bun.file(location).text());

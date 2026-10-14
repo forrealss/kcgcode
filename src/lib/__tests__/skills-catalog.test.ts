@@ -2,9 +2,8 @@
  * Unit test helper katalog skill (src/lib/skills-catalog.ts).
  */
 import { describe, expect, test } from "bun:test";
-import type { SkillInfo } from "@/server/services/opencode-client";
 import type { RegistrySkill } from "@/server/services/skills-registry";
-import type { Project } from "@/types";
+import type { Project, SkillInfo } from "@/types";
 import {
   formatInstalls,
   githubOwner,

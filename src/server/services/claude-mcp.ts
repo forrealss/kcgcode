@@ -18,7 +18,7 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { McpServerInfo } from "./opencode-client";
+import type { McpServerInfo } from "../../types";
 
 export type ClaudeMcpScope = "project" | "local" | "user";
 

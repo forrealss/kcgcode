@@ -112,8 +112,8 @@ function toErrorCode(error: string): string {
 
 /**
  * Pesan ramah untuk kegagalan reply prompt (kartu tetap bisa dicoba lagi):
- * error mentah dari opencode-client berupa kode seperti
- * `OC_QUESTION_REPLY_FAILED(400)` — kurang berguna bagi user.
+ * error mentah dari lapisan agent berupa kode seperti
+ * `AGENT_FORM_REPLY_FAILED: …` — kurang berguna bagi user.
  */
 function friendlyPromptError(raw: string): string {
   if (raw === "PROMPT_EXPIRED") {
@@ -121,8 +121,8 @@ function friendlyPromptError(raw: string): string {
   }
   if (
     raw === ErrorCodes.PROMPT_NOT_FOUND ||
-    raw.startsWith("OC_QUESTION") ||
-    raw.startsWith("OC_PERMISSION")
+    raw.startsWith("AGENT_FORM_") ||
+    raw.startsWith("AGENT_PERMISSION_")
   ) {
     return "The agent is no longer waiting for this answer (it may have moved on). Try again or send a new message.";
   }

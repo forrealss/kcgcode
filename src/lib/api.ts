@@ -37,22 +37,29 @@ export function setAuthRequiredHandler(fn: (() => void) | null): void {
 
 /** Pemetaan kode error domain -> pesan ramah pengguna (design.md — Error Handling). */
 export function apiErrorMessage(code: string): string {
-  // Kode dari server headless opencode membawa detail status, mis.
-  // "OC_LIST_MODELS_FAILED(500)" -> cocokkan berdasarkan prefiks.
-  if (code.startsWith("OC_LIST_MODELS_FAILED")) {
-    return "Failed to load the model list from the opencode server.";
+  // Kode dari lapisan agent membawa detail, mis. "AGENT_LIST_MODELS_FAILED: …"
+  // -> cocokkan berdasarkan prefiks.
+  if (code.startsWith("OPENCODE_UPGRADE_REQUIRED")) {
+    const version = code.split(":")[1]?.trim() || "1.x";
+    return `KCG Code needs opencode 2.x, but opencode ${version} is installed. Upgrade opencode (opencode upgrade) and try again.`;
   }
-  if (code.startsWith("OC_CREATE_SESSION_FAILED")) {
-    return "Failed to create the session on the opencode server.";
+  if (code === "OPENCODE_NOT_FOUND") {
+    return "opencode is not installed or not on PATH. Install opencode 2.x and try again.";
   }
-  if (code.startsWith("OC_DELETE_SESSION_FAILED")) {
-    return "Failed to delete the session on the opencode server.";
+  if (code.startsWith("AGENT_LIST_MODELS_FAILED") || code.startsWith("CC_MODELS_FAILED")) {
+    return "Failed to load the model list from the agent.";
+  }
+  if (code.startsWith("AGENT_CREATE_SESSION_FAILED")) {
+    return "Failed to create the session on the agent.";
+  }
+  if (code.startsWith("AGENT_DELETE_SESSION_FAILED") || code.startsWith("CC_DELETE_FAILED")) {
+    return "Failed to delete the session on the agent.";
   }
   if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
     return "Couldn't reach skills.sh. Check your connection and try again.";
   }
   if (code.startsWith("SERVER_START_FAILED")) {
-    return "Failed to start the opencode server for this project.";
+    return "Failed to connect to the opencode service.";
   }
 
   switch (code) {
@@ -81,7 +88,7 @@ export function apiErrorMessage(code: string): string {
     case "SESSION_ALREADY_RUNNING":
       return "The session is already running.";
     case "MODEL_NOT_FOUND":
-      return "The model is not available on this project's opencode server.";
+      return "The model is not available for this project's agent.";
     case "INVALID_INSTRUCTIONS":
       return "Instructions must be text.";
     case "INSTRUCTIONS_TOO_LONG":

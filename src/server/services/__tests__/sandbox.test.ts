@@ -26,7 +26,8 @@ beforeAll(() => {
   writeFileSync(path.join(root, "a", "file.txt"), "x");
   writeFileSync(path.join(root, "top.txt"), "x");
   // Symlink yang mengarah keluar sandbox (harus ditolak).
-  symlinkSync(outsideDir, path.join(root, "evil-link"));
+  // "junction": symlink direktori tanpa hak admin di Windows (diabaikan di POSIX).
+  symlinkSync(outsideDir, path.join(root, "evil-link"), "junction");
   store = openSessionStore(":memory:");
 });
 

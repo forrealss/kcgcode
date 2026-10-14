@@ -60,9 +60,8 @@ import {
   visibleInstalledSkills,
 } from "@/lib/skills-catalog";
 import { cn } from "@/lib/utils";
-import type { SkillInfo } from "@/server/services/opencode-client";
 import type { RegistrySkill } from "@/server/services/skills-registry";
-import type { AgentType, Project } from "@/types";
+import type { AgentType, Project, SkillInfo } from "@/types";
 
 const EMPTY_INSTALLED: InstalledSkill[] = [];
 

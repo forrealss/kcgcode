@@ -11,6 +11,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { createAttachmentManager, MAX_UPLOAD_BYTES } from "../attachments";
 
 function freshRoot(): string {
@@ -94,6 +95,10 @@ test("id tak dikenal / bukan UUID -> info & read gagal tanpa akses path", () => 
 
 test("info.absPath selalu absolut walau uploadsRoot relatif (agar URL file:// valid untuk opencode)", () => {
   const dir = freshRoot();
+  // cwd dipindah ke induk `dir`: di Windows tmpdir bisa beda drive dari cwd
+  // sehingga `path.relative` menghasilkan path absolut.
+  const prevCwd = process.cwd();
+  process.chdir(path.dirname(dir));
   try {
     // uploadsRoot relatif (mis. `data/uploads`) — persis konfigurasi default
     // app yang dulu menghasilkan URL `file://data/…` (host="data") sehingga
@@ -108,13 +113,13 @@ test("info.absPath selalu absolut walau uploadsRoot relatif (agar URL file:// va
     expect(info.ok).toBe(true);
     if (info.ok) {
       expect(path.isAbsolute(info.data.absPath)).toBe(true);
-      expect(info.data.absPath.startsWith("/")).toBe(true);
       expect(existsSync(info.data.absPath)).toBe(true);
       // URL file:// yang dibangun dari absPath harus hostless (`file:///…`).
-      const url = `file://${info.data.absPath}`;
+      const url = pathToFileURL(info.data.absPath).href;
       expect(url.startsWith("file:///")).toBe(true);
     }
   } finally {
+    process.chdir(prevCwd);
     rmSync(dir, { recursive: true, force: true });
   }
 });

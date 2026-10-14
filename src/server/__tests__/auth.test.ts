@@ -10,17 +10,11 @@ import path from "node:path";
 import { openSessionStore } from "../../db";
 import { createKcgServer, type KcgServer } from "../app";
 import { createAuthService } from "../services/auth";
-import type { OpenCodeServerManager } from "../services/opencode-server";
+import { makeFakeBackend } from "./fake-agent";
 
-/** Server opencode palsu: rute non-auth cukup tidak crash. */
-const fakeServers: OpenCodeServerManager = {
-  ensureServer: async () => ({ ok: false, error: "SERVER_START_FAILED" }),
-  ensureFreshServer: async () => ({ ok: false, error: "SERVER_START_FAILED" }),
-  getServer: () => undefined,
-  stopServer: async () => {},
-  stopAll: async () => {},
-  onServerExit: () => {},
-};
+/** Agent palsu: rute non-auth cukup tidak crash. */
+const fakeOpencode = makeFakeBackend();
+fakeOpencode.ensureResult = { ok: false, error: "SERVER_START_FAILED" };
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
 
@@ -36,7 +30,7 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
     app = createKcgServer({
       config: { sandboxRoot: root, configPath: "test" },
       store,
-      servers: fakeServers,
+      opencode: fakeOpencode.backend,
       uploadsRoot: path.join(root, "uploads"),
       port: 0,
       auth: createAuthService({
@@ -332,8 +326,9 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       new Promise<"open" | "closed">((resolve) => {
         const ws = new WebSocket(`ws://127.0.0.1:${app.server.port}/ws`, { headers } as never);
         ws.onopen = () => {
-          ws.close();
+          // resolve dulu: di Windows `close()` memicu `onclose` secara sinkron.
           resolve("open");
+          ws.close();
         };
         ws.onerror = () => resolve("closed");
         ws.onclose = () => resolve("closed");

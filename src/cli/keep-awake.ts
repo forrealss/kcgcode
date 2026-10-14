@@ -71,7 +71,7 @@ export async function startKeepAwake(
   let state: KeepAwakeStatus = { active: true, method, error: null };
   let proc: Subprocess<"pipe", "ignore", "pipe">;
   try {
-    proc = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "pipe" });
+    proc = Bun.spawn(cmd, { stdin: "pipe", stdout: "ignore", stderr: "pipe", windowsHide: true });
   } catch (err) {
     const reason = (err as Error).message.includes("ENOENT")
       ? `${method} not found`

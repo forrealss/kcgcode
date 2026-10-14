@@ -3,7 +3,7 @@
  * pola sama dengan `session-summary.test.ts`.
  */
 import { describe, expect, test } from "bun:test";
-import type { ModelOption } from "@/server/services/opencode-client";
+import type { ModelOption } from "@/types";
 import {
   activeModelLabel,
   DEFAULT_MODEL_KEY,

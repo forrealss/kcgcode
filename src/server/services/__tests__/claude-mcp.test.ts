@@ -84,7 +84,7 @@ describe("readClaudeMcpConfig", () => {
   });
 
   test("claudeJsonPath: CLAUDE_CONFIG_DIR, lalu HOME", () => {
-    expect(claudeJsonPath({ CLAUDE_CONFIG_DIR: "/cfg" })).toBe("/cfg/.claude.json");
-    expect(claudeJsonPath({ HOME: "/home/u" })).toBe("/home/u/.claude.json");
+    expect(claudeJsonPath({ CLAUDE_CONFIG_DIR: "/cfg" })).toBe(join("/cfg", ".claude.json"));
+    expect(claudeJsonPath({ HOME: "/home/u" })).toBe(join("/home/u", ".claude.json"));
   });
 });

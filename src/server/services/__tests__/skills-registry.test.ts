@@ -3,6 +3,7 @@
  * tanpa jaringan maupun proses nyata.
  */
 import { describe, expect, test } from "bun:test";
+import { tmpdir } from "node:os";
 import {
   buildInstallArgs,
   cleanOutputLine,
@@ -336,14 +337,33 @@ describe("installEnv", () => {
 describe("defaultSpawn (proses nyata)", () => {
   // Regresi: proses cucu (git) yang memegang pipe membuat instalasi menggantung
   // walau proses langsung sudah dibunuh. Kill process group harus mengakhirinya.
-  const hang = ["sh", "-c", "sh -c 'sleep 30' & echo started >&2; wait"];
+  // Pakai `bun` sendiri (bukan `sh`/`sleep`) agar jalan juga di Windows.
+  const bun = process.execPath;
+  const cwd = tmpdir();
+  const sleeper = `setTimeout(() => {}, 30_000)`;
+  const hang = [
+    bun,
+    "-e",
+    `Bun.spawn([process.execPath, "-e", ${JSON.stringify(sleeper)}], { stdio: ["ignore", "inherit", "inherit"] });
+     console.error("started");
+     ${sleeper};`,
+  ];
 
   test("pembatalan membunuh seluruh process group, termasuk cucu", async () => {
     const ctrl = new AbortController();
     const lines: string[] = [];
     const t0 = Date.now();
-    setTimeout(() => ctrl.abort(), 200);
-    const res = await defaultSpawn(hang, "/tmp", 60_000, (l) => lines.push(l), ctrl.signal);
+    // Abort setelah "started" — Windows butuh waktu lebih lama memulai proses.
+    const res = await defaultSpawn(
+      hang,
+      cwd,
+      60_000,
+      (l) => {
+        lines.push(l);
+        if (l === "started") setTimeout(() => ctrl.abort(), 100);
+      },
+      ctrl.signal,
+    );
     expect(Date.now() - t0).toBeLessThan(5_000);
     expect(res.exitCode).toBeNull();
     expect(lines).toContain("started");
@@ -351,13 +371,21 @@ describe("defaultSpawn (proses nyata)", () => {
 
   test("timeout membunuh seluruh process group", async () => {
     const t0 = Date.now();
-    const res = await defaultSpawn(hang, "/tmp", 300);
+    const res = await defaultSpawn(hang, cwd, 1_000);
     expect(Date.now() - t0).toBeLessThan(5_000);
     expect(res.exitCode).toBeNull();
   });
 
   test("proses normal: exit code & stdout diteruskan", async () => {
-    const res = await defaultSpawn(["sh", "-c", "echo out; echo err >&2; exit 3"], "/tmp", 5_000);
+    const res = await defaultSpawn(
+      [
+        bun,
+        "-e",
+        `process.stdout.write("out\\n"); process.stderr.write("err\\n"); process.exit(3);`,
+      ],
+      cwd,
+      5_000,
+    );
     expect(res.exitCode).toBe(3);
     expect(res.stdout).toBe("out\n");
     expect(res.stderr).toBe("err\n");
