@@ -125,7 +125,14 @@ describe("rute settings", () => {
   });
 
   test("sub-halaman settings", () => {
-    for (const section of ["profile", "security", "appearance", "workspace", "remote", "about"] as const) {
+    for (const section of [
+      "profile",
+      "security",
+      "appearance",
+      "workspace",
+      "remote",
+      "about",
+    ] as const) {
       expect(settingsPath(section)).toBe(`/settings/${section}`);
       expect(parseRoute(`/settings/${section}`)).toEqual({ name: "settings", section });
       expect(parseRoute(`/settings/${section}/`)).toEqual({ name: "settings", section });

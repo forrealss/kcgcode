@@ -328,7 +328,7 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
     /** Pilihan terakhir yang sudah diterapkan per Session (hindari RPC berulang). */
     const applied = new Map<
       string,
-      { model?: string; agent?: string; instructions?: string | null }
+      { model?: string; effort?: string; agent?: string; instructions?: string | null }
     >();
     const appliedFor = (sessionID: string) => {
       let a = applied.get(sessionID);
@@ -380,32 +380,32 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
           // Session sudah tidak ada = tujuan tercapai.
           return res.ok || res.error === AGENT_REQUEST_GONE ? { ok: true } : res;
         },
-        async switchModel(sessionID, model: ModelSelection | null) {
+        async switchModel(sessionID, model: ModelSelection | null, effort = null) {
           const a = appliedFor(sessionID);
           const want = model ? `${model.providerID}/${model.modelID}` : undefined;
-          if (a.model === want) return { ok: true };
-          // `null` = default: hanya perlu kembali bila sebelumnya diganti.
-          if (!model) {
-            if (a.model === undefined) return { ok: true };
+          const wantEffort = effort ?? undefined;
+          // `null` tanpa effort = default: hanya perlu kembali bila sebelumnya diganti.
+          if (a.model === want && a.effort === wantEffort) return { ok: true };
+          let ref: Rec;
+          if (model) {
+            ref = { id: model.modelID, providerID: model.providerID };
+          } else {
             const def = await call("AGENT_SWITCH_MODEL_FAILED", (x) => x.model.default(location));
             if (!def.ok) return def;
-            const ref = rec(rec(def.data).data);
-            const res = await call("AGENT_SWITCH_MODEL_FAILED", (x) =>
-              x.session.switchModel({
-                sessionID,
-                model: { id: ref.id, providerID: ref.providerID },
-              }),
-            );
-            if (res.ok) a.model = undefined;
-            return ok(res);
+            const info = rec(rec(def.data).data);
+            ref = { id: info.id, providerID: info.providerID };
           }
+          // Thinking effort opencode = variant model (`ModelRef.variant`).
           const res = await call("AGENT_SWITCH_MODEL_FAILED", (x) =>
             x.session.switchModel({
               sessionID,
-              model: { id: model.modelID, providerID: model.providerID },
+              model: { ...ref, ...(wantEffort ? { variant: wantEffort } : {}) },
             }),
           );
-          if (res.ok) a.model = want;
+          if (res.ok) {
+            a.model = want;
+            a.effort = wantEffort;
+          }
           return ok(res);
         },
         async switchAgent(sessionID, agent) {
@@ -486,10 +486,15 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
       model: {
         async list() {
           const res = await call("AGENT_LIST_MODELS_FAILED", (a) =>
-            Promise.all([a.model.list(location), a.provider.list(location).catch(() => null)]),
+            Promise.all([
+              a.model.list(location),
+              a.provider.list(location).catch(() => null),
+              a.model.default(location).catch(() => null),
+            ]),
           );
           if (!res.ok) return res;
-          const [models, providers] = res.data;
+          const [models, providers, fallback] = res.data;
+          const def = rec(rec(fallback).data);
           const names = new Map<string, string>();
           for (const p of list(providers)) {
             const id = str(rec(p).id);
@@ -502,11 +507,16 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
             const providerID = str(m.providerID);
             if (!id || !providerID) continue;
             if (m.enabled === false || m.status === "deprecated") continue;
+            const efforts = (Array.isArray(m.variants) ? m.variants : [])
+              .map((v) => str(rec(v).id))
+              .filter((v): v is string => v !== null);
             out.push({
               providerID,
               providerName: names.get(providerID) ?? providerID,
               modelID: id,
               name: str(m.name) ?? id,
+              ...(efforts.length > 0 ? { efforts } : {}),
+              ...(def.id === id && def.providerID === providerID ? { isDefault: true } : {}),
             });
           }
           return { ok: true, data: out };

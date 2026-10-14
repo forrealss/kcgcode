@@ -641,6 +641,22 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
     const putBody = (await putRes.json()) as { session: Session };
     expect(putBody.session.model).toBeNull();
 
+    // ---- thinking effort: diganti bersama model, null = default model ----
+    const effortRes = await fetch(`${baseUrl()}/api/sessions/${sess.session.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ effort: "high" }),
+    });
+    expect(effortRes.status).toBe(200);
+    expect(((await effortRes.json()) as { session: Session }).session.effort).toBe("high");
+    const badEffort = await fetch(`${baseUrl()}/api/sessions/${sess.session.id}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ effort: "bukan effort" }),
+    });
+    expect(badEffort.status).toBe(400);
+    expect(((await badEffort.json()) as { error: string }).error).toBe("INVALID_EFFORT");
+
     // Session tak dikenal -> 404
     const missing = await fetch(`${baseUrl()}/api/sessions/tidak-ada`, {
       method: "PUT",

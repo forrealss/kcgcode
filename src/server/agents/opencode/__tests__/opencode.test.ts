@@ -148,7 +148,14 @@ function fakeApi(pid = 100) {
     model: {
       list: rec("model.list", {
         data: [
-          { id: "big-pickle", providerID: "opencode", name: "Big Pickle", status: "active" },
+          {
+            id: "big-pickle",
+            providerID: "opencode",
+            name: "Big Pickle",
+            status: "active",
+            variants: [{ id: "low" }, { id: "high", body: { effort: "high" } }, {}],
+          },
+          { id: "small", providerID: "opencode", name: "Small", status: "active", variants: [] },
           { id: "old", providerID: "opencode", name: "Old", status: "deprecated" },
           { id: "off", providerID: "opencode", name: "Off", enabled: false },
         ],
@@ -383,6 +390,26 @@ describe("createOpencodeBackend", () => {
     expect(names.filter((n) => n === "instructions.remove")).toHaveLength(1);
   });
 
+  test("thinking effort dikirim sebagai variant model; default model ikut variant", async () => {
+    const { backend, apis } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    const s = r.data.session;
+    const model = { providerID: "opencode", modelID: "big-pickle" };
+    await s.switchModel("ses_1", model, "high");
+    await s.switchModel("ses_1", model, "high");
+    await s.switchModel("ses_1", model, null);
+    await s.switchModel("ses_2", null, "low");
+    const switches = (apis[0]?.calls ?? [])
+      .filter(([n]) => n === "session.switchModel")
+      .map(([, input]) => input);
+    expect(switches).toEqual([
+      { sessionID: "ses_1", model: { id: "big-pickle", providerID: "opencode", variant: "high" } },
+      { sessionID: "ses_1", model: { id: "big-pickle", providerID: "opencode" } },
+      { sessionID: "ses_2", model: { id: "big-pickle", providerID: "opencode", variant: "low" } },
+    ]);
+  });
+
   test("prompt meneruskan teks + lampiran sebagai uri", async () => {
     const { backend, apis } = setup();
     const r = await backend.ensure("p1", PROJ);
@@ -412,6 +439,15 @@ describe("createOpencodeBackend", () => {
           providerName: "OpenCode",
           modelID: "big-pickle",
           name: "Big Pickle",
+          // Variant model = tingkat thinking effort; model default ditandai.
+          efforts: ["low", "high"],
+          isDefault: true,
+        },
+        {
+          providerID: "opencode",
+          providerName: "OpenCode",
+          modelID: "small",
+          name: "Small",
         },
       ],
     });

@@ -22,6 +22,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
   CanUseTool,
+  EffortLevel,
   McpServerStatus,
   ModelInfo,
   Options,
@@ -110,6 +111,9 @@ export const CLAUDE_PERMISSION_MODES: PermissionModeOption[] = [
 
 const PERMISSION_MODE_IDS = new Set(CLAUDE_PERMISSION_MODES.map((m) => m.id));
 
+/** Tingkat effort Claude Code (`EffortLevel` SDK); nilai lain diabaikan. */
+const EFFORT_LEVELS = new Set<string>(["low", "medium", "high", "xhigh", "max"]);
+
 /** Keputusan kartu persetujuan rencana (`ExitPlanMode`) -> mode berikutnya. */
 const PLAN_DECISIONS = [
   { value: "acceptEdits", label: "Yes, and auto-accept edits" },
@@ -122,6 +126,8 @@ export interface ClaudeQueryLike extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<unknown>;
   setModel(model?: string): Promise<void>;
   setPermissionMode(mode: PermissionMode): Promise<void>;
+  /** Lapisan flag settings (dipakai untuk `effortLevel`; `null` = default model). */
+  applyFlagSettings(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
   supportedModels(): Promise<ModelInfo[]>;
   mcpServerStatus(): Promise<McpServerStatus[]>;
   close(): void;
@@ -215,12 +221,14 @@ interface LiveSession {
   query: ClaudeQueryLike | null;
   input: InputQueue<SDKUserMessage> | null;
   translator: ClaudeTurnTranslator;
-  /** Model / mode / instruksi yang berlaku pada proses aktif. */
+  /** Model / effort / mode / instruksi yang berlaku pada proses aktif. */
   model: string | null;
+  effort: EffortLevel | null;
   mode: string | null;
   system: string | null;
   /** Pilihan untuk prompt berikutnya (`session.switchModel/setPermissionMode/instructions`). */
   wantModel: string | null;
+  wantEffort: EffortLevel | null;
   wantMode: string | null;
   /** Mode yang terakhir dilaporkan CLI (`system/init` / `system/status`). */
   reportedMode: string | null;
@@ -533,9 +541,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         input: null,
         translator: new ClaudeTurnTranslator(id, emit),
         model: null,
+        effort: null,
         mode: null,
         system: null,
         wantModel: null,
+        wantEffort: null,
         wantMode: null,
         reportedMode: null,
         wantSystem: null,
@@ -827,12 +837,14 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   async function startQuery(live: LiveSession): Promise<void> {
     if (!live.persisted) live.persisted = await transcripts.exists(live.id, cwd);
     const input = new InputQueue<SDKUserMessage>();
-    const { wantModel: model, wantMode: mode, wantSystem: system } = live;
+    const { wantModel: model, wantEffort: effort, wantMode: mode, wantSystem: system } = live;
     const options: Options = {
       ...sharedOptions(),
       includePartialMessages: true,
       ...(live.persisted ? { resume: live.id } : { sessionId: live.id }),
       ...(model ? { model } : {}),
+      // Tanpa effort eksplisit: ikuti `effortLevel` settings user / default model.
+      ...(effort ? { effort } : {}),
       // Tanpa mode eksplisit: ikuti `permissions.defaultMode` user.
       ...(mode ? { permissionMode: mode as PermissionMode } : {}),
       // Hanya MENGIZINKAN pindah ke `bypassPermissions` (dipilih user secara
@@ -858,6 +870,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     live.query = q;
     live.input = input;
     live.model = model;
+    live.effort = effort;
     live.mode = mode;
     live.system = system;
     live.closing = false;
@@ -882,9 +895,13 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         );
       }
       cancelIdleClose(live);
-      // Instruksi Project hanya bisa dipasang saat proses dibuat: bila
-      // berubah dan tidak ada turn berjalan, proses diganti (resume).
-      if (live.query && live.system !== live.wantSystem && !live.running) closeQuery(live);
+      // Instruksi Project hanya bisa dipasang saat proses dibuat — begitu pula
+      // kembali ke effort default (proses baru membaca `effortLevel` settings
+      // user; kontrol SDK hanya bisa mereset ke default model). Bila berubah
+      // dan tidak ada turn berjalan, proses diganti (resume).
+      const respawn =
+        live.system !== live.wantSystem || (live.effort !== null && live.wantEffort === null);
+      if (live.query && respawn && !live.running) closeQuery(live);
       if (!live.query) {
         await startQuery(live);
       } else {
@@ -896,6 +913,15 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
             "setModel",
           );
           live.model = live.wantModel;
+        }
+        // Setelah model: effort di-clamp CLI ke tingkat yang didukung model.
+        if (live.wantEffort !== live.effort) {
+          await withTimeout(
+            q.applyFlagSettings({ effortLevel: live.wantEffort }),
+            CONTROL_TIMEOUT_MS,
+            "applyFlagSettings",
+          );
+          live.effort = live.wantEffort;
         }
         if (live.wantMode !== live.mode) {
           await withTimeout(
@@ -954,12 +980,18 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
     }
     try {
       const models = await withAnyQuery((q) => q.supportedModels());
-      const data = models.map((m) => ({
-        providerID: CLAUDE_PROVIDER_ID,
-        providerName: "Claude Code",
-        modelID: m.value,
-        name: m.displayName || m.value,
-      }));
+      const data = models.map((m): ModelOption => {
+        const efforts = m.supportsEffort === false ? [] : (m.supportedEffortLevels ?? []);
+        return {
+          providerID: CLAUDE_PROVIDER_ID,
+          providerName: "Claude Code",
+          modelID: m.value,
+          name: m.displayName || m.value,
+          ...(efforts.length > 0 ? { efforts } : {}),
+          // Baris "Default (recommended)" = model Session tanpa pilihan.
+          ...(m.value === "default" ? { isDefault: true } : {}),
+        };
+      });
       modelsCache = { at: now(), data };
       return { ok: true, data };
     } catch (e) {
@@ -1179,8 +1211,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         return { ok: false, error: "SESSION_NOT_FOUND" };
       },
       remove,
-      async switchModel(sessionId, model) {
-        getOrCreate(sessionId, false).wantModel = selectedModel(model);
+      async switchModel(sessionId, model, effort = null) {
+        const live = getOrCreate(sessionId, false);
+        live.wantModel = selectedModel(model);
+        live.wantEffort =
+          effort !== null && EFFORT_LEVELS.has(effort) ? (effort as EffortLevel) : null;
         return { ok: true };
       },
       // Claude Code memakai permission mode, bukan agent percakapan ala

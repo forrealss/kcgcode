@@ -8,7 +8,7 @@ import type { AgentType } from "../../types";
 import { errorStatus, json, parseModelBody, readJson, serverError } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
-/** String non-kosong (ter-trim), selain itu null — body `permissionMode`. */
+/** String non-kosong (ter-trim), selain itu null — body `permissionMode` / `effort`. */
 function optionalString(raw: unknown): string | null {
   return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
 }
@@ -29,10 +29,11 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         try {
           const body = await readJson(req);
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { agentType, projectId, model, agent, permissionMode } = body.data as {
+          const { agentType, projectId, model, effort, agent, permissionMode } = body.data as {
             agentType?: unknown;
             projectId?: unknown;
             model?: unknown;
+            effort?: unknown;
             agent?: unknown;
             permissionMode?: unknown;
           };
@@ -40,6 +41,7 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
             agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
             projectId: typeof projectId === "string" ? projectId : "",
             model: parseModelBody(model),
+            effort: optionalString(effort),
             agent: typeof agent === "string" && agent.trim() !== "" ? agent.trim() : null,
             permissionMode: optionalString(permissionMode),
           });
@@ -89,10 +91,10 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
         }
       },
       /**
-       * Ganti model dan/atau agent (mode) pilihan Session — body
-       * `{ model: {providerID, modelID} | null, agent: string | null }`.
-       * `null` mengembalikan ke default opencode. Berlaku pada prompt
-       * berikutnya tanpa perlu restart Session.
+       * Ganti model, thinking effort, dan/atau agent (mode) pilihan Session —
+       * body `{ model: {providerID, modelID} | null, effort: string | null,
+       * agent: string | null }`. `null` mengembalikan ke default agent.
+       * Berlaku pada prompt berikutnya tanpa perlu restart Session.
        */
       PUT: async (req: BunRequest<"/api/sessions/:id">) => {
         try {
@@ -100,16 +102,24 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
           if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
           const {
             model: rawModel,
+            effort: rawEffort,
             agent: rawAgent,
             permissionMode: rawMode,
           } = body.data as {
             model?: unknown;
+            effort?: unknown;
             agent?: unknown;
             permissionMode?: unknown;
           };
           if (rawModel !== undefined) {
             const model = rawModel === null ? null : parseModelBody(rawModel);
             const res = sessionManager.setSessionModel(req.params.id, model);
+            if (!res.ok) {
+              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
+            }
+          }
+          if (rawEffort !== undefined) {
+            const res = sessionManager.setSessionEffort(req.params.id, optionalString(rawEffort));
             if (!res.ok) {
               return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
             }

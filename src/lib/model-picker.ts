@@ -2,10 +2,10 @@
  * Pemilihan model LLM — logika murni (tanpa DOM / fetch), dipisah agar dapat
  * diuji `bun test` seperti `lib/routes.ts` dan `lib/session-summary.ts`.
  *
- * Dipakai bersama oleh `components/sessions/ModelPicker.tsx` (ganti model
- * Session yang sedang berjalan) dan `components/sessions/SessionList.tsx`
- * (pilih model saat membuat Session) supaya keduanya memakai aturan kunci,
- * pencarian, dan pengelompokan yang sama.
+ * Dipakai bersama oleh `components/sessions/ModelPicker.tsx` (ganti model &
+ * thinking effort Session yang sedang berjalan) dan
+ * `components/sessions/SessionList.tsx` (pilih model saat membuat Session)
+ * supaya keduanya memakai aturan kunci, pencarian, dan pengelompokan yang sama.
  */
 
 import type { ModelOption, SessionModel } from "@/types";
@@ -98,6 +98,60 @@ export function activeModelLabel(
     (m) => m.providerID === model.providerID && m.modelID === model.modelID,
   );
   return found?.name ?? model.modelID;
+}
+
+/**
+ * Model daftar yang dipakai Session: pilihan eksplisit, atau baris
+ * `isDefault` untuk Session tanpa pilihan model (`null`).
+ */
+function findModel(
+  model: SessionModel | null,
+  models: readonly ModelOption[],
+): ModelOption | undefined {
+  if (model === null) return models.find((m) => m.isDefault);
+  return models.find((m) => m.providerID === model.providerID && m.modelID === model.modelID);
+}
+
+/**
+ * Tingkat thinking effort yang bisa dipilih untuk model Session. Kosong =
+ * model tanpa pilihan effort, atau daftar model belum termuat.
+ */
+export function modelEfforts(model: SessionModel | null, models: readonly ModelOption[]): string[] {
+  return findModel(model, models)?.efforts ?? [];
+}
+
+/**
+ * Effort setelah model diganti: dipertahankan bila model baru mendukungnya,
+ * selain itu kembali ke default model (`null`).
+ */
+export function carryEffort(
+  effort: string | null,
+  next: SessionModel | null,
+  models: readonly ModelOption[],
+): string | null {
+  return effort !== null && modelEfforts(next, models).includes(effort) ? effort : null;
+}
+
+/** Label effort yang dikenal. */
+const EFFORT_LABELS: Record<string, string> = {
+  none: "None",
+  minimal: "Minimal",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra high",
+  max: "Max",
+};
+
+/** `reasoning-high` -> `Reasoning high` (variant opencode tak dikenal). */
+function humanize(effort: string): string {
+  const words = effort.replace(/[-_.]+/g, " ").trim();
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** Label effort untuk tampilan (`xhigh` -> "Extra high"). */
+export function effortLabel(effort: string): string {
+  return EFFORT_LABELS[effort] ?? humanize(effort);
 }
 
 /** Batas panjang nama model di header (karakter) sebelum dipotong. */

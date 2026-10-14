@@ -60,6 +60,8 @@ export function SessionHeader({
   const isDark = theme === "dark";
   /** Model pilihan Session — dapat diganti live; null = default opencode. */
   const [model, setModel] = useState<SessionModel | null>(session.model);
+  /** Thinking effort pilihan Session (dipilih di dialog model); null = default. */
+  const [effort, setEffort] = useState<string | null>(session.effort ?? null);
 
   return (
     <header className="shrink-0">
@@ -79,6 +81,8 @@ export function SessionHeader({
             sessionId={session.id}
             model={model}
             onChanged={setModel}
+            effort={effort}
+            onEffortChange={setEffort}
             variant="heading"
           />
           <span className="hidden truncate px-2 font-mono text-[11px] text-muted-foreground sm:block">

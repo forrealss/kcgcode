@@ -45,6 +45,11 @@ export interface Session {
   title: string | null;
   /** Model LLM pilihan; null = model default opencode. */
   model: SessionModel | null;
+  /**
+   * Thinking effort pilihan — salah satu `ModelOption.efforts` model Session
+   * (Claude Code `effort`, variant model opencode). null = default model.
+   */
+  effort?: string | null;
   /** Agent (mode) pilihan; null = agent default opencode (build). */
   agent: string | null;
   /**

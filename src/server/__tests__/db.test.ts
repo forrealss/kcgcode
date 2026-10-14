@@ -525,3 +525,29 @@ test("migrasi: mode Claude Code lama di kolom agent pindah ke permission_mode", 
   again.close();
   rmTmp(dir);
 });
+
+test("migrasi: kolom effort ditambahkan (null = default model) dan tersimpan", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "kcg-effort-"));
+  const dbPath = path.join(dir, "kcg.sqlite");
+  const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, path TEXT NOT NULL UNIQUE, created_at INTEGER NOT NULL);
+    CREATE TABLE sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, agent_type TEXT NOT NULL, cwd TEXT NOT NULL, status TEXT NOT NULL, oc_session_id TEXT, model TEXT, agent TEXT, title TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    INSERT INTO projects VALUES ('p1', 'p', '/p', 1);
+    INSERT INTO sessions VALUES ('s1', 'p1', 'claude-code', '/p', 'stopped', NULL, NULL, NULL, NULL, 1, 1);
+  `);
+  db.close();
+
+  const store = openSessionStore(dbPath);
+  const before = store.getSession("s1");
+  expect(before.ok && before.data.effort).toBeNull();
+  expect(store.updateSessionEffort("s1", "xhigh").ok).toBe(true);
+  expect(store.updateSessionEffort("tidak-ada", "low").ok).toBe(false);
+  store.close();
+  const again = openSessionStore(dbPath);
+  const after = again.getSession("s1");
+  expect(after.ok && after.data.effort).toBe("xhigh");
+  again.close();
+  rmTmp(dir);
+});

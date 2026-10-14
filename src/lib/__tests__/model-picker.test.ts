@@ -6,12 +6,15 @@ import { describe, expect, test } from "bun:test";
 import type { ModelOption } from "@/types";
 import {
   activeModelLabel,
+  carryEffort,
   DEFAULT_MODEL_KEY,
   describeModelCount,
+  effortLabel,
   filterModels,
   groupModels,
   keyOfSessionModel,
   MODEL_NAME_MAX_LENGTH,
+  modelEfforts,
   modelKey,
   optionKey,
   parseModelKey,
@@ -201,5 +204,43 @@ describe("shortModelName", () => {
 
   test("label default tetap terbaca", () => {
     expect(shortModelName("Model default")).toBe("Model default");
+  });
+});
+
+describe("thinking effort", () => {
+  const CC = "claude-code";
+  const models: ModelOption[] = [
+    {
+      ...option(CC, "Claude Code", "default", "Default (recommended)"),
+      efforts: ["low", "medium", "high", "xhigh", "max"],
+      isDefault: true,
+    },
+    { ...option(CC, "Claude Code", "sonnet", "Sonnet"), efforts: ["low", "medium", "high", "max"] },
+    option(CC, "Claude Code", "haiku", "Haiku"),
+  ];
+  const sonnet = { providerID: CC, modelID: "sonnet" };
+  const haiku = { providerID: CC, modelID: "haiku" };
+
+  test("modelEfforts: model pilihan, baris isDefault untuk null, kosong bila tak ada", () => {
+    expect(modelEfforts(sonnet, models)).toEqual(["low", "medium", "high", "max"]);
+    expect(modelEfforts(null, models)).toEqual(["low", "medium", "high", "xhigh", "max"]);
+    expect(modelEfforts(haiku, models)).toEqual([]);
+    expect(modelEfforts({ providerID: CC, modelID: "x" }, models)).toEqual([]);
+    expect(modelEfforts(null, [models[1] as ModelOption])).toEqual([]);
+  });
+
+  test("carryEffort: dipertahankan bila didukung model baru, selain itu default", () => {
+    expect(carryEffort("high", sonnet, models)).toBe("high");
+    expect(carryEffort("xhigh", sonnet, models)).toBeNull();
+    expect(carryEffort("xhigh", null, models)).toBe("xhigh");
+    expect(carryEffort("low", haiku, models)).toBeNull();
+    expect(carryEffort(null, sonnet, models)).toBeNull();
+  });
+
+  test("label: dikenal dipetakan, variant opencode lain dimanusiakan", () => {
+    expect(effortLabel("xhigh")).toBe("Extra high");
+    expect(effortLabel("max")).toBe("Max");
+    expect(effortLabel("reasoning-high")).toBe("Reasoning high");
+    expect(effortLabel("thinking")).toBe("Thinking");
   });
 });

@@ -255,6 +255,8 @@ function fakeQuery() {
     end(): void;
     interrupted: number;
     models: string[];
+    /** `effortLevel` per `applyFlagSettings` (null = default model). */
+    efforts: (string | null)[];
     modes: string[];
     closed: boolean;
   };
@@ -269,6 +271,7 @@ function fakeQuery() {
     const q: FakeQ = {
       interrupted: 0,
       models: [],
+      efforts: [],
       modes: [],
       closed: false,
       push(m) {
@@ -288,8 +291,27 @@ function fakeQuery() {
       async setPermissionMode(mode) {
         q.modes.push(mode);
       },
+      async applyFlagSettings(settings) {
+        if ("effortLevel" in settings) q.efforts.push(settings.effortLevel ?? null);
+      },
       async supportedModels() {
-        return [{ value: "sonnet", displayName: "Sonnet", description: "" }];
+        return [
+          {
+            value: "default",
+            displayName: "Default (recommended)",
+            description: "",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
+          },
+          {
+            value: "sonnet",
+            displayName: "Sonnet",
+            description: "",
+            supportsEffort: true,
+            supportedEffortLevels: ["low", "medium", "high", "max"],
+          },
+          { value: "haiku-old", displayName: "Haiku", description: "" },
+        ];
       },
       async mcpServerStatus() {
         return [{ name: "fs", status: "connected" }];
@@ -625,14 +647,30 @@ describe("createClaudeClient", () => {
   test("model, agent, MCP, todos, hapus", async () => {
     const { client, calls, events, removed } = setup([SID]);
     const models = await client.model.list();
+    // Tingkat effort per model; baris "default" = model Session tanpa pilihan.
     expect(models).toEqual({
       ok: true,
       data: [
         {
           providerID: CLAUDE_PROVIDER_ID,
           providerName: "Claude Code",
+          modelID: "default",
+          name: "Default (recommended)",
+          efforts: ["low", "medium", "high", "xhigh", "max"],
+          isDefault: true,
+        },
+        {
+          providerID: CLAUDE_PROVIDER_ID,
+          providerName: "Claude Code",
           modelID: "sonnet",
           name: "Sonnet",
+          efforts: ["low", "medium", "high", "max"],
+        },
+        {
+          providerID: CLAUDE_PROVIDER_ID,
+          providerName: "Claude Code",
+          modelID: "haiku-old",
+          name: "Haiku",
         },
       ],
     });
@@ -680,6 +718,77 @@ describe("createClaudeClient", () => {
     expect((await client.session.remove(SID)).ok).toBe(true);
     expect(q?.closed).toBe(true);
     expect(removed).toEqual([SID]);
+  });
+});
+
+describe("thinking effort Claude Code", () => {
+  const sonnet = { providerID: CLAUDE_PROVIDER_ID, modelID: "sonnet" };
+
+  test("effort baru: spawn dengan opsi effort; tingkat tak dikenal diabaikan", async () => {
+    const { client, calls } = setup();
+    await client.session.switchModel(SID, sonnet, "xhigh");
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    expect(calls[0]?.options.model).toBe("sonnet");
+    expect(calls[0]?.options.effort).toBe("xhigh");
+
+    const other = "22222222-2222-4222-8222-222222222222";
+    await client.session.switchModel(other, null, "ultra");
+    await client.session.prompt({ sessionID: other, text: "b" });
+    await tick();
+    expect(calls[1]?.options.effort).toBeUndefined();
+  });
+
+  test("ganti effort pada proses hidup -> applyFlagSettings; sama tidak dikirim ulang", async () => {
+    const { client, calls } = setup();
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    const q = calls[0]?.query;
+    q?.push(state("idle"));
+    await tick();
+
+    await client.session.switchModel(SID, sonnet, "low");
+    await client.session.prompt({ sessionID: SID, text: "b" });
+    await client.session.switchModel(SID, sonnet, "low");
+    await client.session.prompt({ sessionID: SID, text: "c" });
+    expect(calls.length).toBe(1);
+    expect(q?.models).toEqual(["sonnet"]);
+    expect(q?.efforts).toEqual(["low"]);
+  });
+
+  test("kembali ke effort default -> proses diganti (resume) agar settings user berlaku", async () => {
+    const { client, calls } = setup();
+    await client.session.switchModel(SID, null, "max");
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    const q = calls[0]?.query;
+    q?.push({ type: "system", subtype: "init", permissionMode: "default" });
+    q?.push(state("running"));
+    q?.push(state("idle"));
+    await tick();
+
+    await client.session.switchModel(SID, null, null);
+    await client.session.prompt({ sessionID: SID, text: "b" });
+    await tick();
+    expect(q?.closed).toBe(true);
+    expect(calls.length).toBe(2);
+    expect(calls[1]?.options.resume).toBe(SID);
+    expect(calls[1]?.options.effort).toBeUndefined();
+  });
+
+  test("reset effort di tengah turn -> flag settings di-reset tanpa mengganti proses", async () => {
+    const { client, calls } = setup();
+    await client.session.switchModel(SID, null, "high");
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    const q = calls[0]?.query;
+    q?.push(state("running"));
+    await tick();
+
+    await client.session.switchModel(SID, null, null);
+    await client.session.prompt({ sessionID: SID, text: "b" });
+    expect(calls.length).toBe(1);
+    expect(q?.efforts).toEqual([null]);
   });
 });
 

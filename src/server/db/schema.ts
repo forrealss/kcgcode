@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   status TEXT NOT NULL CHECK (status IN ('running','stopped','crashed')),
   oc_session_id TEXT,
   model TEXT,
+  effort TEXT,
   agent TEXT,
   permission_mode TEXT,
   title TEXT,
@@ -216,6 +217,8 @@ export function runMigrations(db: Database): void {
   }
   // Model pilihan per Session (JSON `{providerID, modelID}`), NULL = default.
   ensureColumn(db, "sessions", "model", "ALTER TABLE sessions ADD COLUMN model TEXT");
+  // Thinking effort pilihan Session (`ModelOption.efforts`), NULL = default model.
+  ensureColumn(db, "sessions", "effort", "ALTER TABLE sessions ADD COLUMN effort TEXT");
   // Judul Session hasil generate opencode (SSE `session.updated`), NULL = belum ada.
   ensureColumn(db, "sessions", "title", "ALTER TABLE sessions ADD COLUMN title TEXT");
   // Custom instruction per Project (dikirim sebagai `system`), NULL = tidak ada.

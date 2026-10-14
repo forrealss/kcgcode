@@ -28,6 +28,7 @@ export function errorStatus(code: string): number {
     case "INVALID_PATH_CHARS":
     case "UNSUPPORTED_AGENT_TYPE":
     case "INVALID_PERMISSION_MODE":
+    case "INVALID_EFFORT":
     case "AGENT_PERMISSION_MODE_UNSUPPORTED":
     case "INVALID_SIZE":
     case "MODEL_NOT_FOUND":

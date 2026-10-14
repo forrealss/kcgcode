@@ -51,6 +51,8 @@ export interface FakeAgentClient extends AgentClient {
   /** Per prompt: lampiran, model (`provider/model` | null), agent, instruksi. */
   promptFilesCalls: AgentPromptFile[][];
   promptModels: (string | null)[];
+  /** Thinking effort yang berlaku per prompt (null = default model). */
+  promptEfforts: (string | null)[];
   promptAgents: (string | null)[];
   promptSystems: (string | null)[];
   /** Permission mode yang berlaku per prompt (null = default agent). */
@@ -73,12 +75,18 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
   /** Pilihan yang diterapkan per Session (switchModel/switchAgent/instructions). */
   const applied = new Map<
     string,
-    { model: string | null; agent: string | null; system: string | null; mode: string | null }
+    {
+      model: string | null;
+      effort: string | null;
+      agent: string | null;
+      system: string | null;
+      mode: string | null;
+    }
   >();
   const appliedFor = (id: string) => {
     let a = applied.get(id);
     if (!a) {
-      a = { model: null, agent: null, system: null, mode: null };
+      a = { model: null, effort: null, agent: null, system: null, mode: null };
       applied.set(id, a);
     }
     return a;
@@ -128,6 +136,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
     skillList: [{ name: "shadcn", description: "UI", location: null, source: "project" }],
     promptFilesCalls: [],
     promptModels: [],
+    promptEfforts: [],
     promptAgents: [],
     promptSystems: [],
     promptModes: [],
@@ -156,8 +165,10 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
         }
         return { ok: true };
       },
-      async switchModel(sessionID, model) {
-        appliedFor(sessionID).model = model ? `${model.providerID}/${model.modelID}` : null;
+      async switchModel(sessionID, model, effort = null) {
+        const a = appliedFor(sessionID);
+        a.model = model ? `${model.providerID}/${model.modelID}` : null;
+        a.effort = effort;
         return { ok: true };
       },
       async switchAgent(sessionID, agent) {
@@ -173,6 +184,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
         const a = appliedFor(sessionID);
         client.promptFilesCalls.push(files ?? []);
         client.promptModels.push(a.model);
+        client.promptEfforts.push(a.effort);
         client.promptAgents.push(a.agent);
         client.promptSystems.push(a.system);
         client.promptModes.push(a.mode);

@@ -165,6 +165,9 @@ function makeFakeSessionManager(): FakeSessionManager {
     setSessionModel() {
       return { ok: false, error: "not-used" };
     },
+    setSessionEffort() {
+      return { ok: false, error: "not-used" };
+    },
     setSessionAgent() {
       return { ok: false, error: "not-used" };
     },

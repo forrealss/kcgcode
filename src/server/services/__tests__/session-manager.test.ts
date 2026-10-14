@@ -2576,6 +2576,57 @@ test("setSessionModel(null) -> kembali default; session tak dikenal -> SESSION_N
   }
 });
 
+test("effort: dibawa createSession & setSessionEffort, diterapkan bersama model tiap prompt", async () => {
+  const h = freshHarness();
+  try {
+    const created = await h.sm.createSession({
+      agentType: "opencode",
+      projectId: "p1",
+      model: MODEL,
+      effort: "high",
+    });
+    if (!created.ok) throw new Error("createSession gagal");
+    const sid = created.session.id;
+    expect(created.session.effort).toBe("high");
+
+    await h.sm.sendFreeTextInput(sid, "pertama");
+    await flush();
+    // Kembali ke default model; model tetap.
+    expect(h.sm.setSessionEffort(sid, null).ok).toBe(true);
+    const stored = h.store.getSession(sid);
+    expect(stored.ok && stored.data.effort).toBeNull();
+    expect(stored.ok && stored.data.model).toEqual(MODEL);
+    await h.sm.sendFreeTextInput(sid, "kedua");
+    await flush();
+
+    const client = h.fake.clients.get("p1");
+    expect(client?.promptEfforts).toEqual(["high", null]);
+    expect(client?.promptModels).toEqual([
+      "kcgcode/kiro/claude-opus-5",
+      "kcgcode/kiro/claude-opus-5",
+    ]);
+  } finally {
+    h.close();
+  }
+});
+
+test("effort tidak valid -> INVALID_EFFORT; session tak dikenal -> SESSION_NOT_FOUND", async () => {
+  const h = freshHarness();
+  try {
+    const bad = await h.sm.createSession({ agentType: "opencode", projectId: "p1", effort: "-x" });
+    expect(bad.ok).toBe(false);
+    if (bad.ok) throw new Error("harusnya ditolak");
+    expect(bad.error).toBe("INVALID_EFFORT");
+    expect(h.store.listSessions()).toHaveLength(0);
+
+    const sid = await createSession(h);
+    expect(h.sm.setSessionEffort(sid, "a b").error).toBe("INVALID_EFFORT");
+    expect(h.sm.setSessionEffort("tidak-ada", "low").error).toBe("SESSION_NOT_FOUND");
+  } finally {
+    h.close();
+  }
+});
+
 test("listModels(projectId) -> daftar model dari server headless Project", async () => {
   const h = freshHarness();
   try {

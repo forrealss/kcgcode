@@ -212,8 +212,16 @@ export interface AgentClient {
     get(sessionID: string): Promise<Result<AgentSessionInfo>>;
     /** Hapus Session beserta riwayatnya. Session yang sudah tidak ada = sukses. */
     remove(sessionID: string): Promise<SimpleResult>;
-    /** Model untuk prompt berikutnya (`null` = default agent). */
-    switchModel(sessionID: string, model: ModelSelection | null): Promise<SimpleResult>;
+    /**
+     * Model + thinking effort untuk prompt berikutnya (`null` = default
+     * agent). `effort` = salah satu `ModelOption.efforts` model itu — variant
+     * model di opencode, `effort` di Claude Code; tanpa nilai = default model.
+     */
+    switchModel(
+      sessionID: string,
+      model: ModelSelection | null,
+      effort?: string | null,
+    ): Promise<SimpleResult>;
     /** Agent/mode untuk prompt berikutnya (`null` = default agent). */
     switchAgent(sessionID: string, agent: string | null): Promise<SimpleResult>;
     /** Instruksi tambahan Project (custom instruction); `null` = hapus. */

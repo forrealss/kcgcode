@@ -76,6 +76,14 @@ export const TURN_IDLE_TIMEOUT_MS = 300_000;
 export const SHUTDOWN_BUDGET_MS = 5000;
 
 /**
+ * Bentuk id thinking effort (`low`, `xhigh`, variant opencode mis.
+ * `reasoning-high`). Isi sebenarnya divalidasi agent per model.
+ */
+export function isEffortId(effort: string): boolean {
+  return /^[A-Za-z0-9][\w.-]{0,31}$/.test(effort);
+}
+
+/**
  * Tipe CLI_Agent yang dikenal. Tipe hanya aktif bila backend-nya diinjeksi
  * (lihat `SessionManagerOptions.backends`).
  */
@@ -86,6 +94,8 @@ export interface CreateSessionRequest {
   projectId: string;
   /** Model pilihan user; null/undefined = model default agent. */
   model?: SessionModel | null;
+  /** Thinking effort pilihan user (`ModelOption.efforts`); null/undefined = default model. */
+  effort?: string | null;
   /** Agent (mode) pilihan user; null/undefined = default agent. */
   agent?: string | null;
   /**
@@ -247,6 +257,11 @@ export interface SessionManager {
   sessionContext(sessionId: string): Promise<Result<SessionContext>>;
   /** Ganti model pilihan Session (`null` = kembali ke default opencode). */
   setSessionModel(sessionId: string, model: SessionModel | null): SimpleResult;
+  /**
+   * Ganti thinking effort Session (`null` = default model). Berlaku pada
+   * prompt berikutnya, diterapkan bersama model.
+   */
+  setSessionEffort(sessionId: string, effort: string | null): SimpleResult;
   /**
    * Ganti agent (mode) pilihan Session — `build`, `plan`, atau agent kustom
    * (`null` = default opencode). Berlaku pada prompt berikutnya.
@@ -509,6 +524,9 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       if (!known) return { ok: false, error: "MODEL_NOT_FOUND" };
     }
 
+    const effort = req.effort ?? null;
+    if (effort !== null && !isEffortId(effort)) return { ok: false, error: "INVALID_EFFORT" };
+
     // (5b) permission mode harus salah satu yang ditawarkan agent.
     const permissionMode = req.permissionMode ?? null;
     if (
@@ -540,6 +558,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
       ocSessionId: created.data.id,
       title: remoteTitle,
       model,
+      effort,
       agent: req.agent ?? null,
       permissionMode,
       createdAt,
@@ -873,6 +892,18 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   }
 
   /**
+   * Ganti thinking effort Session. Seperti model, diterapkan ke agent sebelum
+   * tiap prompt; tingkat yang tidak didukung model diabaikan/di-clamp agent.
+   */
+  function setSessionEffort(sessionId: string, effort: string | null): SimpleResult {
+    const cur = store.getSession(sessionId);
+    if (!cur.ok) return { ok: false, error: "SESSION_NOT_FOUND" };
+    if (effort !== null && !isEffortId(effort)) return { ok: false, error: "INVALID_EFFORT" };
+    const upd = store.updateSessionEffort(sessionId, effort);
+    return upd.ok ? { ok: true } : { ok: false, error: upd.error };
+  }
+
+  /**
    * Ganti agent (mode) pilihan Session. Berlaku untuk prompt berikutnya
    * (agent diterapkan sebelum tiap prompt).
    */
@@ -1094,7 +1125,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
         // kirim prompt; hasil turn tiba lewat event dan ditutup oleh
         // `session.execution.*` Session akar.
         const steps = [
-          () => client.session.switchModel(ocSessionId, cur.data.model),
+          () => client.session.switchModel(ocSessionId, cur.data.model, cur.data.effort ?? null),
           () => client.session.switchAgent(ocSessionId, cur.data.agent),
           () => client.session.instructions(ocSessionId, system),
           // Hanya agent yang punya konsep permission mode.
@@ -1287,6 +1318,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     refreshSkills,
     hasPendingSkillRefresh,
     setSessionModel,
+    setSessionEffort,
     setSessionAgent,
     setSessionPermissionMode,
     listCapabilities,

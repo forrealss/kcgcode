@@ -24,7 +24,7 @@ export function createSessionRepo(db: Database) {
   const q = {
     projectById: db.query("SELECT id FROM projects WHERE id = ?"),
     insertSession: db.query(
-      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, agent, permission_mode, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO sessions (id, project_id, agent_type, cwd, status, oc_session_id, model, effort, agent, permission_mode, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     ),
     getSession: db.query("SELECT * FROM sessions WHERE id = ?"),
     getSessionByOcId: db.query("SELECT * FROM sessions WHERE oc_session_id = ?"),
@@ -34,6 +34,7 @@ export function createSessionRepo(db: Database) {
       "UPDATE sessions SET oc_session_id = ?, updated_at = ? WHERE id = ?",
     ),
     updateSessionModel: db.query("UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?"),
+    updateSessionEffort: db.query("UPDATE sessions SET effort = ?, updated_at = ? WHERE id = ?"),
     updateSessionAgent: db.query("UPDATE sessions SET agent = ?, updated_at = ? WHERE id = ?"),
     updateSessionPermissionMode: db.query(
       "UPDATE sessions SET permission_mode = ?, updated_at = ? WHERE id = ?",
@@ -67,6 +68,7 @@ export function createSessionRepo(db: Database) {
           session.status,
           session.ocSessionId,
           session.model ? JSON.stringify(session.model) : null,
+          session.effort ?? null,
           session.agent ?? null,
           session.permissionMode ?? null,
           session.title ?? null,
@@ -121,6 +123,20 @@ export function createSessionRepo(db: Database) {
       try {
         if (!findRow(sessionId)) return errResult("SESSION_NOT_FOUND");
         q.updateSessionModel.run(model ? JSON.stringify(model) : null, Date.now(), sessionId);
+        return { ok: true, data: mapSession(findRow(sessionId) as SessionRow) };
+      } catch (e) {
+        return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);
+      }
+    },
+
+    /**
+     * Perbarui thinking effort pilihan Session (`null` = default model) tanpa
+     * mengubah status.
+     */
+    updateSessionEffort(sessionId: string, effort: string | null): Result<Session> {
+      try {
+        if (!findRow(sessionId)) return errResult("SESSION_NOT_FOUND");
+        q.updateSessionEffort.run(effort ?? null, Date.now(), sessionId);
         return { ok: true, data: mapSession(findRow(sessionId) as SessionRow) };
       } catch (e) {
         return errResult(`SESSION_UPDATE_FAILED: ${(e as Error).message}`);

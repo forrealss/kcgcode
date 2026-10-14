@@ -35,6 +35,7 @@ export interface SessionRow {
   status: string;
   oc_session_id: string | null;
   model: string | null;
+  effort?: string | null;
   agent: string | null;
   permission_mode?: string | null;
   title: string | null;
@@ -102,6 +103,7 @@ export function mapSession(r: SessionRow): Session {
     status: r.status as SessionStatus,
     ocSessionId: r.oc_session_id,
     model: parseModel(r.model),
+    effort: r.effort ?? null,
     agent: r.agent ?? null,
     permissionMode: r.permission_mode ?? null,
     title: r.title ?? null,

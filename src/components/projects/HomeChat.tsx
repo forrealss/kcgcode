@@ -126,8 +126,9 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   const [agentType, setAgentType] = useState<AgentType>(readPreferredAgentType);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Model & agent untuk Session baru; null = default opencode. */
+  /** Model, thinking effort & agent untuk Session baru; null = default agent. */
   const [model, setModel] = useState<SessionModel | null>(null);
+  const [effort, setEffort] = useState<string | null>(null);
   const [agent, setAgent] = useState<string | null>(null);
   /** Permission mode Session baru (agent dengan capability, mis. Claude Code). */
   const [permissionMode, setPermissionMode] = useState<string | null>(null);
@@ -146,6 +147,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     if (id !== selected?.id) {
       // Model/agent tersedia per Project (config opencode masing-masing).
       setModel(null);
+      setEffort(null);
       setAgent(null);
       setPermissionMode(null);
     }
@@ -158,6 +160,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     if (next !== agentType) {
       // Model & mode berasal dari backend masing-masing.
       setModel(null);
+      setEffort(null);
       setAgent(null);
       setPermissionMode(null);
     }
@@ -177,7 +180,14 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
     try {
       const res = await apiFetch("/api/sessions", {
         method: "POST",
-        body: JSON.stringify({ agentType, projectId: selected.id, model, agent, permissionMode }),
+        body: JSON.stringify({
+          agentType,
+          projectId: selected.id,
+          model,
+          effort,
+          agent,
+          permissionMode,
+        }),
       });
       const { session } = (await res.json()) as { session: Session };
       setPendingPrompt(session.id, text);
@@ -320,6 +330,8 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
                   sessionId={null}
                   model={model}
                   onChanged={setModel}
+                  effort={effort}
+                  onEffortChange={setEffort}
                   onAgentTypeChange={chooseAgentType}
                   variant="inline"
                 />

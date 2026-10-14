@@ -67,6 +67,8 @@ export interface SessionStore extends AuthRepo, TunnelRepo, PushRepo {
   updateSessionOcId(sessionId: string, ocSessionId: string | null): Result<Session>;
   /** Perbarui model pilihan Session; `null` = kembali ke default opencode. */
   updateSessionModel(sessionId: string, model: SessionModel | null): Result<Session>;
+  /** Perbarui thinking effort pilihan Session; `null` = default model. */
+  updateSessionEffort(sessionId: string, effort: string | null): Result<Session>;
   /** Perbarui agent (mode) pilihan Session; `null` = default opencode. */
   updateSessionAgent(sessionId: string, agent: string | null): Result<Session>;
   updateSessionPermissionMode(sessionId: string, mode: string | null): Result<Session>;

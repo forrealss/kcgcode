@@ -13,6 +13,14 @@ export interface ModelOption {
   modelID: string;
   /** Nama tampilan (fallback: modelID). */
   name: string;
+  /**
+   * Tingkat thinking effort yang didukung, urut dari terendah (Claude Code
+   * `supportedEffortLevels`, variant model opencode). Kosong/tidak ada =
+   * model tanpa pilihan effort.
+   */
+  efforts?: string[];
+  /** Model yang dipakai Session tanpa pilihan model (default agent). */
+  isDefault?: boolean;
 }
 
 /** Satu agent (mode percakapan) yang bisa dipilih di composer. */
