@@ -31,6 +31,7 @@ import {
   ContextSheet,
 } from "@/components/sessions/ContextPanel";
 import { FileDropOverlay } from "@/components/sessions/FileDropOverlay";
+import { ProcessingGlow } from "@/components/sessions/ProcessingGlow";
 import { SessionComposer, type SessionComposerHandle } from "@/components/sessions/SessionComposer";
 import { SessionHeader } from "@/components/sessions/SessionHeader";
 import { SessionTimeline } from "@/components/sessions/SessionTimeline";
@@ -41,6 +42,7 @@ import {
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
+import { useProcessingGlow } from "@/lib/appearance";
 import { CONVERSATION_MAX_W } from "@/lib/layout";
 import { collectReferences } from "@/lib/references";
 import { cn } from "@/lib/utils";
@@ -63,6 +65,7 @@ export interface SessionViewProps {
 
 export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const chat = useSessionChat({ session, onBack, onDeleted });
+  const glowEnabled = useProcessingGlow();
   /**
    * Riwayat belum tiba dari WebSocket. `messages` kosong di fase ini BUKAN
    * percakapan kosong — tampilkan kerangka, jangan empty-state. Pengecualian:
@@ -102,7 +105,15 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   return (
     // `data-vt-name`: tujuan transisi "to-session" — composer homepage meluas
     // menjadi seluruh area ini (lihat styles/globals.css).
-    <div data-vt-name="session-surface" className="flex h-full min-h-0 flex-col">
+    // `relative isolate`: acuan & stacking context `ProcessingGlow` (-z-10)
+    // agar glow tergambar di belakang isi Session, bukan di belakang halaman.
+    <div data-vt-name="session-surface" className="relative isolate flex h-full min-h-0 flex-col">
+      {/* Glow ala Siri di dasar layar selama model memproses — hanya bila
+          dinyalakan di Settings -> Appearance (default mati). Disembunyikan
+          saat ada permission/question pending — model sedang menunggu user,
+          bukan memproses. */}
+      <ProcessingGlow active={glowEnabled && chat.generating && chat.prompts.length === 0} />
+
       <SessionHeader
         session={session}
         status={chat.status}

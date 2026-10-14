@@ -8,12 +8,13 @@
  *                  nilai berubah (seperti AdwEntryRow "apply button").
  * - `ExpanderRow`  baris yang membuka isi tambahan di bawahnya (seperti
  *                  AdwExpanderRow): chevron berputar, isi berlatar redup.
- * - `SwitchRow` tidak dibutuhkan saat ini; `ComboRow` diwakili ActionRow +
- *   Select di suffix.
+ * - `SwitchRow`    seluruh baris jadi label switch (AdwSwitchRow).
+ * - `ComboRow` diwakili ActionRow + Select di suffix.
  */
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 export function PrefsGroup({
@@ -244,6 +245,49 @@ export function EntryRow({
           </button>
         )}
       </form>
+    </li>
+  );
+}
+
+/** AdwSwitchRow: seluruh baris jadi label switch. */
+export function SwitchRow({
+  id,
+  icon,
+  title,
+  subtitle,
+  checked,
+  disabled,
+  busy,
+  onChange,
+}: {
+  id: string;
+  icon: ReactNode;
+  title: string;
+  subtitle: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  busy?: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <li>
+      <label
+        htmlFor={id}
+        className={cn(
+          "flex min-h-14 items-center gap-3 px-4 py-2.5",
+          !disabled && "cursor-pointer",
+        )}
+      >
+        {icon}
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+          <span className="text-[15px] leading-5">{title}</span>
+          <span role="status" className="text-[13px] leading-snug text-muted-foreground">
+            {subtitle}
+          </span>
+        </span>
+        {busy && <Spinner className="size-4 text-muted-foreground" aria-hidden />}
+        <Switch id={id} checked={checked} disabled={disabled || busy} onCheckedChange={onChange} />
+      </label>
     </li>
   );
 }
