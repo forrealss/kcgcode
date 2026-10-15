@@ -5,8 +5,9 @@
  */
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { errorText } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
+import { deleteSession, resumeSession, stopSession } from "@/lib/session-api";
 import type { SessionChat } from "./types";
 
 interface UseSessionActionsOptions {
@@ -47,11 +48,11 @@ export function useSessionActions({
     setStarting(true);
     setError(null);
     try {
-      await apiFetch(`/api/sessions/${sessionId}`, { method: "POST" });
+      await resumeSession(sessionId);
       // Status baru dikirim gateway ke semua subscriber; tak perlu setState di sini.
       toast.success("Session resumed.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't resume the session.");
+      toast.error(errorText(e, "Couldn't resume the session."));
     } finally {
       setStarting(false);
     }
@@ -65,10 +66,10 @@ export function useSessionActions({
     setStopping(true);
     setError(null);
     try {
-      await apiFetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
+      await stopSession(sessionId);
       toast.success("Session stopped.");
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't stop the session.");
+      toast.error(errorText(e, "Couldn't stop the session."));
     } finally {
       setStopping(false);
     }
@@ -81,13 +82,13 @@ export function useSessionActions({
     setDeleting(true);
     setError(null);
     try {
-      await apiFetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+      await deleteSession(sessionId);
       setDeleteOpen(false);
       toast.success("Session deleted.");
       notifyDataChanged();
       (onDeleted ?? onBack)();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");
+      toast.error(errorText(e, "Couldn't delete the session."));
     } finally {
       setDeleting(false);
     }

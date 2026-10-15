@@ -2,7 +2,7 @@
  * Unit test Skills_Registry (skills.sh + CLI `skills`) — fetch & spawn di-mock,
  * tanpa jaringan maupun proses nyata.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { tmpdir } from "node:os";
 import {
   buildInstallArgs,
@@ -292,10 +292,20 @@ describe("createSkillsRegistry", () => {
     expect((await first).ok).toBe(true);
 
     exitCode = 1;
-    expect(await reg.install("/proj", "a/b", "c")).toEqual({
-      ok: false,
-      error: "SKILL_INSTALL_FAILED",
-    });
+    // Kegagalan CLI dicatat ke stderr server (beserta potongan stderr CLI).
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await reg.install("/proj", "a/b", "c")).toEqual({
+        ok: false,
+        error: "SKILL_INSTALL_FAILED",
+      });
+      expect(logged).toHaveBeenCalledWith(
+        "[kcg-code] skills add a/b --skill c gagal (exit 1):",
+        "boom",
+      );
+    } finally {
+      logged.mockRestore();
+    }
   });
 
   test("install: signal dibatalkan -> SKILL_INSTALL_CANCELLED; exit null -> TIMEOUT", async () => {
@@ -315,10 +325,19 @@ describe("createSkillsRegistry", () => {
 
     const spawnTimeout: SpawnFn = async () => ({ exitCode: null, stdout: "", stderr: "" });
     const reg2 = createSkillsRegistry({ spawn: spawnTimeout });
-    expect(await reg2.install("/p", "a/b", "c")).toEqual({
-      ok: false,
-      error: "SKILL_INSTALL_TIMEOUT",
-    });
+    const logged = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      expect(await reg2.install("/p", "a/b", "c")).toEqual({
+        ok: false,
+        error: "SKILL_INSTALL_TIMEOUT",
+      });
+      expect(logged).toHaveBeenCalledWith(
+        "[kcg-code] skills add a/b --skill c gagal (exit null):",
+        "",
+      );
+    } finally {
+      logged.mockRestore();
+    }
   });
 });
 

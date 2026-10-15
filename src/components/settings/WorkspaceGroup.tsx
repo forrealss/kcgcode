@@ -24,7 +24,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, errorText } from "@/lib/api";
 import { lockLabel } from "@/lib/auth";
 import type { AuthStatus } from "@/server/services/auth";
 import type { WorkspaceInfo } from "@/server/services/workspace";
@@ -48,7 +48,7 @@ export function WorkspaceGroup({ status }: { status: AuthStatus }) {
     } catch (e) {
       setState({
         phase: "error",
-        message: e instanceof ApiError ? e.message : "Couldn't load the workspace.",
+        message: errorText(e, "Couldn't load the workspace."),
       });
     }
   }, []);
@@ -230,7 +230,7 @@ function ChangeWorkspaceDialog({
         setBlocking(Array.isArray(list) ? (list as BlockingProject[]) : []);
       }
       if (err instanceof ApiError && err.code === "CURRENT_SECRET_INVALID") setSecret("");
-      setError(err instanceof ApiError ? err.message : "Couldn't change the workspace.");
+      setError(errorText(err, "Couldn't change the workspace."));
     } finally {
       setBusy(false);
     }

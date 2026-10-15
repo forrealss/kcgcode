@@ -7,7 +7,7 @@
  */
 import { ArrowRightIcon } from "lucide-react";
 import { AgentLogo } from "@/components/sessions/AgentLogo";
-import { useRouter } from "@/hooks/useRouter";
+import { spaLinkClick, useRouter } from "@/hooks/useRouter";
 import { formatRelativeTime, type ProjectOverview } from "@/lib/project-overview";
 import { projectPath, sessionPath } from "@/lib/routes";
 import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL } from "@/lib/session-status";
@@ -25,11 +25,7 @@ export function HomeRecentSessions({ overview, className }: HomeRecentSessionsPr
   if (recentSessions.length === 0) return null;
 
   // Tautan biasa (bukan tombol) agar buka-di-tab-baru tetap berfungsi.
-  const go = (e: React.MouseEvent<HTMLAnchorElement>, href: string) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-    e.preventDefault();
-    navigate(href);
-  };
+  const go = (href: string) => spaLinkClick(() => navigate(href));
 
   const allHref = projectPath(project.id);
 
@@ -46,7 +42,7 @@ export function HomeRecentSessions({ overview, className }: HomeRecentSessionsPr
         {sessionCount > recentSessions.length && (
           <a
             href={allHref}
-            onClick={(e) => go(e, allHref)}
+            onClick={go(allHref)}
             className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
             View all {sessionCount}
@@ -62,7 +58,7 @@ export function HomeRecentSessions({ overview, className }: HomeRecentSessionsPr
             <li key={session.id}>
               <a
                 href={href}
-                onClick={(e) => go(e, href)}
+                onClick={go(href)}
                 aria-label={`Open session ${title}, ${SESSION_STATUS_LABEL[session.status]}`}
                 className="group flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none"
               >

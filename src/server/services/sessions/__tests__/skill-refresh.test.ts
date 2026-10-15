@@ -6,7 +6,7 @@
  * Mocking boundary: `AgentBackend` + `AgentClient` di-mock seluruhnya
  * (`fake-agent.ts`); `bun:sqlite` asli. Harness bersama ada di `harness.ts`.
  */
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   clientOf,
   createSession,
@@ -178,6 +178,8 @@ test("refresh skill tertunda: menunggu SEMUA Session di Project selesai", async 
 
 test("refresh skill tertunda: dispose gagal -> tetap tertunda, dicoba lagi turn berikutnya", async () => {
   const { h, refreshed, fireRefreshTimers, disposeCount } = refreshHarness();
+  // Reload gagal dicatat sebagai peringatan (bukan error fatal).
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
   try {
     const sid = await createSession(h);
     await h.sm.sendFreeTextInput(sid, "x");
@@ -200,6 +202,10 @@ test("refresh skill tertunda: dispose gagal -> tetap tertunda, dicoba lagi turn 
     expect(disposeCount()).toBe(1);
     expect(h.sm.hasPendingSkillRefresh("p1")).toBe(true);
     expect(refreshed).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      "[kcg-code] refresh skill tertunda Project p1 gagal:",
+      "OC_DISPOSE_FAILED(500)",
+    );
 
     fail = false;
     await h.sm.sendFreeTextInput(sid, "y");
@@ -210,6 +216,7 @@ test("refresh skill tertunda: dispose gagal -> tetap tertunda, dicoba lagi turn 
     expect(h.sm.hasPendingSkillRefresh("p1")).toBe(false);
     expect(refreshed).toEqual(["p1"]);
   } finally {
+    warn.mockRestore();
     h.close();
   }
 });

@@ -25,6 +25,7 @@
  * (kirim/stop, slot Mode, susunan baris mobile & desktop).
  */
 import { type Ref, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { AgentModeSlot } from "@/components/sessions/AgentModeSlot";
 import { ComposerActionSheet } from "@/components/sessions/ComposerActionSheet";
 import { ComposerSuggestions } from "@/components/sessions/ComposerSuggestions";
 import { DropPlate } from "@/components/sessions/DropPlate";
@@ -41,18 +42,13 @@ import { usePermissionModes } from "@/hooks/usePermissionModes";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { agentQuery } from "@/lib/agent-types";
-import { ApiError, apiErrorMessage, apiUploadFile } from "@/lib/api";
+import { apiErrorMessage, apiUploadFile, errorText } from "@/lib/api";
 import { composerPlaceholder, extractMentionedFiles } from "@/lib/composer";
 import { CONVERSATION_MAX_W } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import type { ClientMessage } from "@/ws-protocol";
-import {
-  ComposerModeSlot,
-  DesktopComposerRow,
-  MobileComposerRow,
-  SendOrStopButton,
-} from "./ComposerControls";
+import { DesktopComposerRow, MobileComposerRow, SendOrStopButton } from "./ComposerControls";
 import { ComposerTextarea } from "./ComposerTextarea";
 import { useComposerAttachments } from "./useComposerAttachments";
 import { useStackedLayout } from "./useStackedLayout";
@@ -223,7 +219,7 @@ export function SessionComposer({
       mention.close();
       slash.close();
     } catch (e) {
-      reportError(e instanceof ApiError ? e.message : apiErrorMessage("ERROR"));
+      reportError(errorText(e, apiErrorMessage("ERROR")));
     } finally {
       setSending(false);
     }
@@ -418,13 +414,14 @@ export function SessionComposer({
               disabled={!canInput}
               textarea={textareaEl}
               mode={
-                <ComposerModeSlot
-                  session={session}
+                <AgentModeSlot
+                  permissionPicker={permissionPicker}
+                  permissionMode={permissionMode}
+                  projectId={session.projectId}
+                  agentType={session.agentType}
+                  sessionId={session.id}
                   agent={agent}
                   onAgentChange={setAgent}
-                  permissionPicker={permissionPicker}
-                  hasPermissionModes={hasPermissionModes}
-                  permissionMode={permissionMode}
                   disabled={!canInput}
                 />
               }

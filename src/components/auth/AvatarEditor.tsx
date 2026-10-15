@@ -16,7 +16,7 @@ import { ProfileAvatar } from "@/components/auth/ProfileAvatar";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { refreshAuth } from "@/lib/auth";
 import { AVATAR_PRESET_IDS, type AvatarPresetId } from "@/lib/avatar-presets";
 import { cn } from "@/lib/utils";
@@ -49,7 +49,7 @@ export function AvatarEditor({ profile, onResult }: AvatarEditorProps) {
       onResult({ ok });
       setOpen(false);
     } catch (e) {
-      onResult({ error: e instanceof ApiError ? e.message : "Couldn't update the avatar." });
+      onResult({ error: errorText(e, "Couldn't update the avatar.") });
     } finally {
       setBusy(null);
     }

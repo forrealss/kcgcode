@@ -6,6 +6,7 @@
 import { LockIcon, SettingsIcon, ShieldAlertIcon } from "lucide-react";
 import { ProfileAvatar } from "@/components/auth/ProfileAvatar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { spaLinkClick } from "@/hooks/useRouter";
 import { lockNow, useAuth } from "@/lib/auth";
 import { settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -48,11 +49,7 @@ export function SidebarAccount({ active, onNavigate }: SidebarAccountProps) {
       <div className="flex min-w-0 items-center gap-1">
         <a
           href={settingsPath()}
-          onClick={(e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-            e.preventDefault();
-            onNavigate(settingsPath());
-          }}
+          onClick={spaLinkClick(() => onNavigate(settingsPath()))}
           aria-current={active ? "page" : undefined}
           className={cn(
             "flex min-w-0 flex-1 items-center gap-2.5 rounded-md p-1.5 text-left transition-colors outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring",

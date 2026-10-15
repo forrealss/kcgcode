@@ -28,7 +28,7 @@ import {
   readPreferredAgentType,
   storePreferredAgentType,
 } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { keyOfSessionModel } from "@/lib/model-picker";
 import type { AgentType, ModelOption, Session, SessionModel } from "@/types";
 import { ModelSearchList } from "./ModelSearchList";
@@ -81,7 +81,7 @@ export function NewSessionDialog({
       })
       .catch((e: unknown) => {
         if (stale) return;
-        setModelsError(e instanceof ApiError ? e.message : "Failed to load models");
+        setModelsError(errorText(e, "Failed to load models"));
         setModels([]);
       })
       .finally(() => {
@@ -109,7 +109,7 @@ export function NewSessionDialog({
       onCreated(session);
       toast.success("Session created.");
     } catch (e) {
-      setCreateError(e instanceof ApiError ? e.message : "Failed to create session");
+      setCreateError(errorText(e, "Failed to create session"));
     } finally {
       setCreating(false);
       setPendingKey(null);

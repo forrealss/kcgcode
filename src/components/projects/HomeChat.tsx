@@ -24,13 +24,12 @@ import {
   FolderPlusIcon,
   SendHorizontalIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { HomeBackdrop } from "@/components/projects/HomeBackdrop";
 import { HomeRecentSessions } from "@/components/projects/HomeRecentSessions";
-import { AgentPicker } from "@/components/sessions/AgentPicker";
+import { AgentModeSlot } from "@/components/sessions/AgentModeSlot";
 import { ComposerSuggestions } from "@/components/sessions/ComposerSuggestions";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
-import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
 import { SlashCommandDropdown } from "@/components/sessions/SlashCommandDropdown";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -54,7 +53,7 @@ import { usePermissionModes } from "@/hooks/usePermissionModes";
 import { useRouter } from "@/hooks/useRouter";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { agentQuery, readPreferredAgentType, storePreferredAgentType } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
 import { pickHeadline } from "@/lib/headlines";
 import { setPendingPrompt } from "@/lib/pending-prompt";
@@ -65,9 +64,8 @@ import logo from "@/logo.svg";
 import type { AgentType, Session, SessionModel } from "@/types";
 
 /**
- * Slot "Mode" composer homepage: permission mode untuk agent yang memilikinya
- * (mis. Claude Code), pemilih agent untuk lainnya (opencode). Kosong selama
- * capability agent belum termuat (hindari kedip).
+ * Slot "Mode" composer homepage — `AgentModeSlot` tanpa Session: capability
+ * permission mode dimuat per Project & agent terpilih.
  */
 function HomeModeControl(props: {
   projectId: string;
@@ -84,23 +82,15 @@ function HomeModeControl(props: {
     null,
     props.onPermissionModeChange,
   );
-  if (picker.modes === null) return null;
-  if (picker.modes.length > 0) {
-    return (
-      <PermissionModePicker
-        picker={picker}
-        active={props.permissionMode}
-        disabled={props.disabled}
-      />
-    );
-  }
   return (
-    <AgentPicker
+    <AgentModeSlot
+      permissionPicker={picker}
+      permissionMode={props.permissionMode}
       projectId={props.projectId}
       agentType={props.agentType}
       sessionId={null}
       agent={props.agent}
-      onChanged={props.onAgentChange}
+      onAgentChange={props.onAgentChange}
       disabled={props.disabled}
     />
   );
@@ -156,36 +146,32 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
   const slash = useSlashCommands(
     selected ? `/api/projects/${selected.id}/commands${agentQuery(agentType)}` : null,
   );
-  useEffect(
-    () =>
-      slash.setOnPick((next) => {
-        setText(next);
-        requestAnimationFrame(() => textareaRef.current?.focus());
-      }),
-    [slash],
-  );
+  /** Terapkan teks hasil pilihan slash command + kembalikan fokus ke input. */
+  const applyPicked = useCallback((next: string) => {
+    setText(next);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+  useEffect(() => slash.setOnPick(applyPicked), [slash, applyPicked]);
+
+  /** Model, effort, agent & permission mode kembali ke default agent. */
+  const resetSessionOptions = () => {
+    setModel(null);
+    setEffort(null);
+    setAgent(null);
+    setPermissionMode(null);
+  };
 
   const choose = (id: string) => {
-    if (id !== selected?.id) {
-      // Model/agent tersedia per Project (config opencode masing-masing).
-      setModel(null);
-      setEffort(null);
-      setAgent(null);
-      setPermissionMode(null);
-    }
+    // Model/agent tersedia per Project (config opencode masing-masing).
+    if (id !== selected?.id) resetSessionOptions();
     setProjectId(id);
     if (typeof localStorage !== "undefined") localStorage.setItem(LAST_PROJECT_KEY, id);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const chooseAgentType = (next: AgentType) => {
-    if (next !== agentType) {
-      // Model & mode berasal dari backend masing-masing.
-      setModel(null);
-      setEffort(null);
-      setAgent(null);
-      setPermissionMode(null);
-    }
+    // Model & mode berasal dari backend masing-masing.
+    if (next !== agentType) resetSessionOptions();
     setAgentType(next);
     storePreferredAgentType(next);
     // Tanpa fokus ke textarea: dipanggil dari dialog ModelPicker yang masih
@@ -219,7 +205,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       notifyDataChanged();
       navigate(sessionPath(selected.id, session.id), { transition: "to-session" });
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to start a new session");
+      setError(errorText(e, "Failed to start a new session"));
       setSending(false);
     }
   };
@@ -261,9 +247,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
               highlighted={slash.highlighted}
               onPick={(i) => {
                 const next = slash.pick(i);
-                if (next === null) return;
-                setText(next);
-                requestAnimationFrame(() => textareaRef.current?.focus());
+                if (next !== null) applyPicked(next);
               }}
             />
           </ComposerSuggestions>

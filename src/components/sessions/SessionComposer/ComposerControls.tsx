@@ -1,6 +1,6 @@
 /**
- * Kontrol di sekitar textarea composer: tombol kirim/Stop, slot "Mode"
- * (permission mode atau agent), dan susunan barisnya per varian.
+ * Kontrol di sekitar textarea composer: tombol kirim/Stop dan susunan
+ * barisnya per varian (slot "Mode" = `AgentModeSlot`).
  *
  * - Desktop (`DesktopComposerRow`): attach | textarea | Mode | kirim/stop.
  * - Mobile (`MobileComposerRow`): satu tombol aksi (`Sheet`) | textarea |
@@ -13,15 +13,11 @@
  */
 import { PaperclipIcon, PlusIcon, SendHorizontalIcon, SquareIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { AgentPicker } from "@/components/sessions/AgentPicker";
-import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
-import type { UsePermissionModesResult } from "@/hooks/usePermissionModes";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { cn } from "@/lib/utils";
-import type { Session } from "@/types";
 
 export interface SendOrStopButtonProps {
   /** Model merespon DAN Session berjalan — tampil tombol Stop. */
@@ -81,56 +77,12 @@ export function SendOrStopButton({
   );
 }
 
-export interface ComposerModeSlotProps {
-  session: Session;
-  /** Agent (mode) pilihan Session; null = default. */
-  agent: string | null;
-  onAgentChange: (agent: string | null) => void;
-  permissionPicker: UsePermissionModesResult;
-  /** Agent memiliki permission mode (capability sudah termuat & tidak kosong). */
-  hasPermissionModes: boolean;
-  /** Permission mode aktif. */
-  permissionMode: string | null;
-  disabled: boolean;
-}
-
-/**
- * Slot "Mode" desktop: permission mode (agent yang memilikinya) atau agent;
- * kosong selama capability belum termuat (hindari kedip).
- */
-export function ComposerModeSlot({
-  session,
-  agent,
-  onAgentChange,
-  permissionPicker,
-  hasPermissionModes,
-  permissionMode,
-  disabled,
-}: ComposerModeSlotProps) {
-  if (hasPermissionModes) {
-    return (
-      <PermissionModePicker picker={permissionPicker} active={permissionMode} disabled={disabled} />
-    );
-  }
-  if (permissionPicker.modes === null) return null;
-  return (
-    <AgentPicker
-      projectId={session.projectId}
-      agentType={session.agentType}
-      sessionId={session.id}
-      agent={agent}
-      onChanged={onAgentChange}
-      disabled={disabled}
-    />
-  );
-}
-
 export interface DesktopComposerRowProps {
   stacked: boolean;
   disabled: boolean;
   /** `ComposerTextarea` ber-key `composer-textarea`. */
   textarea: ReactNode;
-  /** Slot "Mode" (`ComposerModeSlot`). */
+  /** Slot "Mode" (`AgentModeSlot`). */
   mode: ReactNode;
   /** `SendOrStopButton`. */
   sendOrStop: ReactNode;

@@ -39,7 +39,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { AUDIT_BADGE_CLASS, AUDIT_LABEL, formatInstalls } from "@/lib/skills-catalog";
 import { cn } from "@/lib/utils";
 import type { RegistrySkill, SkillAudit } from "@/server/services/skills-registry";
@@ -115,7 +115,7 @@ export function InstallSkillDialog({
         if (!cancelled) {
           setAudit({
             phase: "error",
-            message: e instanceof ApiError ? e.message : "Failed to load the security audit.",
+            message: errorText(e, "Failed to load the security audit."),
           });
         }
       });

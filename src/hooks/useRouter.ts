@@ -8,6 +8,7 @@
  * - `navigate()` memakai History API (`pushState`) + registry listener;
  *   `useRouter()` berlangganan event `popstate` (tombol back/forward browser)
  *   dan registry tersebut (navigasi dari dalam aplikasi).
+ * - `spaLinkClick()` = handler klik tautan SPA (modifier-klik tetap ke browser).
  * - `navigate(path, { transition })` membungkus perubahan dalam View
  *   Transitions API (bila didukung & pengguna tidak memilih reduced motion):
  *   DOM baru dirender sinkron (`flushSync`) di dalam callback sehingga browser
@@ -15,7 +16,7 @@
  *   halaman. Tanpa dukungan -> navigasi biasa, tanpa animasi.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { type MouseEvent, useCallback, useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 
 const ROUTE_CHANGE_EVENT = "kcg-code-route-change";
@@ -65,6 +66,20 @@ export function navigate(path: string, options: NavigateOptions = {}): void {
   void vt.finished.finally(() => {
     if (root.dataset.vt === transition) delete root.dataset.vt;
   });
+}
+
+/**
+ * Handler `onClick` tautan `<a href>` yang dinavigasi SPA: klik kiri biasa
+ * -> `preventDefault()` lalu `onNavigate()`. Ctrl/Cmd/Shift-klik & klik
+ * tengah dibiarkan ke browser, sehingga buka-di-tab-baru tetap berfungsi
+ * seperti tautan biasa.
+ */
+export function spaLinkClick(onNavigate: () => void): (e: MouseEvent<HTMLAnchorElement>) => void {
+  return (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    e.preventDefault();
+    onNavigate();
+  };
 }
 
 /**

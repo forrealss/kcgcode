@@ -22,8 +22,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
-import { apiFetch, errorText } from "@/lib/api";
+import { errorText } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
+import { deleteSession, resumeSession, stopSession } from "@/lib/session-api";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 
@@ -44,8 +45,8 @@ export function SidebarSessionMenu({ session, title, onDeleted }: SidebarSession
   const [deleting, setDeleting] = useState(false);
   const running = session.status === "running";
 
-  const stop = () => apiFetch(`/api/sessions/${session.id}/stop`, { method: "POST" });
-  const start = () => apiFetch(`/api/sessions/${session.id}`, { method: "POST" });
+  const stop = () => stopSession(session.id);
+  const start = () => resumeSession(session.id);
 
   const run = async (kind: Exclude<Busy, null>) => {
     setBusy(kind);
@@ -81,7 +82,7 @@ export function SidebarSessionMenu({ session, title, onDeleted }: SidebarSession
   const remove = async () => {
     setDeleting(true);
     try {
-      await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+      await deleteSession(session.id);
       setConfirmDelete(false);
       toast.success("Session deleted.");
       notifyDataChanged();

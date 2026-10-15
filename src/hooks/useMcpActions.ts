@@ -12,7 +12,7 @@
 import { useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import { agentQuery } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, errorText } from "@/lib/api";
 import { MCP_ACTION_DONE, type McpAction } from "@/lib/project-extensions";
 import type { AgentType, McpServerInfo } from "@/types";
 
@@ -58,7 +58,7 @@ export function useMcpActions(
         toast.success(`${MCP_ACTION_DONE[action]} ${name}`);
       } catch (e) {
         onUpdatedRef.current(agent, e instanceof ApiError ? serverList(e.body) : null);
-        const message = e instanceof ApiError ? e.message : "Couldn't reach the server.";
+        const message = errorText(e, "Couldn't reach the server.");
         toast.error(`${name}: ${message}`);
       } finally {
         setRunning((m) => {

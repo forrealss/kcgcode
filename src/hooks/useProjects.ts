@@ -6,7 +6,7 @@
  * Komponen halaman tinggal merender hasilnya.
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import {
   buildProjectOverviews,
   filterProjectOverviews,
@@ -58,7 +58,7 @@ export function useProjects(): UseProjectsResult {
       setOverviews(buildProjectOverviews(projects, sessions));
     } catch (e) {
       setOverviews([]);
-      setLoadError(e instanceof ApiError ? e.message : "Failed to load projects");
+      setLoadError(errorText(e, "Failed to load projects"));
     } finally {
       setLoading(false);
     }

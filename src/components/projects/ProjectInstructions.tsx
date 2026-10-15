@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Project } from "@/types";
 
@@ -115,7 +115,7 @@ function InstructionsDialog({
       onSaved(body.project);
       toast.success(body.project.instructions ? "Instructions saved." : "Instructions cleared.");
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to save instructions");
+      setError(errorText(e, "Failed to save instructions"));
     } finally {
       setSaving(false);
     }

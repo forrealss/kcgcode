@@ -43,7 +43,7 @@ import { SecurityGroup } from "@/components/settings/SecurityGroup";
 import { WorkspaceGroup } from "@/components/settings/WorkspaceGroup";
 import { Spinner } from "@/components/ui/spinner";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
-import { useRouter } from "@/hooks/useRouter";
+import { spaLinkClick, useRouter } from "@/hooks/useRouter";
 import { apiFetch, errorText } from "@/lib/api";
 import { refreshAuth, useAuth } from "@/lib/auth";
 import { type SettingsSection, settingsPath } from "@/lib/routes";
@@ -122,11 +122,7 @@ const WIDE_QUERY = "(min-width: 1024px)";
 /** Tautan SPA (Ctrl/Cmd-klik tetap membuka tab baru). */
 function useNavLink() {
   const { navigate } = useRouter();
-  return (href: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-    e.preventDefault();
-    navigate(href);
-  };
+  return (href: string) => spaLinkClick(() => navigate(href));
 }
 
 export function SettingsPage({
@@ -376,11 +372,7 @@ export function SectionLink({
   return (
     <a
       href={href}
-      onClick={(e) => {
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-        e.preventDefault();
-        navigate(href);
-      }}
+      onClick={spaLinkClick(() => navigate(href))}
       className="font-medium text-foreground underline underline-offset-2"
     >
       {children}
