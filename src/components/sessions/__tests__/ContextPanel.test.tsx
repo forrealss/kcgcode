@@ -25,6 +25,8 @@ const base: SessionContext = {
   changes: [],
   todos: [],
   mcp: [],
+  usage: null,
+  compacting: false,
   live: true,
 };
 
@@ -252,5 +254,81 @@ test("isi sheet identik dengan kartu (bagian yang sama)", () => {
   });
   for (const title of ["Environment", "MCP", "Task list", "Reference"]) {
     expect(card).toContain(title);
+  }
+});
+
+// ---- Context window ----
+
+const usage = {
+  usedTokens: 50_000,
+  maxTokens: 200_000,
+  percent: 25,
+  autoCompactAt: 167_000,
+  model: "claude-sonnet",
+  categories: [
+    { name: "Messages", tokens: 30_000 },
+    { name: "System tools", tokens: 20_000 },
+  ],
+  measuredAt: 1,
+};
+
+function usageHtml(
+  ctx: Partial<SessionContext>,
+  props: { onCompact?: () => void; canCompact?: boolean; compacting?: boolean } = {},
+): string {
+  return renderToStaticMarkup(
+    <ContextPanel
+      context={{ ...base, ...ctx }}
+      references={[]}
+      loading={false}
+      onClose={() => {}}
+      {...props}
+    />,
+  );
+}
+
+test("context window: meter, persentase, ambang auto-compact, rincian kategori", () => {
+  const out = usageHtml({ usage });
+  expect(out).toContain("Context window");
+  expect(out).toContain("25%");
+  expect(out).toContain("50k");
+  expect(out).toContain("of 200k tokens");
+  expect(out).toContain("claude-sonnet");
+  expect(out).toContain('aria-valuenow="25"');
+  expect(out).toContain("Auto-compacts at 167k");
+  expect(out).toContain("Messages");
+  expect(out).toContain("30k");
+  // Tanpa onCompact -> tombol compact tidak tampil.
+  expect(out).not.toContain("Compact conversation");
+});
+
+test("context window belum terukur: pesan sesuai status Session", () => {
+  expect(usageHtml({ usage: null })).toContain("Measured after the agent replies");
+  expect(usageHtml({ usage: null, live: false })).toContain("Start the session to see usage");
+});
+
+/** Tag pembuka tombol yang memuat `label` (untuk memeriksa atributnya). */
+function buttonTag(out: string, label: string): string {
+  const at = out.indexOf(label);
+  return at < 0
+    ? ""
+    : out.slice(
+        out.lastIndexOf("<button", at),
+        out.indexOf(">", out.lastIndexOf("<button", at)) + 1,
+      );
+}
+
+test("tombol compact: aktif saat boleh; saat compacting terkunci dengan spinner", () => {
+  const ready = usageHtml({ usage }, { onCompact: () => {}, canCompact: true });
+  expect(buttonTag(ready, "Compact conversation")).not.toContain('disabled=""');
+  const busy = usageHtml({ usage }, { onCompact: () => {}, canCompact: false });
+  expect(buttonTag(busy, "Compact conversation")).toContain('disabled=""');
+  // Status compacting dari WS maupun dari context poll.
+  for (const out of [
+    usageHtml({ usage }, { onCompact: () => {}, canCompact: true, compacting: true }),
+    usageHtml({ usage, compacting: true }, { onCompact: () => {}, canCompact: true }),
+  ]) {
+    expect(out).toContain("Compacting…");
+    expect(out).not.toContain("Compact conversation");
   }
 });

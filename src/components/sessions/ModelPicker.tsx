@@ -37,7 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import {
   activeModelLabel,
   carryEffort,
@@ -46,6 +46,7 @@ import {
   modelEfforts,
   shortModelName,
 } from "@/lib/model-picker";
+import { updateSessionSettings } from "@/lib/session-api";
 import type { AgentType, ModelOption, SessionModel } from "@/types";
 
 export interface ModelPickerProps {
@@ -131,7 +132,7 @@ export function ModelPicker({
       })
       .catch((e: unknown) => {
         if (stale) return;
-        setError(e instanceof ApiError ? e.message : "Failed to load model list");
+        setError(errorText(e, "Failed to load model list"));
         setModels([]);
       })
       .finally(() => {
@@ -149,19 +150,16 @@ export function ModelPicker({
     setError(null);
     try {
       if (sessionId !== null) {
-        await apiFetch(`/api/sessions/${sessionId}`, {
-          method: "PUT",
-          body: JSON.stringify({
-            model: next,
-            ...(nextEffort !== effort ? { effort: nextEffort } : {}),
-          }),
+        await updateSessionSettings(sessionId, {
+          model: next,
+          ...(nextEffort !== effort ? { effort: nextEffort } : {}),
         });
       }
       onChanged(next);
       if (nextEffort !== effort) onEffortChange?.(nextEffort);
       setOpen(false);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to change model");
+      setError(errorText(e, "Failed to change model"));
     } finally {
       setSaving(false);
     }
@@ -174,14 +172,11 @@ export function ModelPicker({
     setError(null);
     try {
       if (sessionId !== null) {
-        await apiFetch(`/api/sessions/${sessionId}`, {
-          method: "PUT",
-          body: JSON.stringify({ effort: next }),
-        });
+        await updateSessionSettings(sessionId, { effort: next });
       }
       onEffortChange?.(next);
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : "Failed to change thinking effort");
+      setError(errorText(e, "Failed to change thinking effort"));
     } finally {
       setSaving(false);
     }

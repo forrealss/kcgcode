@@ -12,6 +12,7 @@
 import { CheckIcon, CopyIcon, FolderIcon, FolderOpenIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { SecretInput } from "@/components/auth/SecretInput";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,9 +24,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, errorText } from "@/lib/api";
 import { lockLabel } from "@/lib/auth";
-import { cn } from "@/lib/utils";
 import type { AuthStatus } from "@/server/services/auth";
 import type { WorkspaceInfo } from "@/server/services/workspace";
 
@@ -48,7 +48,7 @@ export function WorkspaceGroup({ status }: { status: AuthStatus }) {
     } catch (e) {
       setState({
         phase: "error",
-        message: e instanceof ApiError ? e.message : "Couldn't load the workspace.",
+        message: errorText(e, "Couldn't load the workspace."),
       });
     }
   }, []);
@@ -230,7 +230,7 @@ function ChangeWorkspaceDialog({
         setBlocking(Array.isArray(list) ? (list as BlockingProject[]) : []);
       }
       if (err instanceof ApiError && err.code === "CURRENT_SECRET_INVALID") setSecret("");
-      setError(err instanceof ApiError ? err.message : "Couldn't change the workspace.");
+      setError(errorText(err, "Couldn't change the workspace."));
     } finally {
       setBusy(false);
     }
@@ -283,24 +283,17 @@ function ChangeWorkspaceDialog({
                     >
                       Current {lockLabel(kind)}
                     </label>
-                    <input
+                    <SecretInput
                       id={secretId}
-                      type="password"
-                      inputMode={kind === "pin" ? "numeric" : undefined}
+                      kind={kind}
                       autoComplete="current-password"
-                      maxLength={kind === "pin" ? 12 : 128}
                       value={secret}
                       disabled={busy}
-                      onChange={(e) => {
-                        setSecret(
-                          kind === "pin" ? e.target.value.replace(/\D/g, "") : e.target.value,
-                        );
+                      onChange={(v) => {
+                        setSecret(v);
                         setError(null);
                       }}
-                      className={cn(
-                        "h-8 w-full bg-transparent text-base outline-none sm:text-[15px]",
-                        kind === "pin" && "tracking-[0.3em]",
-                      )}
+                      className="h-8"
                     />
                   </div>
                 )}

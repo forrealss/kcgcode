@@ -55,7 +55,7 @@ import {
   SidebarRail,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { useRouter } from "@/hooks/useRouter";
+import { spaLinkClick, useRouter } from "@/hooks/useRouter";
 import type { UseSidebarDataResult } from "@/hooks/useSidebarData";
 import { type AppRoute, projectPath, projectsPath, sessionPath, skillsPath } from "@/lib/routes";
 import { SESSION_STATUS_DOT, SESSION_STATUS_LABEL } from "@/lib/session-status";
@@ -98,12 +98,8 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
     navigate(path);
     if (isMobile) setOpenMobile(false);
   };
-  const go = (path: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
-    // Biarkan ctrl/cmd/middle-click membuka tab baru seperti tautan biasa.
-    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-    e.preventDefault();
-    navigateAndClose(path);
-  };
+  // Ctrl/cmd/middle-click tetap membuka tab baru seperti tautan biasa.
+  const go = (path: string) => spaLinkClick(() => navigateAndClose(path));
 
   const activeProjectId =
     route.name === "project" || route.name === "session" ? route.projectId : null;

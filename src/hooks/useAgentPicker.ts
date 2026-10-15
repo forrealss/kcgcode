@@ -8,7 +8,8 @@
  */
 import { useCallback, useRef, useState } from "react";
 import { agentQuery } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
+import { updateSessionSettings } from "@/lib/session-api";
 import type { AgentOption, AgentType } from "@/types";
 
 export interface UseAgentPickerResult {
@@ -62,7 +63,7 @@ export function useAgentPicker(
         const body = (await res.json()) as { agents: AgentOption[] };
         setAgents(body.agents);
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Failed to load agent list");
+        setError(errorText(e, "Failed to load agent list"));
         setAgents([]);
       } finally {
         inFlight.current = false;
@@ -79,15 +80,11 @@ export function useAgentPicker(
       setError(null);
       try {
         if (sessionId !== null) {
-          await apiFetch(`/api/sessions/${sessionId}`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ agent: name }),
-          });
+          await updateSessionSettings(sessionId, { agent: name });
         }
         onChangedRef.current(name);
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Failed to change agent");
+        setError(errorText(e, "Failed to change agent"));
       } finally {
         saveInFlight.current = false;
         setSaving(false);

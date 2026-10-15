@@ -10,7 +10,13 @@
  *   "Deny" (diteruskan mengikuti mekanisme penyelesaian Requirement 6).
  */
 import { describe, expect, test } from "bun:test";
-import { getPromptActions, getPromptQuestions, groupPrompts } from "@/lib/prompts";
+import {
+  collectAnswer,
+  getPromptActions,
+  getPromptQuestions,
+  groupPrompts,
+  toggleChoice,
+} from "@/lib/prompts";
 import type { InteractivePrompt, PromptResponse } from "@/types";
 
 function makePrompt(overrides: Partial<InteractivePrompt> = {}): InteractivePrompt {
@@ -162,5 +168,29 @@ describe("groupPrompts — pengelompokan permission identik (bug kartu nyepam)",
 
   test("daftar kosong -> tanpa grup", () => {
     expect(groupPrompts([])).toHaveLength(0);
+  });
+});
+
+describe("toggleChoice / collectAnswer — state jawaban kartu pertanyaan", () => {
+  test("multi-select: toggle menambah lalu menghapus label, urut klik", () => {
+    const a = toggleChoice(undefined, "B", true);
+    const b = toggleChoice(a, "A", true);
+    expect([...b]).toEqual(["B", "A"]);
+    expect([...toggleChoice(b, "B", true)]).toEqual(["A"]);
+    // Set asal tidak dimutasi (aman untuk state React).
+    expect([...b]).toEqual(["B", "A"]);
+  });
+
+  test("radio: pilihan baru menggantikan; pilih ulang tetap terpilih", () => {
+    const a = toggleChoice(undefined, "A", false);
+    expect([...toggleChoice(a, "B", false)]).toEqual(["B"]);
+    expect([...toggleChoice(a, "A", false)]).toEqual(["A"]);
+  });
+
+  test("collectAnswer: label terpilih + teks kustom (di-trim) bila diisi", () => {
+    expect(collectAnswer(new Set(["A", "B"]), "  lain  ")).toEqual(["A", "B", "lain"]);
+    expect(collectAnswer(new Set(["A"]), "   ")).toEqual(["A"]);
+    expect(collectAnswer(undefined, "teks")).toEqual(["teks"]);
+    expect(collectAnswer(undefined, undefined)).toEqual([]);
   });
 });

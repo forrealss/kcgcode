@@ -4,10 +4,12 @@
  * - Glow saat memproses: glow ala Siri di dasar layar Session selama model
  *   merespon (`ProcessingGlow`). Default mati; preferensi per perangkat
  *   (`lib/appearance`).
+ * - Estimasi biaya: harga estimasi tiap balasan di samping jumlah tokennya.
+ *   Default mati (hanya estimasi; langganan tidak ditagih per token).
  * - Voice input: bahasa dikte suara di composer (`lib/speech`). Default
  *   Bahasa Indonesia; per perangkat.
  */
-import { LanguagesIcon, SparklesIcon } from "lucide-react";
+import { CircleDollarSignIcon, LanguagesIcon, SparklesIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useId } from "react";
 import { PrefsGroup, SwitchRow } from "@/components/settings/prefs";
@@ -18,7 +20,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { setProcessingGlowEnabled, useProcessingGlow } from "@/lib/appearance";
+import {
+  setProcessingGlowEnabled,
+  setShowCostEnabled,
+  useProcessingGlow,
+  useShowCost,
+} from "@/lib/appearance";
 import {
   SPEECH_LANG_OPTIONS,
   type SpeechLangPref,
@@ -27,6 +34,7 @@ import {
   useSpeechLangPref,
 } from "@/lib/speech";
 
+/** Ikon bundar baris preferensi. */
 function RowIcon({ children }: { children: ReactNode }) {
   return (
     <span
@@ -47,6 +55,7 @@ const VOICE_DESCRIPTION: Record<ReturnType<typeof speechSupport>, string> = {
 
 export function AppearanceGroup() {
   const glow = useProcessingGlow();
+  const showCost = useShowCost();
   const lang = useSpeechLangPref();
   const langId = useId();
 
@@ -64,6 +73,21 @@ export function AppearanceGroup() {
           subtitle="A colorful glow along the bottom of the screen while an agent is working. Applies to this device."
           checked={glow}
           onChange={setProcessingGlowEnabled}
+        />
+      </PrefsGroup>
+
+      <PrefsGroup title="Usage">
+        <SwitchRow
+          id="show-cost-switch"
+          icon={
+            <RowIcon>
+              <CircleDollarSignIcon />
+            </RowIcon>
+          }
+          title="Show estimated cost"
+          subtitle="Adds the estimated price of each reply next to its token count. An estimate only — subscription plans aren't billed per token. Applies to this device."
+          checked={showCost}
+          onChange={setShowCostEnabled}
         />
       </PrefsGroup>
 

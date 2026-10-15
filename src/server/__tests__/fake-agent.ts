@@ -9,6 +9,7 @@
  */
 import type {
   AgentOption,
+  ContextUsage,
   FileChange,
   McpServerInfo,
   ModelOption,
@@ -43,11 +44,15 @@ export interface FakeAgentClient extends AgentClient {
   /** Jeda simulasi sebelum tiap prompt selesai (ms) — uji race. */
   promptDelays: number[];
   todos: TodoItem[];
+  /** Pemakaian context window yang dilaporkan `session.contextUsage`. */
+  usage: ContextUsage | null;
   fileChanges: FileChange[];
   availableFiles: string[];
   availableModels: ModelOption[];
   availableAgents: AgentOption[];
   mcpServers: McpServerInfo[];
+  /** Hasil `mcp.setEnabled` / `mcp.reconnect` (untuk mensimulasikan kegagalan). */
+  mcpActionResult: Res;
   skillList: SkillInfo[];
   commandList: SlashCommandInfo[];
   /** Per prompt: lampiran, model (`provider/model` | null), agent, instruksi. */
@@ -112,6 +117,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
     goneRequests: new Set<string>(),
     promptDelays: [],
     todos: [],
+    usage: null,
     fileChanges: [],
     availableFiles: [
       "src/App.tsx",
@@ -135,6 +141,7 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
       { name: "context7", status: "connected", error: null },
       { name: "broken", status: "failed", error: "spawn ENOENT" },
     ],
+    mcpActionResult: { ok: true },
     skillList: [{ name: "shadcn", description: "UI", location: null, source: "project" }],
     commandList: [{ name: "review", description: "Review changes", argumentHint: "[pr#]" }],
     promptFilesCalls: [],
@@ -216,6 +223,9 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
         calls.push(`session.todos:${sessionID}`);
         return { ok: true, data: client.todos };
       },
+      async contextUsage() {
+        return { ok: true, data: client.usage };
+      },
     },
     permission: {
       async reply({ requestID, decision }) {
@@ -254,6 +264,19 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
       async list() {
         calls.push("mcp.list");
         return { ok: true, data: client.mcpServers };
+      },
+      async setEnabled(name, enabled) {
+        calls.push(`mcp.setEnabled:${name}:${enabled}`);
+        if (!client.mcpActionResult.ok) return fail(client.mcpActionResult, "AGENT_MCP_FAILED");
+        client.mcpServers = client.mcpServers.map((s) =>
+          s.name === name ? { ...s, status: enabled ? "connected" : "disabled", error: null } : s,
+        );
+        return { ok: true };
+      },
+      async reconnect(name) {
+        calls.push(`mcp.reconnect:${name}`);
+        if (!client.mcpActionResult.ok) return fail(client.mcpActionResult, "AGENT_MCP_FAILED");
+        return { ok: true };
       },
     },
     skill: {

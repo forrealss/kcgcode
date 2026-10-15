@@ -13,13 +13,21 @@
  * - `tool_use` -> `session.tool.input.started` + `session.tool.called`;
  *   `tool_result` -> `session.tool.success` / `session.tool.failed`.
  * - `system/api_retry` -> `session.retry.scheduled`.
+ * - Sub-agent (tool `Agent`/`Task`): pesannya datang di stream yang sama
+ *   dengan `parent_tool_use_id` = id tool call pemicunya — konten itu tetap
+ *   masuk pesan turn, ditandai `parentToolID` agar UI mengelompokkannya di
+ *   bawah kartu sub-agent. Status/statistiknya -> `agent.subagent`.
+ * - Turn ditutup pemilik translator (`endTurn`); konten yang datang tanpa
+ *   prompt dari bridge (mis. agent dibangunkan sub-agent latar belakang yang
+ *   selesai) membuka turn baru.
  *
  * Nama tool & key input dinormalisasi (`Read` -> `read`, `file_path` ->
  * `filePath`) agar renderer, Reference, dan label izin langsung bekerja.
  */
 import { randomUUID } from "node:crypto";
 import type { TodoItem } from "../../../types";
-import type { AgentEvent } from "../types";
+import { todosFromInput } from "../todos";
+import type { AgentEvent, AgentEventData } from "../types";
 
 /** Batas panjang output tool yang diteruskan (hindari blob raksasa di DB). */
 export const TOOL_OUTPUT_MAX_LENGTH = 50_000;
@@ -76,26 +84,6 @@ export function permissionTarget(input: Record<string, unknown>): string | null 
     if (typeof v === "string" && v.trim() !== "") return v;
   }
   return null;
-}
-
-/** Task list dari input `TodoWrite` (`{ todos: [{ content, status }] }`). */
-export function todosFromInput(input: unknown): TodoItem[] | null {
-  if (typeof input !== "object" || input === null) return null;
-  const raw = (input as { todos?: unknown }).todos;
-  if (!Array.isArray(raw)) return null;
-  const out: TodoItem[] = [];
-  for (const t of raw) {
-    if (typeof t !== "object" || t === null) continue;
-    const { content, status, priority } = t as Record<string, unknown>;
-    if (typeof content !== "string") continue;
-    out.push({
-      content,
-      status: typeof status === "string" ? status : "pending",
-      // TodoWrite Claude Code tidak punya prioritas — UI tetap butuh nilai.
-      priority: typeof priority === "string" ? priority : "medium",
-    });
-  }
-  return out;
 }
 
 /** Teks dari konten `tool_result` (string atau array blok). */
@@ -176,17 +164,42 @@ export class ClaudeTurnTranslator {
     });
   }
 
+  /** Turn selesai (idle): konten berikutnya membuka turn & pesan baru. */
+  endTurn(): void {
+    this.messageId = null;
+  }
+
+  /**
+   * Status/statistik sub-agent (pesan `task_*` CLI) — ditempel ke pesan turn
+   * aktif; sub-agent latar belakang yang bekerja saat agent utama idle
+   * membuka turn baru (agent memang sedang bekerja).
+   */
+  subagent(
+    patch: Omit<AgentEventData<"agent.subagent">, "sessionID" | "assistantMessageID">,
+  ): void {
+    const assistantMessageID = this.ensureTurn();
+    this.emit({
+      type: "agent.subagent",
+      data: { sessionID: this.sessionID, assistantMessageID, ...patch },
+    });
+  }
+
   /** Pastikan ada pesan assistant (event datang tanpa prompt dari bridge). */
   private ensureTurn(): string {
     if (this.messageId === null) this.beginTurn();
     return this.messageId as string;
   }
 
-  /** Kirim satu blok teks utuh (tanpa streaming). */
-  private emitWholeText(kind: "text" | "reasoning", text: string): void {
+  /** Kirim satu blok teks utuh (tanpa streaming). `lane` = sub-agent pemiliknya. */
+  private emitWholeText(kind: "text" | "reasoning", text: string, lane = ""): void {
     const assistantMessageID = this.ensureTurn();
     const ordinal = this.ordinals[kind]++;
-    const base = { sessionID: this.sessionID, assistantMessageID, ordinal };
+    const base = {
+      sessionID: this.sessionID,
+      assistantMessageID,
+      ordinal,
+      ...(lane ? { parentToolID: lane } : {}),
+    };
     if (kind === "text") {
       this.emit({ type: "session.text.started", data: base });
       this.emit({ type: "session.text.ended", data: { ...base, text } });
@@ -245,6 +258,7 @@ export class ClaudeTurnTranslator {
       sessionID: this.sessionID,
       assistantMessageID: this.messageId,
       ordinal: cur.ordinal,
+      ...(lane ? { parentToolID: lane } : {}),
     };
     if (ev.type === "content_block_delta") {
       const delta = ev.delta as { type?: unknown; text?: unknown; thinking?: unknown } | undefined;
@@ -284,6 +298,7 @@ export class ClaudeTurnTranslator {
     if (!message || !Array.isArray(message.content)) return {};
     const apiMsgId = typeof message.id === "string" ? message.id : null;
     const wasStreamed = apiMsgId !== null && this.streamed.has(apiMsgId);
+    const lane = typeof msg.parent_tool_use_id === "string" ? msg.parent_tool_use_id : "";
     const effects: TranslateEffects = {};
     for (const raw of message.content) {
       if (typeof raw !== "object" || raw === null) continue;
@@ -293,20 +308,26 @@ export class ClaudeTurnTranslator {
         if (wasStreamed) continue;
         const text = block.type === "text" ? block.text : block.thinking;
         if (typeof text !== "string" || text === "") continue;
-        this.emitWholeText(block.type === "text" ? "text" : "reasoning", text);
+        this.emitWholeText(block.type === "text" ? "text" : "reasoning", text, lane);
         continue;
       }
       if (block.type === "tool_use" || block.type === "server_tool_use") {
         if (typeof block.id !== "string" || typeof block.name !== "string") continue;
         const assistantMessageID = this.ensureTurn();
         const name = toolName(block.name);
-        const base = { sessionID: this.sessionID, assistantMessageID, id: block.id };
+        const base = {
+          sessionID: this.sessionID,
+          assistantMessageID,
+          id: block.id,
+          ...(lane ? { parentToolID: lane } : {}),
+        };
         this.emit({ type: "session.tool.input.started", data: { ...base, name } });
         this.emit({
           type: "session.tool.called",
           data: { ...base, name, input: normalizeToolInput(block.input) },
         });
-        if (block.name === "TodoWrite") {
+        // Task list milik agent utama — TodoWrite sub-agent tidak menimpanya.
+        if (block.name === "TodoWrite" && !lane) {
           const todos = todosFromInput(block.input);
           if (todos) effects.todos = todos;
         }

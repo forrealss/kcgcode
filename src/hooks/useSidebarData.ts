@@ -18,7 +18,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { handleAgentNotification } from "@/lib/agent-notify";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { onDataChanged } from "@/lib/data-events";
 import { groupSessionsByProject, type SidebarProjectGroup } from "@/lib/sidebar-groups";
 import type { Project, Session } from "@/types";
@@ -59,7 +59,7 @@ export function useSidebarData(pathname: string): UseSidebarDataResult {
       setLoadError(null);
     } catch (e) {
       if (seq !== requestSeq.current) return;
-      setLoadError(e instanceof ApiError ? e.message : "Failed to load sessions");
+      setLoadError(errorText(e, "Failed to load sessions"));
     } finally {
       if (seq === requestSeq.current) setLoaded(true);
     }

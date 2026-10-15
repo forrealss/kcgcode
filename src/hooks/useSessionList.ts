@@ -10,8 +10,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
+import { deleteSession, resumeSession, stopSession } from "@/lib/session-api";
 import { pluralSessions, pruneSelection, toggleSelection } from "@/lib/session-selection";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
 import type { Session } from "@/types";
@@ -94,7 +95,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
         const body = (await res.json()) as { sessions: Session[] };
         setSessions(body.sessions.filter((s) => s.projectId === projectId));
       } catch (e) {
-        setLoadError(e instanceof ApiError ? e.message : "Failed to load sessions");
+        setLoadError(errorText(e, "Failed to load sessions"));
       } finally {
         setLoading(false);
       }
@@ -156,12 +157,12 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     async (sessionId: string) => {
       setStopping(sessionId);
       try {
-        await apiFetch(`/api/sessions/${sessionId}/stop`, { method: "POST" });
+        await stopSession(sessionId);
         toast.success("Session stopped.");
         await refresh();
         notifyDataChanged();
       } catch (e) {
-        toast.error(e instanceof ApiError ? e.message : "Couldn't stop the session.");
+        toast.error(errorText(e, "Couldn't stop the session."));
       } finally {
         setStopping(null);
       }
@@ -174,12 +175,12 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     async (sessionId: string) => {
       setStarting(sessionId);
       try {
-        await apiFetch(`/api/sessions/${sessionId}`, { method: "POST" });
+        await resumeSession(sessionId);
         toast.success("Session resumed.");
         await refresh();
         notifyDataChanged();
       } catch (e) {
-        toast.error(e instanceof ApiError ? e.message : "Couldn't resume the session.");
+        toast.error(errorText(e, "Couldn't resume the session."));
       } finally {
         setStarting(null);
       }
@@ -200,13 +201,13 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     if (!session) return;
     setDeleting(session.id);
     try {
-      await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
+      await deleteSession(session.id);
       setPendingDelete(null);
       toast.success("Session deleted.");
       await refresh();
       notifyDataChanged();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");
+      toast.error(errorText(e, "Couldn't delete the session."));
     } finally {
       setDeleting(null);
     }
@@ -247,7 +248,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     for (const [i, id] of ids.entries()) {
       setDeleting(id);
       try {
-        await apiFetch(`/api/sessions/${id}`, { method: "DELETE" });
+        await deleteSession(id);
       } catch {
         failed.push(id);
       }
@@ -285,7 +286,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
       notifyDataChanged();
       onDeleted?.();
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't remove the project.");
+      toast.error(errorText(e, "Couldn't remove the project."));
     } finally {
       setDeletingProject(false);
     }

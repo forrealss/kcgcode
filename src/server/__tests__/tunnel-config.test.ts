@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { parseTunnelApiUrl, resolveTunnelConfig } from "../services/tunnel-config";
 
 describe("tunnel API URL", () => {
@@ -25,10 +25,18 @@ describe("tunnel API URL", () => {
     expect(resolveTunnelConfig("https://env.example.com/", "https://baked.example.com")).toEqual({
       apiUrl: "https://env.example.com",
     });
-    // Invalid env falls back to the baked-in value instead of breaking.
-    expect(resolveTunnelConfig("ftp://nope", "https://baked.example.com")).toEqual({
-      apiUrl: "https://baked.example.com",
-    });
+    // Invalid env falls back to the baked-in value instead of breaking (and warns).
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(resolveTunnelConfig("ftp://nope", "https://baked.example.com")).toEqual({
+        apiUrl: "https://baked.example.com",
+      });
+      expect(warn).toHaveBeenCalledWith(
+        "[kcg-code] KCG_TUNNEL_API_URL is not a valid http(s) URL; ignoring it.",
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("the repo never ships a baked-in URL (stamped only at pack time)", async () => {

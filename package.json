@@ -1,6 +1,6 @@
 {
   "name": "kcg-code",
-  "version": "0.4.0",
+  "version": "0.7.1",
   "description": "Control CLI AI agents (OpenCode / Claude Code) from your phone — mobile PWA + local headless bridge.",
   "license": "MIT",
   "type": "module",

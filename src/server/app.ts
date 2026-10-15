@@ -13,145 +13,30 @@
  * - `reconcileOnStartup()` dipanggil sebelum `Bun.serve` menerima koneksi
  *   (Requirement 2.4).
  *
+ * Bagian perakitan ada di `./bootstrap/`: kontrak publik (`types`), inti
+ * Session + gateway (`session-core`), kunci aplikasi & tunnel (`access`),
+ * koneksi WebSocket (`ws-connections`), tabel rute API (`api-routes`), asset
+ * statis & shell SPA (`static-routes`), dan urutan shutdown (`shutdown`).
+ *
  * Dipisah dari `src/index.ts` (entry) agar dapat diuji (task 20.2) dengan
  * injeksi `config`, `store`, dan `spawn` mock — tanpa mengimpor HTML.
  */
 
-import path from "node:path";
-import { type BunRequest, type HTMLBundle, type Server, type ServerWebSocket, serve } from "bun";
-import { type AppConfig, loadConfig } from "../config";
-import { openSessionStore, type SessionStore } from "../db";
-import {
-  PUBLIC_DIR,
-  resolveEffectiveDbPath,
-  resolveEffectiveUploadsDir,
-  resolveFrpcConfigPath,
-} from "../paths";
-import { createClaudeBackend } from "./agents/claude/client";
-import { createOpencodeBackend } from "./agents/opencode/backend";
-import { checkOpencodeVersion, OPENCODE_UPGRADE_REQUIRED } from "./agents/opencode/version";
-import type { AgentBackend } from "./agents/types";
+import { serve } from "bun";
+import { loadConfig } from "../config";
+import { openSessionStore } from "../db";
+import { resolveEffectiveUploadsDir } from "../paths";
+import { autoStartSelectedTunnel, createAccess } from "./bootstrap/access";
+import { createApiRoutes } from "./bootstrap/api-routes";
+import { createSessionCore } from "./bootstrap/session-core";
+import { createShutdown } from "./bootstrap/shutdown";
+import { publicAssetRoutes, spaRoutes } from "./bootstrap/static-routes";
+import type { KcgServer, KcgServerOptions } from "./bootstrap/types";
+import { createWsConnections, startAuthSweep, type WsData } from "./bootstrap/ws-connections";
 import { resolveHostname } from "./host";
-import { authRoutes } from "./routes/auth.routes";
-import { guardRoutes, originAllowed, readSessionToken } from "./routes/auth-guard";
-import { metaRoutes } from "./routes/meta.routes";
-import { passkeyRoutes } from "./routes/passkeys.routes";
-import { projectsRoutes } from "./routes/projects.routes";
-import { pushRoutes } from "./routes/push.routes";
-import { sessionsRoutes } from "./routes/sessions.routes";
-import { skillsRoutes } from "./routes/skills.routes";
-import { tunnelRoutes } from "./routes/tunnel.routes";
-import type { ApiRouteContext } from "./routes/types";
-import { uploadsRoutes } from "./routes/uploads.routes";
-import { workspaceRoutes } from "./routes/workspace.routes";
-import { type AttachmentManager, createAttachmentManager } from "./services/attachments";
-import { type AuthService, createAuthService } from "./services/auth";
-import { createPasskeyService } from "./services/auth-passkeys";
-import { createFrpcInstaller } from "./services/frpc-installer";
-import { createNotificationService, type NotificationService } from "./services/notifications";
-import { createProjectManager, type ProjectManager } from "./services/project-manager";
-import { createSessionManager, type SessionManager } from "./services/session-manager";
-import { createSkillInstallJobs } from "./services/skill-install-jobs";
-import {
-  createSkillsRegistry,
-  isValidSkillId,
-  isValidSource,
-  type SkillsRegistry,
-} from "./services/skills-registry";
-import { createTunnelManager, type TunnelManager } from "./services/tunnel";
-import { createTunnelApi } from "./services/tunnel-api";
-import { resolveTunnelConfig } from "./services/tunnel-config";
-import { createLhrManager, type LhrManager } from "./services/tunnel-lhr";
-import { createUpdateChecker, type UpdateChecker } from "./services/update-check";
-import {
-  createWebSocketGateway,
-  type Subscriber,
-  type WebSocketGateway,
-} from "./services/websocket-gateway";
-import { bunWsSubscriber, dispatchClientMessage } from "./services/ws-transport";
+import { createUpdateChecker } from "./services/update-check";
 
-/**
- * Data per-koneksi WebSocket: id sesi login pemiliknya (null = kunci belum
- * diatur saat koneksi dibuka). Dipakai untuk menutup socket saat sesi itu
- * dicabut / terkunci.
- */
-type WsData = { authSessionId: string | null };
-
-export interface KcgServerOptions {
-  config?: AppConfig;
-  store?: SessionStore;
-  /** Injeksi backend agent opencode v2 (untuk pengujian). */
-  opencode?: AgentBackend;
-  /** Injeksi backend Claude Code (Agent SDK) untuk pengujian. */
-  claude?: AgentBackend;
-  /** Injeksi Skills_Registry (skills.sh + CLI `skills`) untuk pengujian. */
-  skillsRegistry?: SkillsRegistry;
-  /** Injeksi Auth_Service (mis. hash cepat untuk test). */
-  auth?: AuthService;
-  /**
-   * Factory Tunnel_Manager (test menyuntik API/spawn palsu). Menerima
-   * dependensi yang hanya diketahui composition root.
-   */
-  tunnel?: (deps: {
-    store: SessionStore;
-    auth: AuthService;
-    port: number;
-    hostname: string;
-  }) => TunnelManager;
-  /** Factory tunnel localhost.run (test menyuntik spawn palsu). */
-  lhr?: (deps: {
-    store: SessionStore;
-    auth: AuthService;
-    port: number;
-    hostname: string;
-  }) => LhrManager;
-  /** Direktori lampiran gambar upload (default: `~/.kcgcode/data/uploads`). */
-  uploadsRoot?: string;
-  hostname?: string;
-  port?: number;
-  /** Fetch untuk layanan Web Push (test menyuntik palsu). */
-  pushFetch?: typeof fetch;
-  /** Pengecek versi baru di npm (default: aktif hanya di mode `cli`). */
-  updates?: UpdateChecker;
-  /** Shell SPA untuk rute halaman terdaftar (`spaPaths`; default: 404). */
-  spa?: Response | HTMLBundle;
-  /**
-   * Rute halaman yang menyajikan shell SPA — didaftarkan eksplisit di entry
-   * (`src/index.ts`) persis seperti daftar rute SPA kcgcode; path lain 404.
-   */
-  spaPaths?: string[];
-  /**
-   * Asset frontend hasil build (`dist/web`) per path URL — dipakai binary
-   * global sebagai pengganti bundling HTML saat runtime.
-   */
-  assets?: Record<string, () => Response>;
-}
-
-export interface KcgServer {
-  server: Server<WsData>;
-  store: SessionStore;
-  projectManager: ProjectManager;
-  sessionManager: SessionManager;
-  gateway: WebSocketGateway;
-  /** Job instalasi skill (diekspos untuk pengujian). */
-  skillInstalls: ApiRouteContext["skillInstalls"];
-  /** Kunci aplikasi (diekspos untuk pengujian & CLI). */
-  auth: AuthService;
-  /** Tunnel publik (diekspos untuk dashboard terminal & pengujian). */
-  tunnel: TunnelManager;
-  /** Tunnel localhost.run (diekspos untuk dashboard terminal). */
-  lhr: LhrManager;
-  /** Notifikasi agent (WS + Web Push) — diekspos untuk pengujian. */
-  notifications: NotificationService;
-  /** Versi baru di npm (dashboard terminal & `/api/meta`). */
-  updates: UpdateChecker;
-  /** Provider tunnel terpilih: "kcg" | "lhr". */
-  tunnelProvider: () => "kcg" | "lhr";
-  /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
-  apiRoutePatterns: string[];
-  /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
-  close(): Promise<void>;
-}
+export type { KcgServer, KcgServerOptions } from "./bootstrap/types";
 
 /**
  * Port HTTP default 3000 (env KCG_PORT). Nilai tak valid ditolak agar
@@ -164,12 +49,6 @@ function resolvePort(): number {
   if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
   console.warn(`[kcg-code] KCG_PORT tidak valid ("${raw}"); memakai 3000.`);
   return 3000;
-}
-
-async function staticFile(filePath: string, contentType: string): Promise<Response> {
-  const file = Bun.file(filePath);
-  if (!(await file.exists())) return new Response("Not Found", { status: 404 });
-  return new Response(file, { headers: { "content-type": contentType } });
 }
 
 /**
@@ -186,190 +65,33 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // valid. Default sesuai mode runtime (dev: ./data/uploads, cli: ~/.kcgcode/...).
   const uploadsRoot = opts.uploadsRoot ?? resolveEffectiveUploadsDir();
 
-  const projectManager = createProjectManager(config.sandboxRoot, store);
-  // Lapisan agent (acuan opencode v2): service opencode milik user dipakai
-  // bersama seluruh Project; proses `claude` di-spawn saat Session Claude
-  // Code menerima prompt.
-  const backends = {
-    opencode: opts.opencode ?? createOpencodeBackend(),
-    "claude-code": opts.claude ?? createClaudeBackend(),
-  };
-  // Peringatan dini bila CLI opencode user masih v1 (tidak didukung lagi):
-  // tanpa ini user baru tahu saat membuka Session opencode. Tidak menahan
-  // start-up; backend yang diinjeksi (test) dilewati.
-  if (!opts.opencode) {
-    void checkOpencodeVersion().then((res) => {
-      if (!res.ok && res.error.startsWith(OPENCODE_UPGRADE_REQUIRED)) {
-        const version = res.error.split(":")[1]?.trim() ?? "1.x";
-        console.warn(
-          `[kcg-code] opencode ${version} terdeteksi — KCG Code butuh opencode 2.x. ` +
-            "Jalankan `opencode upgrade` lalu restart KCG Code untuk memakai agent opencode.",
-        );
-      }
-    });
-  }
-  const attachments: AttachmentManager = createAttachmentManager(uploadsRoot);
-
-  // Skills_Registry & job instalasi dibuat lebih dulu: session manager
-  // memberi tahu job instalasi saat refresh skill tertunda selesai. Callback
-  // `refreshSkills` baru dipanggil saat instalasi berjalan (setelah init).
-  const skillsRegistry = opts.skillsRegistry ?? createSkillsRegistry();
-  const skillInstalls = createSkillInstallJobs({
-    registry: skillsRegistry,
-    refreshSkills: (projectId, agentType) => sessionManager.refreshSkills(projectId, agentType),
-    validate: (source, skill) => isValidSource(source) && isValidSkillId(skill),
-  });
-
-  let gateway: WebSocketGateway;
-  // Notifikasi agent: kartu izin/pertanyaan & turn selesai -> tab terbuka
-  // (WS `notify`) lalu Web Push ke perangkat yang tidak sedang membuka app.
-  const notifications = createNotificationService({
+  // Termasuk `reconcileOnStartup()` (Requirement 2.4).
+  const core = createSessionCore({
     store,
-    broadcast: (n) => gateway.notifyAgent(n),
-    fetchFn: opts.pushFetch,
+    sandboxRoot: config.sandboxRoot,
+    uploadsRoot,
+    opencode: opts.opencode,
+    claude: opts.claude,
+    skillsRegistry: opts.skillsRegistry,
+    pushFetch: opts.pushFetch,
   });
-  const sessionManager = createSessionManager({
+  const access = createAccess({
     store,
-    backends,
-    attachments,
-    onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
-    onMessagePart: (sessionId, messageId, part) =>
-      gateway.notifyMessagePart(sessionId, messageId, part),
-    onMessagePartDelta: (sessionId, messageId, partId, field, delta) =>
-      gateway.notifyMessagePartDelta(sessionId, messageId, partId, field, delta),
-    onPrompt: (prompt) => {
-      gateway.notifyPrompt(prompt.sessionId, prompt);
-      notifications.promptAsked(prompt);
-    },
-    // Kartu kembar yang ikut terjawab lewat fan-out grup: kirim notif
-    // `prompt_resolved` agar hilang dari UI tanpa menunggu reattach.
-    onPromptResolved: (sessionId, promptId) => gateway.notifyPromptResolved(sessionId, promptId),
-    onStatusChange: (sessionId, status) => gateway.notifySessionStatus(sessionId, status),
-    // Judul hasil generate opencode -> daftar Session di Client terbarui live.
-    onTitleChange: (sessionId, title) => gateway.notifySessionTitle(sessionId, title),
-    onPermissionModeChange: (sessionId, mode) =>
-      gateway.notifySessionPermissionMode(sessionId, mode),
-    onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
-    onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
-    // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).
-    onTurnChange: (sessionId, active) => gateway.notifyTurnActive(sessionId, active),
-    onTurnEnd: (sessionId, outcome) => notifications.turnEnded(sessionId, outcome),
-    // Refresh skill tertunda berjalan otomatis setelah chat selesai -> perbarui
-    // notifikasi instalasi terkait ("aktif sekarang").
-    onSkillsRefreshed: (projectId) => skillInstalls.markRefreshed(projectId),
+    port,
+    hostname,
+    auth: opts.auth,
+    tunnel: opts.tunnel,
+    lhr: opts.lhr,
   });
-  gateway = createWebSocketGateway({
-    store,
-    sessionManager,
-    onNotifyAck: (id, endpoint) => notifications.ack(id, endpoint),
-  });
-
-  // Requirement 2.4: tandai Session "running" tanpa proses sebelum menerima koneksi.
-  sessionManager.reconcileOnStartup();
-
-  // Subscriber per koneksi (identitas stabil untuk Map gateway).
-  const wsSubs = new Map<ServerWebSocket<WsData>, Subscriber>();
-
-  // ---- Kunci aplikasi (lock screen) ----
-  const auth = opts.auth ?? createAuthService({ store });
-  const passkeys = createPasskeyService({ store, auth });
-
-  // ---- Tunnel publik (<username>.<domain dari VPS>) — wajib app lock ----
-  const tunnel = opts.tunnel
-    ? opts.tunnel({ store, auth, port, hostname })
-    : (() => {
-        const tcfg = resolveTunnelConfig();
-        return createTunnelManager({
-          store,
-          config: tcfg,
-          // Tanpa URL API: klien yang selalu gagal (connect() sudah menolak lebih dulu).
-          api: createTunnelApi(tcfg.apiUrl ?? "http://tunnel-api.invalid"),
-          installer: createFrpcInstaller(),
-          localPort: port,
-          localHost: hostname,
-          configPath: resolveFrpcConfigPath(),
-          isProtected: () => auth.isProtected(),
-        });
-      })();
-  // ---- Tunnel localhost.run (gratis, via ssh) — wajib app lock ----
-  const lhr = opts.lhr
-    ? opts.lhr({ store, auth, port, hostname })
-    : createLhrManager({
-        store,
-        localPort: port,
-        localHost: hostname,
-        dataDir: path.dirname(resolveFrpcConfigPath()),
-        isProtected: () => auth.isProtected(),
-      });
-  auth.onLockChanged((prot) => {
-    tunnel.handleLockChanged(prot);
-    lhr.handleLockChanged(prot);
-  });
-
-  // Konteks bersama untuk tabel rute API.
-  const routeCtx: ApiRouteContext = {
-    projectManager,
-    sessionManager,
-    attachments,
-    skillsRegistry,
-    skillInstalls,
-    tunnel,
-    lhr,
-    tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
-    setTunnelProvider: (provider) => store.setTunnelProvider(provider, Date.now()),
-    notifyDataChanged: () => gateway.notifyDataChanged(),
-  };
-  // Sesi dicabut / terkunci / kedaluwarsa -> tutup WebSocket miliknya agar
-  // perangkat itu tidak terus menerima data percakapan.
-  auth.onSessionEnded((sessionId) => {
-    for (const ws of wsSubs.keys()) {
-      if (ws.data.authSessionId === sessionId) ws.close(4401, "locked");
-    }
-  });
-  /** Kunci baru diatur -> tutup socket yang dibuka tanpa sesi (sebelum dikunci). */
-  function closeUnauthenticatedSockets(): void {
-    if (!auth.isProtected()) return;
-    for (const ws of wsSubs.keys()) {
-      if (ws.data.authSessionId === null) ws.close(4401, "locked");
-    }
-  }
-  // Kunci otomatis ditegakkan server: sapu sesi idle/kedaluwarsa berkala.
-  const sweepTimer = setInterval(() => {
-    try {
-      auth.sweep();
-      closeUnauthenticatedSockets();
-    } catch (e) {
-      console.error("[kcg-code] auth sweep gagal:", e);
-    }
-  }, 30_000);
-  sweepTimer.unref?.();
+  const { auth } = access;
+  const ws = createWsConnections({ auth, gateway: core.gateway });
+  const sweepTimer = startAuthSweep(auth, ws);
 
   // Cek versi baru di npm di background — tidak menahan server mulai.
   const updates = opts.updates ?? createUpdateChecker();
   void updates.start();
 
-  const apiRoutes = guardRoutes(auth, {
-    ...authRoutes(auth),
-    ...passkeyRoutes(auth, passkeys),
-    ...metaRoutes(updates),
-    ...projectsRoutes(routeCtx),
-    ...sessionsRoutes(routeCtx),
-    ...uploadsRoutes(routeCtx),
-    ...skillsRoutes(routeCtx),
-    ...tunnelRoutes(routeCtx),
-    ...pushRoutes(notifications),
-    ...workspaceRoutes(routeCtx, {
-      auth,
-      configPath: config.configPath,
-      // Data (DB, uploads, frpc.toml) & config KCG Code tak boleh berada di
-      // dalam workspace — agent bisa membaca hash sandi / token tunnel.
-      protectedDirs: [
-        path.dirname(resolveEffectiveDbPath()),
-        uploadsRoot,
-        path.dirname(config.configPath),
-      ],
-    }),
-  });
+  const apiRoutes = createApiRoutes({ config, store, uploadsRoot, core, access, updates });
 
   const server = serve<WsData>({
     hostname,
@@ -379,121 +101,43 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       ...opts.assets,
 
       // ---- Asset statis PWA dari root paket (bukan cwd) — aman utk global install ----
-      "/manifest.json": () =>
-        staticFile(path.join(PUBLIC_DIR, "manifest.json"), "application/manifest+json"),
-      "/sw.js": () => staticFile(path.join(PUBLIC_DIR, "sw.js"), "text/javascript"),
-      "/logo.svg": () => staticFile(path.join(PUBLIC_DIR, "logo.svg"), "image/svg+xml"),
-      "/sounds/notification.ogg": () =>
-        staticFile(path.join(PUBLIC_DIR, "sounds", "notification.ogg"), "audio/ogg"),
-      "/icons/:name": (req: BunRequest<"/icons/:name">) => {
-        const name = req.params.name;
-        // Whitelist nama file agar tidak bisa path traversal keluar dari public/icons.
-        if (!/^[a-z0-9-]+\.png$/.test(name)) return new Response("Not Found", { status: 404 });
-        return staticFile(path.join(PUBLIC_DIR, "icons", name), "image/png");
-      },
+      ...publicAssetRoutes(),
 
       // ---- Rute API per fitur (pola kcgcode: tabel rute terpisah) ----
       // Seluruh `/api/*` dijaga kunci aplikasi (kecuali status/login/avatar).
       ...apiRoutes,
 
       // ---- WebSocket_Gateway upgrade (Requirement 4) ----
-      // WebSocket tidak dibatasi CORS, jadi Origin wajib same-origin dan
-      // sesi login wajib valid sebelum upgrade.
-      "/ws": (req: Request, server: Server<WsData>) => {
-        if (!originAllowed(req)) return new Response("Forbidden", { status: 403 });
-        let authSessionId: string | null = null;
-        if (auth.isProtected()) {
-          const session = auth.authenticate(readSessionToken(req));
-          if (!session) return new Response("Unauthorized", { status: 401 });
-          authSessionId = session.id;
-        }
-        const upgraded = server.upgrade(req, { data: { authSessionId } });
-        if (!upgraded) return new Response("Upgrade WebSocket gagal", { status: 400 });
-        return undefined;
-      },
+      "/ws": ws.upgrade,
 
       // ---- Shell SPA hanya untuk rute halaman terdaftar (disuntik entry,
       //      default 404) — path tak dikenal tidak menangkap shell SPA ----
-      ...Object.fromEntries(
-        (opts.spaPaths ?? []).map((pattern) => [
-          pattern,
-          opts.spa ?? new Response("Not Found", { status: 404 }),
-        ]),
-      ),
+      ...spaRoutes(opts.spaPaths, opts.spa),
     },
-    websocket: {
-      data: { authSessionId: null } as WsData,
-      open(ws) {
-        wsSubs.set(ws, bunWsSubscriber(ws));
-      },
-      message(ws, message) {
-        // Socket yang tak terdaftar (sudah ditutup) diabaikan.
-        const sub = wsSubs.get(ws);
-        if (!sub) return;
-        // Setiap pesan dianggap aktivitas: sesi tetap hidup selama dipakai,
-        // dan socket milik sesi yang sudah terkunci ditutup.
-        if (auth.isProtected()) {
-          const alive =
-            ws.data.authSessionId !== null && auth.isSessionAlive(ws.data.authSessionId);
-          if (!alive) {
-            ws.close(4401, "locked");
-            return;
-          }
-        }
-        dispatchClientMessage(gateway, sub, String(message));
-      },
-      close(ws) {
-        const sub = wsSubs.get(ws);
-        if (sub) {
-          gateway.detach(sub);
-          wsSubs.delete(ws);
-        }
-      },
-    },
+    websocket: ws.handlers,
     development: process.env.NODE_ENV !== "production" && {
       hmr: true,
       console: true,
     },
   });
 
-  // Tunnel yang aktif sebelum restart dinyalakan lagi setelah server listen.
-  // Port nyata diketahui setelah `serve` (port 0 di test) — factory default
-  // memakai `port` yang diminta, sama seperti yang dicetak dashboard.
-  // Hanya penyedia terpilih yang dinyalakan ulang (satu tunnel aktif).
-  if (store.getTunnelSettings(Date.now()).provider === "lhr") lhr.autoStart();
-  else tunnel.autoStart();
-
-  async function close(): Promise<void> {
-    clearInterval(sweepTimer);
-    notifications.close();
-    updates.close();
-    // Hentikan frpc lebih dulu agar URL publik tidak menunjuk server mati.
-    await Promise.all([tunnel.shutdown(), lhr.shutdown()]);
-    // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
-    await skillInstalls.cancelAll();
-    // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
-    await sessionManager.shutdown();
-    // Bun (Windows): setelah server menutup sebuah WebSocket (mis. 4401 saat
-    // logout), promise `stop()` tak pernah resolve walau listener sudah
-    // tertutup — batasi waktu tunggu agar shutdown tidak menggantung.
-    await Promise.race([server.stop(true), Bun.sleep(2000)]);
-    store.close();
-  }
+  // Nyalakan ulang tunnel terpilih setelah server listen.
+  autoStartSelectedTunnel(store, access);
 
   return {
     server,
     store,
-    projectManager,
-    sessionManager,
-    gateway,
-    skillInstalls,
+    projectManager: core.projectManager,
+    sessionManager: core.sessionManager,
+    gateway: core.gateway,
+    skillInstalls: core.skillInstalls,
     auth,
-    tunnel,
-    lhr,
-    notifications,
+    tunnel: access.tunnel,
+    lhr: access.lhr,
+    notifications: core.notifications,
     updates,
     tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
     apiRoutePatterns: Object.keys(apiRoutes),
-    close,
+    close: createShutdown({ sweepTimer, core, access, updates, server, store }),
   };
 }

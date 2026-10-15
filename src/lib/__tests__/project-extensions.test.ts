@@ -8,6 +8,7 @@ import {
   describeMcpSummary,
   filterSkills,
   groupSkills,
+  mcpActionsFor,
   mergeMcpServers,
 } from "../project-extensions";
 
@@ -53,6 +54,26 @@ describe("mergeMcpServers", () => {
     // Tersambung di salah satu agent sudah dihitung "connected".
     expect(describeMcpEntries(entries)).toBe("2 of 3 connected");
     expect(describeMcpEntries([])).toBe("None configured");
+  });
+});
+
+describe("mcpActionsFor", () => {
+  test("nonaktif -> hanya Enable; lainnya Reconnect + Disable", () => {
+    expect(mcpActionsFor("disabled")).toEqual(["enable"]);
+    for (const status of ["connected", "failed", "pending", "needs_auth", "unknown"] as const) {
+      expect(mcpActionsFor(status)).toEqual(["reconnect", "disable"]);
+    }
+  });
+
+  test("urutan perhatian: sedang menyambung di antara bermasalah dan tersambung", () => {
+    const entries = mergeMcpServers({
+      opencode: [
+        { name: "ok", status: "connected", error: null },
+        { name: "slow", status: "pending", error: null },
+        { name: "auth", status: "needs_auth", error: null },
+      ],
+    });
+    expect(entries.map((e) => e.name)).toEqual(["auth", "slow", "ok"]);
   });
 });
 

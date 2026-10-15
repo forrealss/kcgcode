@@ -1,6 +1,7 @@
 /**
  * Helper tampilan katalog skill (skills.sh) di halaman Skills — logika murni
- * tanpa DOM, dipisah agar dapat diuji `bun test`.
+ * tanpa DOM, dipisah agar dapat diuji `bun test` — plus pilihan Project
+ * terakhir halaman itu (localStorage).
  */
 import { AGENT_TYPES } from "@/lib/agent-types";
 import type { AuditStatus, RegistrySkill } from "@/server/services/skills-registry";
@@ -8,6 +9,24 @@ import type { AgentType, Project, SkillInfo } from "@/types";
 
 /** Kunci localStorage Project terakhir yang dipilih di halaman Skills. */
 export const LAST_SKILLS_PROJECT_KEY = "kcg-skills-project";
+
+/** Project terakhir yang dipilih; null bila belum ada / storage tak tersedia. */
+export function readLastSkillsProject(): string | null {
+  try {
+    return localStorage.getItem(LAST_SKILLS_PROJECT_KEY);
+  } catch {
+    return null;
+  }
+}
+
+/** Ingat Project pilihan; diam saja bila storage tak tersedia. */
+export function storeLastSkillsProject(id: string): void {
+  try {
+    localStorage.setItem(LAST_SKILLS_PROJECT_KEY, id);
+  } catch {
+    // Storage tidak tersedia (mode privat) — cukup URL.
+  }
+}
 
 /** Saran kata kunci saat kolom cari masih kosong (tab Browse). */
 export const SEARCH_SUGGESTIONS = [

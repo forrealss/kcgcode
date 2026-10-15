@@ -75,10 +75,9 @@ export function useAuth(): AuthState {
   return useSyncExternalStore(subscribe, snapshot, snapshot);
 }
 
-/** Label jenis kunci untuk UI. */
-export function lockLabel(kind: "pin" | "password"): string {
-  return kind === "pin" ? "PIN" : "password";
-}
+// Label jenis kunci kini tinggal bersama aturan kunci lain (`lib/lock-secret`,
+// murni); diekspor ulang di sini untuk pemakai lama.
+export { lockLabel } from "@/lib/lock-secret";
 
 /** Inisial nickname untuk avatar pengganti ("Irsyad Ibad" -> "II"). */
 export function initialsOf(nickname: string | null): string {

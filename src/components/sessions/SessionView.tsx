@@ -23,7 +23,7 @@
  *   menyempit & percakapan tetap terpusat di sisa ruang, tidak tertutup
  *   kartu. Di bawah `lg` (HP & tablet) tampil sebagai bottom sheet.
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
 import {
   ContextPanel,
@@ -39,6 +39,7 @@ import {
   SessionComposerSkeleton,
   SessionTimelineSkeleton,
 } from "@/components/sessions/SessionTimelineSkeleton";
+import { useMcpActions } from "@/hooks/useMcpActions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
@@ -81,6 +82,25 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   // terlalu sempit, jadi kartu tampil sebagai bottom sheet (seperti HP).
   const sidePanel = useMediaQuery(SIDE_PANEL_QUERY);
   const sessionCtx = useSessionContext(session.id, contextOpen, chat.generating);
+  // Turn / compact baru selesai -> pemakaian context berubah: muat ulang panel
+  // sekarang, tidak menunggu interval poll idle.
+  const { refresh: refreshContext } = sessionCtx;
+  useEffect(() => {
+    if (!chat.generating) refreshContext();
+  }, [chat.generating, refreshContext]);
+  /** Aksi MCP server agent Session; status baru dibaca ulang lewat konteks. */
+  const mcpActions = useMcpActions(session.projectId, refreshContext);
+  /**
+   * Aksi kartu konteks. Ringkas riwayat = slash command `/compact` lewat
+   * jalur input biasa.
+   */
+  const panelActions = {
+    onCompact: () =>
+      chat.send({ type: "input", sessionId: session.id, text: "/compact", files: [], images: [] }),
+    canCompact: chat.canInput,
+    compacting: chat.compacting,
+    mcpActions: { ...mcpActions, agent: session.agentType },
+  };
   /**
    * Reference diturunkan dari parts pesan yang sudah ada di timeline
    * (tanpa request tambahan). `session.cwd` dipakai untuk mengubah path
@@ -173,6 +193,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                 collapsible={chat.collapsible}
                 onToggle={chat.toggleBlock}
                 generating={chat.generating}
+                compacting={chat.compacting}
               />
 
               {/* Question pending: panel DOCKED menggantikan composer — jawaban
@@ -221,6 +242,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               context={sessionCtx.context}
               references={references}
               loading={sessionCtx.loading}
+              {...panelActions}
             />
           </>
         ) : contextOpen ? (
@@ -230,6 +252,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
               references={references}
               loading={sessionCtx.loading}
               onClose={() => setContextOpen(false)}
+              {...panelActions}
             />
           </div>
         ) : (

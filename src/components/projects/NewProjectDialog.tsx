@@ -24,8 +24,8 @@ import {
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { useRouter } from "@/hooks/useRouter";
-import { ApiError, apiFetch } from "@/lib/api";
+import { spaLinkClick, useRouter } from "@/hooks/useRouter";
+import { apiFetch, errorText } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
 import type { WorkspaceInfo } from "@/server/services/workspace";
@@ -107,7 +107,7 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
       handleOpenChange(false);
       toast.success(`Project "${name.trim()}" created.`);
     } catch (e) {
-      setFormError(e instanceof ApiError ? e.message : "Failed to create project");
+      setFormError(errorText(e, "Failed to create project"));
     } finally {
       setCreating(false);
     }
@@ -156,12 +156,10 @@ export function NewProjectDialog({ open, onOpenChange, onCreated }: NewProjectDi
                 <span aria-hidden>·</span>
                 <a
                   href={settingsPath("workspace")}
-                  onClick={(e) => {
-                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-                    e.preventDefault();
+                  onClick={spaLinkClick(() => {
                     handleOpenChange(false);
                     navigate(settingsPath("workspace"));
-                  }}
+                  })}
                   className="shrink-0 font-medium text-foreground underline underline-offset-2"
                 >
                   Change

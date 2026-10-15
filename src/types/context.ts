@@ -8,6 +8,8 @@
  *   dan perintah `git` baca di cwd Session).
  * - `todos`           : task list agent (`todowrite`, `GET /session/{id}/todo`).
  * - `mcp`             : MCP server Project & status koneksinya (`GET /mcp`).
+ * - `usage`           : pemakaian context window Session (Claude Code
+ *   `getContextUsage`, opencode: token step terakhir vs batas model).
  * - Reference (file yang dibuka tool) TIDAK ada di sini: itu diturunkan di
  *   klien dari parts pesan yang sudah dimiliki timeline (`lib/references.ts`),
  *   sehingga tidak perlu request tambahan.
@@ -44,8 +46,10 @@ export interface GitState {
 /** Satu MCP server Project (subset status opencode `GET /mcp`). */
 export interface McpServerState {
   name: string;
+  /** `pending` = sedang menyambung (mis. tepat setelah diaktifkan / reconnect). */
   status:
     | "connected"
+    | "pending"
     | "disabled"
     | "failed"
     | "needs_auth"
@@ -55,12 +59,40 @@ export interface McpServerState {
   error: string | null;
 }
 
+/** Satu kategori rincian pemakaian context window (mis. "System tools"). */
+export interface ContextUsageCategory {
+  name: string;
+  tokens: number;
+}
+
+/** Pemakaian context window Session — terakhir yang diketahui agent. */
+export interface ContextUsage {
+  /** Token yang terpakai di context window. */
+  usedTokens: number;
+  /** Ukuran context window; null = batas model tidak diketahui. */
+  maxTokens: number | null;
+  /** `usedTokens / maxTokens` dalam persen (0-100+); null bila batas tak diketahui. */
+  percent: number | null;
+  /** Ambang auto-compact (token); null = mati / tidak diketahui. */
+  autoCompactAt: number | null;
+  /** Model yang diukur (id agent), bila diketahui. */
+  model: string | null;
+  /** Rincian per kategori, terbesar dulu; kosong bila agent tidak menyediakannya. */
+  categories: ContextUsageCategory[];
+  /** Waktu pengukuran (ms epoch). */
+  measuredAt: number;
+}
+
 export interface SessionContext {
   git: GitState;
   changes: FileChange[];
   todos: TodoItem[];
   /** MCP server Project beserta status koneksinya. */
   mcp: McpServerState[];
+  /** Pemakaian context window; null = belum terukur (belum ada balasan). */
+  usage: ContextUsage | null;
+  /** Agent sedang meringkas riwayat (compact) Session ini. */
+  compacting: boolean;
   /**
    * Server opencode Session sedang hidup. `false` -> `todos`/`changes` kosong
    * karena belum bisa dibaca, BUKAN karena memang tidak ada.

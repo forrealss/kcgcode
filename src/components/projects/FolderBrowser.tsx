@@ -11,7 +11,7 @@ import { ChevronRightIcon, FolderIcon, Undo2Icon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export interface FolderBrowserProps {
@@ -39,7 +39,7 @@ export function FolderBrowser({ path, onNavigate }: FolderBrowserProps) {
       setEntries(body.entries);
     } catch (e) {
       setEntries([]);
-      setError(e instanceof ApiError ? e.message : "Failed to load directory");
+      setError(errorText(e, "Failed to load directory"));
     } finally {
       setLoading(false);
     }

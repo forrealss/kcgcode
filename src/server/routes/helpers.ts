@@ -36,6 +36,7 @@ export function errorStatus(code: string): number {
     case "INSTRUCTIONS_TOO_LONG":
     case "INVALID_SKILL_QUERY":
     case "INVALID_SKILL_ID":
+    case "INVALID_MCP_SERVER":
     case "PIN_DIGITS_ONLY":
     case "PIN_LENGTH":
     case "PIN_TOO_SIMPLE":
@@ -64,6 +65,10 @@ export function errorStatus(code: string): number {
     case "PASSKEY_CHALLENGE_INVALID":
     case "PASSKEY_VERIFY_FAILED":
       return 400;
+    case "EXTERNAL_SESSIONS_UNSUPPORTED":
+      return 400;
+    case "EXTERNAL_SESSION_OPEN":
+      return 409;
     case "PASSKEY_LOCK_REQUIRED":
     case "PASSKEY_ALREADY_REGISTERED":
     case "PASSKEY_LIMIT":

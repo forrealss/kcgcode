@@ -175,3 +175,162 @@ test("describeAgentError: kategori -> petunjuk + baris pertama pesan", () => {
   expect(describeAgentError({ type: "unknown", message: "boom" })).toBe("boom");
   expect(describeAgentError(undefined)).toBe("Something went wrong while processing the prompt.");
 });
+
+describe("AgentEventProjector — sub-agent & pemakaian turn", () => {
+  function subHarness(opts: { beginTurn?: boolean } = {}) {
+    const store = openSessionStore(":memory:");
+    const parts: MessagePart[] = [];
+    const begun: string[] = [];
+    const saved: string[] = [];
+    const turns = new TurnStream({
+      store,
+      now: () => 1000,
+      onMessagePart: (_s, _m, p) => parts.push(p),
+      onMessage: (m) => saved.push(m.id),
+      setTimeoutFn: () => 0,
+      clearTimeoutFn: () => {},
+    });
+    const projector = new AgentEventProjector({
+      turns,
+      now: () => 1000,
+      resolve: (id) => (id === "ses_1" || id.startsWith("ses_child") ? "local" : undefined),
+      isRoot: (_s, id) => id === "ses_1",
+      mapChild: () => {},
+      setTitle: () => {},
+      insertPrompt: () => true,
+      beginTurn: (sid) => {
+        begun.push(sid);
+        turns.begin(sid, 60_000, "timeout");
+      },
+    });
+    if (opts.beginTurn !== false) turns.begin("local", 60_000, "timeout");
+    const last = (id: string) => parts.filter((p) => p.id === id).at(-1);
+    return { projector, parts, begun, last, saved };
+  }
+
+  const step = (sessionID: string, assistantMessageID: string) =>
+    ({ type: "session.step.started", data: { sessionID, assistantMessageID } }) as const;
+  const tokens = (input: number, output: number) => ({
+    input,
+    output,
+    reasoning: 0,
+    cache: { read: 0, write: 0 },
+  });
+
+  test("opencode: Session anak ditautkan ke tool `task`; kontennya membawa parentToolID", () => {
+    const { projector, last } = subHarness();
+    const task = { sessionID: "ses_1", assistantMessageID: "msg_1", id: "call_task" };
+    projector.handle(step("ses_1", "msg_1"));
+    projector.handle({ type: "session.tool.input.started", data: { ...task, name: "task" } });
+    projector.handle({
+      type: "session.tool.called",
+      data: { ...task, input: { description: "Cari auth", subagent_type: "explore" } },
+    });
+    projector.handle({
+      type: "session.created",
+      data: { sessionID: "ses_child", parentID: "ses_1" },
+    });
+    projector.handle(step("ses_child", "msg_c"));
+    const read = { sessionID: "ses_child", assistantMessageID: "msg_c", id: "call_read" };
+    projector.handle({ type: "session.tool.input.started", data: { ...read, name: "read" } });
+    projector.handle({
+      type: "session.text.ended",
+      data: { sessionID: "ses_child", assistantMessageID: "msg_c", ordinal: 0, text: "ketemu" },
+    });
+    expect(last("prt_call_read")?.parentToolID).toBe("call_task");
+    expect(last("prt_msg_c_text_0")?.parentToolID).toBe("call_task");
+    // Tool `task` sendiri milik agent utama.
+    expect(last("prt_call_task")?.parentToolID).toBeUndefined();
+
+    // Token step Session anak -> kartu sub-agent; semua step -> pemakaian turn.
+    projector.handle({
+      type: "session.step.ended",
+      data: {
+        sessionID: "ses_child",
+        assistantMessageID: "msg_c",
+        tokens: tokens(800, 200),
+        cost: 0.01,
+      },
+    });
+    projector.handle({
+      type: "session.step.ended",
+      data: {
+        sessionID: "ses_1",
+        assistantMessageID: "msg_1",
+        tokens: tokens(1500, 500),
+        cost: 0.02,
+      },
+    });
+    expect(last("prt_msg_c_subagent_call_task")).toMatchObject({
+      type: "subagent",
+      toolID: "call_task",
+      tokens: 1000,
+    });
+    projector.handle({ type: "session.execution.succeeded", data: { sessionID: "ses_1" } });
+    const usage = last("prt_msg_1_usage");
+    expect(usage?.type).toBe("usage");
+    expect(usage?.cost).toBeCloseTo(0.03);
+    expect(usage?.tokens).toEqual({
+      input: 2300,
+      output: 700,
+      reasoning: 0,
+      cache: { read: 0, write: 0 },
+    });
+  });
+
+  test("Claude: parentToolID dari event; agent.subagent digabung ke part `subagent`", () => {
+    const { projector, last } = subHarness();
+    projector.handle(step("ses_1", "msg_1"));
+    projector.handle({
+      type: "session.text.ended",
+      data: {
+        sessionID: "ses_1",
+        assistantMessageID: "msg_1",
+        ordinal: 1,
+        text: "hasil sub-agent",
+        parentToolID: "toolu_A",
+      },
+    });
+    expect(last("prt_msg_1_text_1")?.parentToolID).toBe("toolu_A");
+    const sub = { sessionID: "ses_1", assistantMessageID: "msg_1", toolID: "toolu_A" } as const;
+    projector.handle({
+      type: "agent.subagent",
+      data: { ...sub, status: "running", agentType: "Explore", background: true },
+    });
+    projector.handle({
+      type: "agent.subagent",
+      data: { ...sub, tokens: 23_705, lastTool: "Bash" },
+    });
+    projector.handle({
+      type: "agent.subagent",
+      data: { ...sub, status: "completed", summary: "src/a.ts" },
+    });
+    expect(last("prt_msg_1_subagent_toolu_A")).toEqual({
+      id: "prt_msg_1_subagent_toolu_A",
+      type: "subagent",
+      toolID: "toolu_A",
+      messageID: "msg_1",
+      status: "completed",
+      agentType: "Explore",
+      background: true,
+      tokens: 23_705,
+      lastTool: "Bash",
+      summary: "src/a.ts",
+    });
+  });
+
+  test("eksekusi yang dimulai agent sendiri membuka turn (hanya Session akar)", () => {
+    const { projector, begun, saved } = subHarness({ beginTurn: false });
+    projector.handle({ type: "session.execution.started", data: { sessionID: "ses_child" } });
+    expect(begun).toEqual([]);
+    projector.handle({ type: "session.execution.started", data: { sessionID: "ses_1" } });
+    expect(begun).toEqual(["local"]);
+    projector.handle(step("ses_1", "msg_bg"));
+    projector.handle({
+      type: "session.text.ended",
+      data: { sessionID: "ses_1", assistantMessageID: "msg_bg", ordinal: 0, text: "jawaban akhir" },
+    });
+    projector.handle({ type: "session.execution.succeeded", data: { sessionID: "ses_1" } });
+    expect(saved).toEqual(["msg_bg"]);
+  });
+});

@@ -10,7 +10,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { agentQuery } from "@/lib/agent-types";
-import { ApiError, apiFetch } from "@/lib/api";
+import { apiFetch, errorText } from "@/lib/api";
+import { updateSessionSettings } from "@/lib/session-api";
 import type { AgentCapabilitiesInfo, AgentType, PermissionModeOption } from "@/types";
 
 /** Cache capability per `projectId|agentType` (statis selama aplikasi hidup). */
@@ -76,15 +77,11 @@ export function usePermissionModes(
       setError(null);
       try {
         if (sessionId !== null) {
-          await apiFetch(`/api/sessions/${sessionId}`, {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ permissionMode: mode }),
-          });
+          await updateSessionSettings(sessionId, { permissionMode: mode });
         }
         onChangedRef.current(mode);
       } catch (e) {
-        setError(e instanceof ApiError ? e.message : "Failed to change permission mode");
+        setError(errorText(e, "Failed to change permission mode"));
       } finally {
         saveInFlight.current = false;
         setSaving(false);

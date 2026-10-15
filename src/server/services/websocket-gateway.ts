@@ -13,390 +13,61 @@
  * per-Client (hapus subscriber) tanpa menghentikan broadcast ke Client lain
  * (Requirement 5.3); attach ke Session tidak ditemukan -> `error` + `close`
  * (Requirement 4.3).
+ *
+ * File ini hanya komposisi; implementasinya ada di `./gateway/`: kontrak
+ * publik (`types`), pemetaan error ke protokol (`error-mapping`), registri
+ * subscriber + primitif broadcast (`subscriber-registry`), handler pesan
+ * Client (`client-actions`), dan broadcast `notify*` (`notifications`).
  */
-import type { SessionStore } from "../../db";
-import type {
-  AgentNotification,
-  InteractivePrompt,
-  MessagePart,
-  PromptResponse,
-  SessionMessage,
-  SessionStatus,
-} from "../../types";
-import { ErrorCodes, type ServerMessage } from "../../ws-protocol";
-import type { SessionManager } from "./session-manager";
+import { createClientActions } from "./gateway/client-actions";
+import { createGatewayNotifications } from "./gateway/notifications";
+import { createSubscriberRegistry } from "./gateway/subscriber-registry";
+import type { WebSocketGateway, WebSocketGatewayOptions } from "./gateway/types";
 
-/** Abstraksi koneksi — diimplementasikan oleh `bunWsSubscriber` atau mock test. */
-export interface Subscriber {
-  send(msg: ServerMessage): void;
-  close(): void;
-}
-
-/**
- * Koneksi yang ter-attach ke sebuah Session.
- * `sessionId: null` = mode daftar (tanpa Session) — hanya menerima broadcast
- * global seperti `session_title` (daftar Session di halaman Project).
- */
-export interface AttachedInfo {
-  sessionId: string | null;
-}
-
-export interface WebSocketGatewayOptions {
-  store: SessionStore;
-  sessionManager: SessionManager;
-  /** Client melaporkan notifikasi sudah tampil di layarnya (`notify_ack`). */
-  onNotifyAck?: (id: string, endpoint: string) => void;
-}
-
-export interface WebSocketGateway {
-  attach(sub: Subscriber, sessionId: string): void;
-  input(
-    sub: Subscriber,
-    sessionId: string,
-    text: string,
-    files?: string[],
-    images?: string[],
-  ): void;
-  promptResponse(
-    sub: Subscriber,
-    sessionId: string,
-    promptId: string,
-    response: PromptResponse,
-  ): void;
-  stop(sub: Subscriber, sessionId: string): void;
-  /** Hentikan balasan model saja (interrupt) — Session tetap running. */
-  interrupt(sub: Subscriber, sessionId: string): void;
-  notifyMessage(sessionId: string, message: SessionMessage): void;
-  notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void;
-  notifyMessagePartDelta(
-    sessionId: string,
-    messageId: string,
-    partId: string,
-    field: string,
-    delta: string,
-  ): void;
-  notifyPrompt(sessionId: string, prompt: InteractivePrompt): void;
-  notifySessionStatus(sessionId: string, status: SessionStatus): void;
-  /** Broadcast judul Session baru hasil generate opencode. */
-  notifySessionTitle(sessionId: string, title: string): void;
-  /** Permission mode Session berubah — dikirim ke koneksi yang attach Session. */
-  notifySessionPermissionMode(sessionId: string, mode: string | null): void;
-  /** Beri tahu subscriber apakah model sedang merespon (turn aktif). */
-  notifyTurnActive(sessionId: string, active: boolean): void;
-  notifySessionDeleted(sessionId: string): void;
-  /** Daftar Project/Session berubah — broadcast ke semua koneksi. */
-  notifyDataChanged(): void;
-  notifyPromptResolved(sessionId: string, promptId: string): void;
-  notifyError(sessionId: string, code: string, message: string): void;
-  /** Notifikasi agent ke koneksi mode daftar (sidebar ada di tiap halaman). */
-  notifyAgent(notification: AgentNotification): void;
-  /** Teruskan `notify_ack` dari Client ke layanan notifikasi. */
-  notifyAck(id: string, endpoint: string): void;
-  detach(sub: Subscriber): void;
-  subscriberCount(sessionId: string): number;
-}
-
-/** Pemetaan error domain Session_Manager ke kode protokol `error`. */
-function toErrorCode(error: string): string {
-  if (error === ErrorCodes.SESSION_NOT_FOUND) return ErrorCodes.SESSION_NOT_FOUND;
-  if (error === "SESSION_NOT_RUNNING" || error === "SESSION_NOT_ACTIVE") {
-    return ErrorCodes.SESSION_NOT_RUNNING;
-  }
-  if (error === "TEXT_EMPTY" || error === "TEXT_TOO_LONG") return ErrorCodes.INVALID_TEXT;
-  if (error === "ATTACHMENT_NOT_FOUND") return ErrorCodes.ATTACHMENT_NOT_FOUND;
-  if (error === ErrorCodes.PROMPT_NOT_FOUND) return ErrorCodes.PROMPT_NOT_FOUND;
-  if (error === ErrorCodes.PROMPT_ALREADY_RESOLVED) return ErrorCodes.PROMPT_ALREADY_RESOLVED;
-  if (error === "INVALID_PROMPT_OPTION" || error === "INVALID_PROMPT_RESPONSE") {
-    return ErrorCodes.INVALID_RESPONSE;
-  }
-  return "ERROR";
-}
-
-/**
- * Pesan ramah untuk kegagalan reply prompt (kartu tetap bisa dicoba lagi):
- * error mentah dari lapisan agent berupa kode seperti
- * `AGENT_FORM_REPLY_FAILED: …` — kurang berguna bagi user.
- */
-function friendlyPromptError(raw: string): string {
-  if (raw === "PROMPT_EXPIRED") {
-    return "The agent stopped waiting for that answer, so it was dismissed. Send a new message to continue.";
-  }
-  if (
-    raw === ErrorCodes.PROMPT_NOT_FOUND ||
-    raw.startsWith("AGENT_FORM_") ||
-    raw.startsWith("AGENT_PERMISSION_")
-  ) {
-    return "The agent is no longer waiting for this answer (it may have moved on). Try again or send a new message.";
-  }
-  if (raw === "SESSION_NOT_ACTIVE" || raw === "SESSION_NOT_RUNNING") {
-    return "The session is not running. Start it again to answer.";
-  }
-  if (raw === ErrorCodes.PROMPT_ALREADY_RESOLVED) {
-    return "This prompt was already answered.";
-  }
-  return `Failed to send the answer (${raw.split("(")[0] ?? raw}). Try again.`;
-}
+export type {
+  AttachedInfo,
+  Subscriber,
+  WebSocketGateway,
+  WebSocketGatewayOptions,
+} from "./gateway/types";
 
 export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocketGateway {
   const { store, sessionManager } = opts;
-  const subs = new Map<Subscriber, AttachedInfo>();
-
-  /** Kirim pesan; bila `send` melempar, hapus subscriber (Req 5.3). */
-  function sendSafe(sub: Subscriber, msg: ServerMessage): boolean {
-    try {
-      sub.send(msg);
-      return true;
-    } catch {
-      subs.delete(sub);
-      return false;
-    }
-  }
-
-  function attach(sub: Subscriber, sessionId: string): void {
-    // Mode daftar (sessionId kosong): tanpa `history`, cukup daftar sebagai
-    // penerima broadcast global (`session_title`, `session_status`,
-    // `session_deleted`).
-    if (sessionId === "") {
-      subs.set(sub, { sessionId: null });
-      return;
-    }
-    // (1) validasi Session ada di store (Req 4.3)
-    const sess = store.getSession(sessionId);
-    if (!sess.ok) {
-      sendSafe(sub, {
-        type: "error",
-        code: ErrorCodes.SESSION_NOT_FOUND,
-        message: "Session not found.",
-      });
-      sub.close();
-      return;
-    }
-
-    // (2) riwayat pesan terstruktur + prompt pending (Req 4.1, 4.4)
-    const messages = store.getMessages(sessionId);
-    if (!messages.ok) {
-      sendSafe(sub, { type: "error", code: "STORE_ERROR", message: messages.error });
-      sub.close();
-      return;
-    }
-    const prompts = store.listPendingPrompts(sessionId);
-    if (!sendSafe(sub, { type: "history", sessionId, messages: messages.data, prompts })) return;
-
-    // (3) daftarkan sebagai subscriber live
-    subs.set(sub, { sessionId });
-  }
-
-  function input(
-    sub: Subscriber,
-    sessionId: string,
-    text: string,
-    files?: string[],
-    images?: string[],
-  ): void {
-    void sessionManager
-      .sendFreeTextInput(sessionId, text, files ?? [], images ?? [])
-      .then((res) => {
-        if (!res.ok) {
-          const code = toErrorCode(res.error ?? "");
-          sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
-        }
-      })
-      .catch(() => {
-        sendSafe(sub, { type: "error", code: "ERROR", message: "Failed to send the message." });
-      });
-  }
-
-  function promptResponse(
-    sub: Subscriber,
-    sessionId: string,
-    promptId: string,
-    response: PromptResponse,
-  ): void {
-    void sessionManager
-      .resolvePrompt(sessionId, promptId, response)
-      .then((res) => {
-        if (!res.ok && res.error === "PROMPT_EXPIRED") {
-          // Prompt sudah ditutup secara lokal (agent tidak lagi menunggu):
-          // hapus kartu di semua klien lalu beri tahu pengirim kenapa —
-          // session kembali bisa dipakai (composer muncul lagi).
-          notifyPromptResolved(sessionId, promptId);
-          sendSafe(sub, {
-            type: "error",
-            code: ErrorCodes.PROMPT_EXPIRED,
-            message: friendlyPromptError("PROMPT_EXPIRED"),
-          });
-          return;
-        }
-        if (!res.ok) {
-          // Kode PROMPT_FAILED: client menampilkan error ini DI kartu prompt
-          // (bukan banner global) agar klik yang gagal tidak terasa mati.
-          sendSafe(sub, {
-            type: "error",
-            code: ErrorCodes.PROMPT_FAILED,
-            message: friendlyPromptError(res.error ?? "ERROR"),
-          });
-          return;
-        }
-        notifyPromptResolved(sessionId, promptId);
-      })
-      .catch(() => {
-        sendSafe(sub, {
-          type: "error",
-          code: ErrorCodes.PROMPT_FAILED,
-          message: "Failed to send the answer to the agent. Try again.",
-        });
-      });
-  }
-
-  function stop(sub: Subscriber, sessionId: string): void {
-    const res = sessionManager.stopSession(sessionId);
-    if (!res.ok) {
-      const code = toErrorCode(res.error ?? "");
-      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
-    }
-  }
-
-  function interrupt(sub: Subscriber, sessionId: string): void {
-    const res = sessionManager.interruptSession(sessionId);
-    if (!res.ok) {
-      const code = toErrorCode(res.error ?? "");
-      sendSafe(sub, { type: "error", code, message: res.error ?? "ERROR" });
-    }
-  }
-
-  function broadcast(sessionId: string, build: () => ServerMessage): void {
-    for (const [sub, info] of subs) {
-      if (info.sessionId !== sessionId) continue;
-      sendSafe(sub, build());
-    }
-  }
-
-  /**
-   * Broadcast ke seluruh koneksi — dipakai pesan yang relevan lintas Session
-   * (mis. `session_title`: pemilik koneksi mungkin sedang membuka daftar
-   * Session, bukan me-attach satu Session).
-   */
-  function broadcastAll(build: () => ServerMessage): void {
-    for (const sub of subs.keys()) {
-      sendSafe(sub, build());
-    }
-  }
-
-  function notifyMessage(sessionId: string, message: SessionMessage): void {
-    broadcast(sessionId, () => ({ type: "message", sessionId, message }));
-  }
-
-  function notifyMessagePart(sessionId: string, messageId: string, part: MessagePart): void {
-    broadcast(sessionId, () => ({ type: "message_part", sessionId, messageId, part }));
-  }
-
-  function notifyMessagePartDelta(
-    sessionId: string,
-    messageId: string,
-    partId: string,
-    field: string,
-    delta: string,
-  ): void {
-    broadcast(sessionId, () => ({
-      type: "message_part_delta",
-      sessionId,
-      messageId,
-      partId,
-      field,
-      delta,
-    }));
-  }
-
-  function notifyPrompt(sessionId: string, prompt: InteractivePrompt): void {
-    broadcast(sessionId, () => ({ type: "prompt", sessionId, prompt }));
-  }
-
-  function notifySessionStatus(sessionId: string, status: SessionStatus): void {
-    // Relevan lintas halaman: titik status di sidebar / daftar Session harus
-    // ikut berubah walau koneksi itu tidak sedang attach Session ini.
-    broadcastAll(() => ({ type: "session_status", sessionId, status }));
-  }
-
-  function notifySessionTitle(sessionId: string, title: string): void {
-    // `session_title` relevan bagi koneksi mana pun (daftar Session di
-    // halaman Project), jadi dikirim ke semua koneksi — termasuk yang tidak
-    // sedang attach satu Session.
-    broadcastAll(() => ({ type: "session_title", sessionId, title }));
-  }
-
-  function notifySessionPermissionMode(sessionId: string, mode: string | null): void {
-    broadcast(sessionId, () => ({ type: "session_permission_mode", sessionId, mode }));
-  }
-
-  function notifyTurnActive(sessionId: string, active: boolean): void {
-    broadcast(sessionId, () => ({ type: "turn_active", sessionId, active }));
-  }
-
-  /**
-   * Session dihapus permanen — dikirim ke SEMUA koneksi: yang sedang membuka
-   * Session ini meninggalkan halamannya, sidebar/daftar menghapus barisnya.
-   */
-  function notifySessionDeleted(sessionId: string): void {
-    broadcastAll(() => ({ type: "session_deleted", sessionId }));
-  }
-
-  function notifyDataChanged(): void {
-    broadcastAll(() => ({ type: "data_changed" }));
-  }
-
-  function notifyPromptResolved(sessionId: string, promptId: string): void {
-    broadcast(sessionId, () => ({ type: "prompt_resolved", sessionId, promptId }));
-  }
-
-  function notifyError(sessionId: string, code: string, message: string): void {
-    broadcast(sessionId, () => ({ type: "error", code, message }));
-  }
-
-  function notifyAgent(notification: AgentNotification): void {
-    // Hanya koneksi mode daftar: tiap halaman punya sidebar (mode daftar),
-    // jadi cukup sekali per tab tanpa ikut ke koneksi per-Session.
-    for (const [sub, info] of subs) {
-      if (info.sessionId === null) sendSafe(sub, { type: "notify", notification });
-    }
-  }
+  const registry = createSubscriberRegistry();
+  const notifications = createGatewayNotifications(registry);
+  const actions = createClientActions({
+    store,
+    sessionManager,
+    registry,
+    notifyPromptResolved: notifications.notifyPromptResolved,
+  });
 
   function notifyAck(id: string, endpoint: string): void {
     opts.onNotifyAck?.(id, endpoint);
   }
 
-  function detach(sub: Subscriber): void {
-    subs.delete(sub);
-  }
-
-  function subscriberCount(sessionId: string): number {
-    let n = 0;
-    for (const info of subs.values()) {
-      if (info.sessionId === sessionId) n += 1;
-    }
-    return n;
-  }
-
   return {
-    attach,
-    input,
-    promptResponse,
-    stop,
-    interrupt,
-    notifyMessage,
-    notifyMessagePart,
-    notifyMessagePartDelta,
-    notifyPrompt,
-    notifySessionStatus,
-    notifySessionTitle,
-    notifySessionPermissionMode,
-    notifyTurnActive,
-    notifySessionDeleted,
-    notifyDataChanged,
-    notifyPromptResolved,
-    notifyError,
-    notifyAgent,
+    attach: actions.attach,
+    input: actions.input,
+    promptResponse: actions.promptResponse,
+    stop: actions.stop,
+    interrupt: actions.interrupt,
+    notifyMessage: notifications.notifyMessage,
+    notifyMessagePart: notifications.notifyMessagePart,
+    notifyMessagePartDelta: notifications.notifyMessagePartDelta,
+    notifyPrompt: notifications.notifyPrompt,
+    notifySessionStatus: notifications.notifySessionStatus,
+    notifySessionTitle: notifications.notifySessionTitle,
+    notifySessionPermissionMode: notifications.notifySessionPermissionMode,
+    notifySessionCompaction: notifications.notifySessionCompaction,
+    notifyTurnActive: notifications.notifyTurnActive,
+    notifySessionDeleted: notifications.notifySessionDeleted,
+    notifyDataChanged: notifications.notifyDataChanged,
+    notifyPromptResolved: notifications.notifyPromptResolved,
+    notifyError: notifications.notifyError,
+    notifyAgent: notifications.notifyAgent,
     notifyAck,
-    detach,
-    subscriberCount,
+    detach: registry.detach,
+    subscriberCount: registry.subscriberCount,
   };
 }

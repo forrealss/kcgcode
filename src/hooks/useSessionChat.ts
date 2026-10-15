@@ -8,129 +8,38 @@
  * - Koneksi WS (`useWebSocket`) dilampirkan ke `session.id`; `history`,
  *   `message`, `prompt`, `session_status`, dst. diterjemahkan ke state di
  *   sini (daftar pesan, kartu prompt, status Session, error banner).
+ *
+ * Modul pendukung:
+ * - `hooks/session-chat/types.ts` — tipe publik (diekspor ulang di bawah).
+ * - `hooks/session-chat/first-prompt.ts` — prompt pertama dari homepage.
+ * - `hooks/session-chat/useSessionActions.ts` — resume/stop/hapus Session.
+ * - `lib/session-chat.ts` — helper murni (teruji `bun test`).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
-import { useWebSocket, type WsConnectionStatus } from "@/hooks/useWebSocket";
-import { ApiError, apiFetch } from "@/lib/api";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
-import { notifyDataChanged } from "@/lib/data-events";
-import { peekPendingPrompt, setPendingPrompt, takePendingPrompt } from "@/lib/pending-prompt";
 import { groupPrompts } from "@/lib/prompts";
-import { wsStatusLabel } from "@/lib/session-status";
 import {
-  appendMessagePartDelta,
-  groupTurns,
-  turnBlocks,
-  turnSegments,
-  upsertMessage,
-  upsertMessagePart,
-} from "@/lib/turns";
-import type {
-  InteractivePrompt,
-  PromptResponse,
-  Session,
-  SessionMessage,
-  SessionStatus,
-} from "@/types";
-import type { ClientMessage, ServerMessage } from "@/ws-protocol";
+  appendPrompt,
+  hasPendingQuestionPrompt,
+  isPromptCardErrorCode,
+  isStreamingAssistant,
+  thoughtBlockKeys,
+} from "@/lib/session-chat";
+import { wsStatusLabel } from "@/lib/session-status";
+import { appendMessagePartDelta, upsertMessage, upsertMessagePart } from "@/lib/turns";
+import type { InteractivePrompt, PromptResponse, SessionMessage, SessionStatus } from "@/types";
+import type { ServerMessage } from "@/ws-protocol";
+import { useOptimisticFirstPrompt, useSendPendingPrompt } from "./session-chat/first-prompt";
+import type { SessionChat, UseSessionChatOptions } from "./session-chat/types";
+import { useSessionActions } from "./session-chat/useSessionActions";
 
-export interface UseSessionChatOptions {
-  session: Session;
-  onBack: () => void;
-  /** Dipanggil setelah Session dihapus dari menu aksi header. */
-  onDeleted?: () => void;
-}
-
-export interface SessionChat {
-  // Koneksi & status
-  wsStatus: WsConnectionStatus;
-  /** Kirim pesan Client -> Server (dipakai composer untuk `input`/`interrupt`). */
-  send: (msg: ClientMessage) => void;
-  status: SessionStatus;
-  /** Permission mode Session (null = default agent) — tersinkron dari WS. */
-  permissionMode: string | null;
-  setPermissionMode: (mode: string | null) => void;
-  /** Model sedang merespon: turn aktif atau masih ada pesan streaming. */
-  busy: boolean;
-  /** Model sedang merespon DAN Session berjalan (untuk tombol Stop). */
-  generating: boolean;
-  /** Input dapat dipakai (koneksi + Session running + tidak sibuk). */
-  canInput: boolean;
-  error: string | null;
-  /** Set error banner global (dipakai composer saat upload/kirim gagal). */
-  reportError: (message: string | null) => void;
-
-  // Data percakapan
-  messages: SessionMessage[];
-  /**
-   * Riwayat awal (`history`) sudah diterima dari server. Sebelum ini,
-   * `messages` kosong BUKAN berarti percakapan kosong — UI menampilkan
-   * kerangka loading, bukan empty-state "No conversation yet".
-   */
-  historyLoaded: boolean;
-  /** Status toggle blok "Thought process" per turn. */
-  collapsible: CollapsibleState;
-  toggleBlock: (key: string) => void;
-
-  // Prompt pending
-  prompts: InteractivePrompt[];
-  /** Prompt pending yang digroup (kind + title identik) jadi satu kartu. */
-  promptGroups: InteractivePrompt[][];
-  /** Ada question pending — composer digantikan panel question docked. */
-  hasPendingQuestion: boolean;
-  promptError: string | null;
-  consumePromptError: () => void;
-  /** Prompt yang sedang memainkan animasi keluar sebelum dihapus. */
-  resolvePrompt: (promptId: string, response: PromptResponse) => void;
-
-  // Aksi Session
-  interrupt: () => void;
-  starting: boolean;
-  start: () => Promise<void>;
-  stopping: boolean;
-  stop: () => Promise<void>;
-  /** Dialog konfirmasi hapus Session (dirender `SessionView`). */
-  deleteOpen: boolean;
-  beginDelete: () => void;
-  cancelDelete: () => void;
-  deleting: boolean;
-  confirmDelete: () => Promise<void>;
-}
-
-/** Id pesan user optimistis (prompt pertama dari homepage). */
-const OPTIMISTIC_ID = "optimistic:first-prompt";
+export type { SessionChat, UseSessionChatOptions } from "./session-chat/types";
 
 export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOptions): SessionChat {
-  /**
-   * Prompt pertama dari homepage langsung tampil sebagai pesan user sejak
-   * frame pertama — layout Session view sudah dalam bentuk percakapan
-   * (composer di dasar) saat View Transition memotret halaman tujuan, dan
-   * user tidak melihat kilatan "No conversation yet". Dilepas begitu echo
-   * pesan user asli (id server) tiba.
-   */
-  const [optimistic, setOptimistic] = useState<SessionMessage | null>(() => {
-    const text = peekPendingPrompt(session.id);
-    return text === null
-      ? null
-      : {
-          id: OPTIMISTIC_ID,
-          sessionId: session.id,
-          role: "user",
-          parts: [{ type: "text", text }],
-          createdAt: Date.now(),
-        };
-  });
   const [serverMessages, setMessages] = useState<SessionMessage[]>([]);
-  const hasRealUser = serverMessages.some((m) => m.role === "user");
-  const messages = useMemo(
-    () => (optimistic && !hasRealUser ? [optimistic, ...serverMessages] : serverMessages),
-    [optimistic, hasRealUser, serverMessages],
-  );
-  // Echo asli tiba -> buang pesan optimistis.
-  useEffect(() => {
-    if (optimistic && hasRealUser) setOptimistic(null);
-  }, [optimistic, hasRealUser]);
+  /** Daftar pesan + pesan user optimistis prompt pertama dari homepage. */
+  const messages = useOptimisticFirstPrompt(session.id, serverMessages);
   const [collapsible, setCollapsible] = useState<CollapsibleState>({});
   const [prompts, setPrompts] = useState<InteractivePrompt[]>([]);
   const [status, setStatus] = useState<SessionStatus>(session.status);
@@ -141,15 +50,12 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
   const [permissionMode, setPermissionMode] = useState<string | null>(
     session.permissionMode ?? null,
   );
+  const [compacting, setCompacting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Error resolusi prompt — tampil di kartunya (bukan banner global). */
   const [promptError, setPromptError] = useState<string | null>(null);
   /** Turn aktif dari server (`turn_active`): model sedang merespon. */
   const [turnActive, setTurnActive] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-  const [deleting, setDeleting] = useState(false);
   /** `history` sudah diterima — attach selesai, aman mengirim input. */
   const [historyLoaded, setHistoryLoaded] = useState(false);
 
@@ -195,9 +101,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
           break;
         case "prompt":
           setError(null);
-          setPrompts((prev) =>
-            prev.some((p) => p.id === msg.prompt.id) ? prev : [...prev, msg.prompt],
-          );
+          setPrompts((prev) => appendPrompt(prev, msg.prompt));
           break;
         case "prompt_resolved":
           // Langsung dihapus; animasi keluar kartu ditangani `AnimatePresence`
@@ -209,11 +113,18 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
           if (msg.sessionId !== session.id) break;
           setStatus(msg.status);
           // Session non-running -> tidak mungkin ada model yang merespon.
-          if (msg.status !== "running") setTurnActive(false);
+          if (msg.status !== "running") {
+            setTurnActive(false);
+            setCompacting(false);
+          }
           break;
         case "session_permission_mode":
           if (msg.sessionId !== session.id) break;
           setPermissionMode(msg.mode);
+          break;
+        case "session_compaction":
+          if (msg.sessionId !== session.id) break;
+          setCompacting(msg.compacting);
           break;
         case "turn_active":
           setTurnActive(msg.active);
@@ -232,14 +143,9 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
             setError(msg.message);
             break;
           }
-          // Error terkait prompt ditampilkan di kartunya masing-masing —
-          // banner global di atas chat tidak terlihat oleh user yang sedang
-          // fokus ke kartu (tombol terasa "mati" tanpa feedback).
-          if (
-            msg.code === "PROMPT_NOT_FOUND" ||
-            msg.code === "PROMPT_ALREADY_RESOLVED" ||
-            msg.code === "PROMPT_FAILED"
-          ) {
+          // Error terkait prompt ditampilkan di kartunya masing-masing
+          // (lihat `isPromptCardErrorCode`).
+          if (isPromptCardErrorCode(msg.code)) {
             setPromptError(msg.message);
             break;
           }
@@ -265,18 +171,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     return () => disconnect();
   }, [attach, disconnect, session.id]);
 
-  /**
-   * Prompt pertama dari chat homepage (`HomeChat`): dikirim sekali setelah
-   * attach selesai (`history` diterima). `takePendingPrompt` menghapusnya
-   * sehingga tidak terkirim ulang saat reconnect / remount.
-   */
-  useEffect(() => {
-    if (!historyLoaded || wsStatus !== "connected") return;
-    const text = takePendingPrompt(session.id);
-    if (text === null) return;
-    // Socket belum siap -> kembalikan agar dicoba lagi saat terhubung ulang.
-    if (!send({ type: "input", sessionId: session.id, text })) setPendingPrompt(session.id, text);
-  }, [historyLoaded, wsStatus, send, session.id]);
+  useSendPendingPrompt({ sessionId: session.id, historyLoaded, wsStatus, send });
 
   /**
    * Sinkronisasi key collapsible "Thought process": satu blok per turn
@@ -285,21 +180,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
    * saat daftar pesan bertambah/berubah saat streaming.
    */
   useEffect(() => {
-    setCollapsible((prev) => {
-      const keys: string[] = [];
-      for (const g of groupTurns(messages)) {
-        if (g.kind !== "assistant") continue;
-        if (
-          !g.messages.some((m) => m.parts.some((p) => p.type === "reasoning" || p.type === "tool"))
-        )
-          continue;
-        const segs = turnSegments(g.messages);
-        for (const block of turnBlocks(segs)) {
-          if (block.steps.length > 0) keys.push(`${g.id}:${block.key}`);
-        }
-      }
-      return extendCollapsed(prev, keys);
-    });
+    setCollapsible((prev) => extendCollapsed(prev, thoughtBlockKeys(messages)));
   }, [messages]);
 
   const toggleBlock = useCallback((key: string) => {
@@ -330,67 +211,28 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
    */
   const interrupt = useCallback(() => {
     send({ type: "interrupt", sessionId: session.id });
-    setMessages((prev) => prev.filter((m) => !(m.role === "assistant" && m.streaming === true)));
+    setMessages((prev) => prev.filter((m) => !isStreamingAssistant(m)));
     setTurnActive(false);
   }, [send, session.id]);
 
-  /** Resume via API langsung — hasil status baru tiba via WS `session_status`. */
-  const start = useCallback(async () => {
-    setStarting(true);
-    setError(null);
-    try {
-      await apiFetch(`/api/sessions/${session.id}`, { method: "POST" });
-      // Status baru dikirim gateway ke semua subscriber; tak perlu setState di sini.
-      toast.success("Session resumed.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't resume the session.");
-    } finally {
-      setStarting(false);
-    }
-  }, [session.id]);
-
-  /**
-   * Hentikan Session (bukan hanya balasan model): status -> `stopped`.
-   * Berbeda dari tombol Stop di composer yang hanya meng-interrupt turn.
-   */
-  const stop = useCallback(async () => {
-    setStopping(true);
-    setError(null);
-    try {
-      await apiFetch(`/api/sessions/${session.id}/stop`, { method: "POST" });
-      toast.success("Session stopped.");
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't stop the session.");
-    } finally {
-      setStopping(false);
-    }
-  }, [session.id]);
-
-  /** Hapus Session permanen dari menu aksi header (dikonfirmasi lebih dulu). */
-  const beginDelete = useCallback(() => setDeleteOpen(true), []);
-  const cancelDelete = useCallback(() => setDeleteOpen(false), []);
-  const confirmDelete = useCallback(async () => {
-    setDeleting(true);
-    setError(null);
-    try {
-      await apiFetch(`/api/sessions/${session.id}`, { method: "DELETE" });
-      setDeleteOpen(false);
-      toast.success("Session deleted.");
-      notifyDataChanged();
-      (onDeleted ?? onBack)();
-    } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : "Couldn't delete the session.");
-    } finally {
-      setDeleting(false);
-    }
-  }, [session.id, onBack, onDeleted]);
+  const {
+    starting,
+    start,
+    stopping,
+    stop,
+    deleteOpen,
+    beginDelete,
+    cancelDelete,
+    deleting,
+    confirmDelete,
+  } = useSessionActions({ sessionId: session.id, onBack, onDeleted, setError });
 
   /**
    * Model sedang merespon: server melaporkan turn aktif (`turn_active`), atau
    * masih ada pesan assistant `streaming` yang belum digantikan versi final
    * (fallback saat reattach di tengah turn).
    */
-  const busy = turnActive || messages.some((m) => m.role === "assistant" && m.streaming === true);
+  const busy = turnActive || messages.some(isStreamingAssistant);
   const generating = busy && status === "running";
   // Saat model merespon input dinonaktifkan — satu-satunya aksi adalah Stop.
   const canInput = wsStatus === "connected" && status === "running" && !busy;
@@ -400,16 +242,8 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
    * identik (kind+title sama) digroup jadi SATU kartu (bug kartu nyepam).
    */
   const promptGroups = useMemo(() => groupPrompts(prompts), [prompts]);
-  /**
-   * Ada question pending? Composer disembunyikan dan panel question docked
-   * menggantikannya — jawaban pertanyaan adalah input saat ini (ala TUI
-   * opencode yang menutup input teks selama question aktif). Permission
-   * kartu tidak menggantikan composer (tetap floating).
-   */
-  const hasPendingQuestion = useMemo(
-    () => prompts.some((p) => p.kind === "question" || p.kind === "plan"),
-    [prompts],
-  );
+  /** Ada question pending? (lihat `hasPendingQuestionPrompt` di `lib/session-chat`). */
+  const hasPendingQuestion = useMemo(() => hasPendingQuestionPrompt(prompts), [prompts]);
 
   return {
     wsStatus,
@@ -417,6 +251,7 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
     status,
     permissionMode,
     setPermissionMode,
+    compacting,
     busy,
     generating,
     canInput,

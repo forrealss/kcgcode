@@ -23,6 +23,7 @@ export function PrefsGroup({
   description,
   suffix,
   toolbar,
+  footer,
   children,
 }: {
   id?: string;
@@ -32,6 +33,8 @@ export function PrefsGroup({
   suffix?: ReactNode;
   /** Kontrol di antara judul & boxed list (mis. kolom cari, filter). */
   toolbar?: ReactNode;
+  /** Kontrol di bawah boxed list (mis. pagination). */
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const headingId = useId();
@@ -60,6 +63,7 @@ export function PrefsGroup({
       <div className="overflow-hidden rounded-xl border bg-card shadow-xs">
         <ul className="flex flex-col divide-y">{children}</ul>
       </div>
+      {footer}
     </section>
   );
 }
