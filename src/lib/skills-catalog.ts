@@ -142,15 +142,36 @@ export function formatInstalls(n: number): string {
   return fmt(n / 1_000_000, "M");
 }
 
-/** Label & gaya ringkasan audit keamanan. */
+/** Label & warna teks status audit keamanan (tanpa pil, gaya subjudul). */
 export const AUDIT_LABEL: Record<AuditStatus, string> = {
   pass: "Passed",
   warn: "Review",
   fail: "Flagged",
 };
 
-export const AUDIT_BADGE_CLASS: Record<AuditStatus, string> = {
-  pass: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-  warn: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  fail: "bg-destructive/10 text-destructive",
+export const AUDIT_TEXT_CLASS: Record<AuditStatus, string> = {
+  pass: "text-emerald-700 dark:text-emerald-400",
+  warn: "text-amber-700 dark:text-amber-400",
+  fail: "text-destructive",
 };
+
+/**
+ * Ringkasan audit satu baris: siapa yang menandai + jumlah yang lolos
+ * ("Flagged by Runlayer · 3 of 5 passed", "All 5 checks passed").
+ */
+export function summarizeAudit(
+  audits: readonly { provider: string; status: AuditStatus }[],
+): string {
+  const passed = audits.filter((a) => a.status === "pass").length;
+  if (passed === audits.length) {
+    return audits.length === 1 ? "1 check passed" : `All ${audits.length} checks passed`;
+  }
+  const names = (status: AuditStatus) =>
+    audits
+      .filter((a) => a.status === status)
+      .map((a) => a.provider)
+      .join(", ");
+  const failed = names("fail");
+  const lead = failed ? `Flagged by ${failed}` : `${names("warn")} suggests a review`;
+  return `${lead} · ${passed} of ${audits.length} passed`;
+}

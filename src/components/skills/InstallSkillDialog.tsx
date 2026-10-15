@@ -1,22 +1,22 @@
 /**
  * Dialog konfirmasi instalasi skill dari skills.sh.
  *
- * Susunan (atas -> bawah), dari yang paling sering diputuskan:
+ * Gaya AdwAlertDialog + boxed list (libadwaita), atas -> bawah:
  * 1. Identitas skill: avatar owner, nama, `source · installs · skills.sh ↗`.
- * 2. Agent tujuan: dua tile berdampingan (OpenCode / Claude Code, bisa
- *    keduanya). Agent yang belum memuat skill ini terpilih secara default;
- *    yang sudah memuatnya ditandai "Installed" (memilihnya = pasang ulang).
- * 3. Audit keamanan (`GET /api/skills/audit`) dalam satu baris ringkas;
- *    rincian per partner dilipat dan otomatis terbuka bila ada temuan
- *    (`warn`/`fail`). Skill `fail` tetap boleh dipasang, tombolnya destruktif.
+ * 2. "Install for": satu baris per agent (logo, nama, folder tujuan, kotak
+ *    centang ala GtkCheckButton). Agent yang belum memuat skill ini terpilih
+ *    secara default; yang sudah memuatnya bersubjudul "Installed"
+ *    (memilihnya = pasang ulang).
+ * 3. Audit keamanan (`GET /api/skills/audit`) sebagai satu AdwExpanderRow:
+ *    subjudulnya sudah menyebut siapa yang menandai ("Flagged by Runlayer ·
+ *    3 of 5 passed"), rincian per partner dilipat. Skill `fail` tetap boleh
+ *    dipasang, tombolnya destruktif ("Install Anyway").
  *
- * Label tombol menyebut agent tujuan ("Install for Claude Code"). Konfirmasi
- * hanya MEMULAI job instalasi; progres + output CLI tampil di notifikasi
- * instalasi (`InstallNotifications`).
+ * Konfirmasi hanya MEMULAI job instalasi; progres + output CLI tampil di
+ * notifikasi instalasi (`InstallNotifications`).
  */
 import {
   CheckIcon,
-  ChevronDownIcon,
   ExternalLinkIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AgentLogo } from "@/components/sessions/AgentLogo";
+import { ActionRow, ExpanderRow } from "@/components/settings/prefs";
 import { SourceAvatar } from "@/components/skills/SkillCards";
 import {
   AlertDialog,
@@ -35,12 +36,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
 import { apiFetch, errorText } from "@/lib/api";
-import { AUDIT_BADGE_CLASS, AUDIT_LABEL, formatInstalls } from "@/lib/skills-catalog";
+import {
+  AUDIT_LABEL,
+  AUDIT_TEXT_CLASS,
+  formatInstalls,
+  summarizeAudit,
+} from "@/lib/skills-catalog";
 import { cn } from "@/lib/utils";
 import type { RegistrySkill, SkillAudit } from "@/server/services/skills-registry";
 import type { AgentType } from "@/types";
@@ -70,13 +75,8 @@ const AGENT_SKILLS_DIR: Record<AgentType, string> = {
   "claude-code": ".claude/skills",
 };
 
-/** Label tombol utama sesuai agent terpilih. */
-function installLabel(agents: readonly AgentType[], flagged: boolean): string {
-  const verb = flagged ? "Install anyway" : "Install";
-  if (agents.length === 0) return verb;
-  if (agents.length === AGENT_TYPES.length) return `${verb} for both`;
-  return `${verb} for ${agents.map((a) => AGENT_TYPE_LABELS[a]).join(" + ")}`;
-}
+/** Boxed list ala libadwaita di dalam dialog. */
+const BOXED = "flex flex-col divide-y overflow-hidden rounded-xl border bg-card";
 
 export function InstallSkillDialog({
   skill,
@@ -134,7 +134,7 @@ export function InstallSkillDialog({
       }}
     >
       {/* Tinggi dibatasi agar dialog (audit terbuka) tetap muat di layar HP. */}
-      <AlertDialogContent className="max-h-[calc(100dvh-2rem)] gap-5 overflow-y-auto sm:max-w-md">
+      <AlertDialogContent className="max-h-[calc(100dvh-2rem)] gap-6 overflow-y-auto sm:max-w-md">
         <AlertDialogHeader className="text-left">
           <div className="flex min-w-0 items-center gap-3">
             {skill && <SourceAvatar source={skill.source} />}
@@ -143,24 +143,27 @@ export function InstallSkillDialog({
                 Install {skill?.name}
               </AlertDialogTitle>
               {skill && (
-                <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-                  <span className="truncate font-mono" title={skill.source}>
+                <p className="flex min-w-0 items-center gap-1.5 text-[13px] text-muted-foreground">
+                  <span className="truncate" title={skill.source}>
                     {skill.source}
                   </span>
-                  <span aria-hidden>·</span>
+                  <span className="opacity-50" aria-hidden>
+                    ·
+                  </span>
                   <span className="shrink-0 tabular-nums">
                     {formatInstalls(skill.installs)} installs
                   </span>
-                  <span aria-hidden>·</span>
+                  <span className="opacity-50" aria-hidden>
+                    ·
+                  </span>
                   <a
                     href={skill.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex shrink-0 items-center gap-0.5 font-medium text-foreground underline-offset-4 hover:underline"
+                    aria-label="View on skills.sh (opens in a new tab)"
+                    className="inline-flex shrink-0 items-center rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:outline-none"
                   >
-                    skills.sh
-                    <ExternalLinkIcon className="size-3" aria-hidden />
-                    <span className="sr-only">(opens in a new tab)</span>
+                    <ExternalLinkIcon className="size-3.5" aria-hidden />
                   </a>
                 </p>
               )}
@@ -172,14 +175,14 @@ export function InstallSkillDialog({
         </AlertDialogHeader>
 
         {skill && (
-          <div className="flex min-w-0 flex-col gap-4 text-sm">
-            <fieldset className="flex flex-col gap-2" disabled={starting}>
-              <legend className="mb-2 text-xs text-muted-foreground">
-                Add to <span className="font-medium text-foreground">{projectName}</span> for
+          <div className="flex min-w-0 flex-col gap-5">
+            <fieldset className="flex min-w-0 flex-col gap-2" disabled={starting}>
+              <legend className="mb-2 px-1 text-[13px] text-muted-foreground">
+                Install in <span className="font-medium text-foreground">{projectName}</span> for
               </legend>
-              <div className="grid grid-cols-2 gap-2">
+              <ul className={BOXED}>
                 {AGENT_TYPES.map((a) => (
-                  <AgentTile
+                  <AgentRow
                     key={a}
                     agent={a}
                     checked={agents.includes(a)}
@@ -187,26 +190,27 @@ export function InstallSkillDialog({
                     onChange={(on) => toggleAgent(a, on)}
                   />
                 ))}
-              </div>
+              </ul>
               {agents.length === 0 && (
-                <p className="text-xs text-muted-foreground">Pick at least one agent.</p>
+                <p className="px-1 text-[13px] text-muted-foreground">Pick at least one agent.</p>
               )}
             </fieldset>
 
-            <AuditPanel state={audit} />
+            <ul className={BOXED}>
+              <AuditRow state={audit} />
+            </ul>
 
             {startError && (
-              <p role="alert" className="text-xs text-destructive">
+              <p role="alert" className="px-1 text-[13px] text-destructive">
                 {startError}
               </p>
             )}
           </div>
         )}
 
-        <div className="flex flex-col gap-3">
-          <p className="text-xs text-muted-foreground">
-            Skills run with the agent's full permissions. Installation continues in the background —
-            follow it in the notification.
+        <div className="flex flex-col gap-4">
+          <p className="px-1 text-[13px] text-muted-foreground">
+            Skills run with the agent's full permissions.
           </p>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={starting}>Cancel</AlertDialogCancel>
@@ -224,8 +228,10 @@ export function InstallSkillDialog({
                   <Spinner data-icon="inline-start" />
                   Starting…
                 </>
+              ) : flagged ? (
+                "Install Anyway"
               ) : (
-                installLabel(agents, flagged)
+                "Install"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -236,11 +242,11 @@ export function InstallSkillDialog({
 }
 
 /**
- * Tile agent yang bisa dipilih: logo, nama, folder tujuan, indikator centang
- * di pojok. Checkbox asli disembunyikan (`sr-only`) tapi tetap jadi kontrol
- * yang dibaca screen reader & menerima fokus keyboard (Spasi).
+ * Baris agent ala AdwActionRow + GtkCheckButton: logo, nama, folder tujuan
+ * (atau "Installed"), kotak centang di kanan. Seluruh baris jadi label;
+ * checkbox asli `sr-only` tetap jadi kontrol untuk screen reader & keyboard.
  */
-function AgentTile({
+function AgentRow({
   agent,
   checked,
   installed,
@@ -252,139 +258,109 @@ function AgentTile({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label
-      className={cn(
-        "relative flex cursor-pointer flex-col gap-2.5 rounded-xl border p-3 transition-colors select-none",
-        "has-focus-visible:ring-[3px] has-focus-visible:ring-ring/50 has-disabled:cursor-not-allowed has-disabled:opacity-60",
-        checked ? "border-primary bg-primary/5" : "hover:border-foreground/20 hover:bg-accent/30",
-      )}
-    >
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="peer sr-only"
-      />
-      <span className="flex items-start justify-between">
-        <span className="flex size-8 items-center justify-center rounded-lg bg-muted text-foreground">
-          <AgentLogo agentType={agent} className="size-4" />
+    <li>
+      <label className="flex min-h-14 cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors select-none hover:bg-muted/60 has-focus-visible:bg-muted/60 has-disabled:cursor-not-allowed has-disabled:opacity-60">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="peer sr-only"
+        />
+        <AgentLogo agentType={agent} className="size-[18px] text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="text-[15px] leading-5">{AGENT_TYPE_LABELS[agent]}</span>
+          <span className="truncate text-[13px] leading-snug text-muted-foreground">
+            {installed ? (
+              checked ? (
+                "Installed · will reinstall"
+              ) : (
+                "Installed"
+              )
+            ) : (
+              <span className="font-mono text-xs">{AGENT_SKILLS_DIR[agent]}</span>
+            )}
+          </span>
         </span>
         <span
           aria-hidden
           className={cn(
-            "flex size-5 items-center justify-center rounded-full border transition-colors",
-            checked ? "border-primary bg-primary text-primary-foreground" : "bg-background",
+            "flex size-[18px] shrink-0 items-center justify-center rounded-[5px] border-2 transition-colors peer-focus-visible:ring-[3px] peer-focus-visible:ring-ring/50",
+            checked
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-muted-foreground/45",
           )}
         >
-          {checked && <CheckIcon className="size-3" strokeWidth={3} />}
+          {checked && <CheckIcon className="size-3" strokeWidth={3.5} />}
         </span>
-      </span>
-      <span className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-sm font-medium leading-5">{AGENT_TYPE_LABELS[agent]}</span>
-        <span className="truncate font-mono text-[11px] text-muted-foreground">
-          {installed ? (checked ? "Installed · reinstall" : "Installed") : AGENT_SKILLS_DIR[agent]}
-        </span>
-      </span>
-    </label>
+      </label>
+    </li>
   );
 }
 
-/**
- * Audit keamanan sebagai satu baris ringkas (ikon, status, jumlah partner
- * yang lolos). Rincian per partner bisa dibuka; terbuka otomatis bila ada
- * temuan agar tidak terlewat.
- */
-function AuditPanel({ state }: { state: AuditState }) {
-  const shell = "rounded-xl border bg-muted/30";
+const AUDIT_ICON_CLASS = "size-[18px] shrink-0";
 
+/**
+ * Audit keamanan sebagai satu AdwExpanderRow: ikon perisai berwarna sesuai
+ * hasil terburuk, subjudul menyebut siapa yang menandai; rincian per
+ * partner (status sebagai teks berwarna, tanpa pil) dilipat.
+ */
+function AuditRow({ state }: { state: AuditState }) {
   if (state.phase === "loading") {
     return (
-      <div role="status" aria-busy="true" className={cn(shell, "flex items-center gap-3 p-3")}>
-        <span className="sr-only">Loading security audit…</span>
-        <Skeleton className="size-4 rounded-full" />
-        <Skeleton className="h-4 w-40" />
-      </div>
+      <ActionRow
+        prefix={<Spinner className={cn(AUDIT_ICON_CLASS, "text-muted-foreground")} />}
+        title="Security audit"
+        subtitle={
+          <span role="status" aria-busy="true" className="block">
+            <span className="sr-only">Loading security audit…</span>
+            <Skeleton className="mt-1 h-3 w-40" />
+          </span>
+        }
+      />
     );
   }
+  const question = (
+    <ShieldQuestionIcon className={cn(AUDIT_ICON_CLASS, "text-muted-foreground")} aria-hidden />
+  );
   if (state.phase === "error") {
-    return (
-      <p className={cn(shell, "flex items-center gap-2 p-3 text-xs text-muted-foreground")}>
-        <ShieldQuestionIcon className="size-4 shrink-0" aria-hidden />
-        {state.message}
-      </p>
-    );
+    return <ActionRow prefix={question} title="Security audit" subtitle={state.message} />;
   }
 
   const { audits, overall } = state.audit;
   if (audits === null || overall === null) {
     return (
-      <p className={cn(shell, "flex items-start gap-2 p-3 text-xs text-muted-foreground")}>
-        <ShieldQuestionIcon className="size-4 shrink-0" aria-hidden />
-        <span>
-          <span className="font-medium text-foreground">Not audited yet.</span> Review the skill on
-          skills.sh before installing.
-        </span>
-      </p>
+      <ActionRow
+        prefix={question}
+        title="Not audited yet"
+        subtitle="Review the skill on skills.sh before installing."
+      />
     );
   }
 
-  const passed = audits.filter((a) => a.status === "pass").length;
   const Icon = overall === "pass" ? ShieldCheckIcon : ShieldAlertIcon;
   return (
-    <Collapsible defaultOpen={overall !== "pass"} className={shell}>
-      <CollapsibleTrigger className="group flex w-full items-center gap-2 rounded-xl p-3 text-left text-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-        <Icon
-          className={cn(
-            "size-4 shrink-0",
-            overall === "pass"
-              ? "text-emerald-600 dark:text-emerald-400"
-              : overall === "warn"
-                ? "text-amber-600 dark:text-amber-400"
-                : "text-destructive",
-          )}
-          aria-hidden
-        />
-        <span className="font-medium">Security audit</span>
-        <span
-          className={cn(
-            "rounded px-1.5 text-[11px] leading-5 font-medium",
-            AUDIT_BADGE_CLASS[overall],
-          )}
-        >
-          {AUDIT_LABEL[overall]}
-        </span>
-        <span className="ml-auto text-muted-foreground tabular-nums">
-          {passed}/{audits.length} passed
-        </span>
-        <ChevronDownIcon
-          className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180"
-          aria-hidden
-        />
-      </CollapsibleTrigger>
-      <CollapsibleContent>
-        <ul className="flex flex-col gap-2 border-t px-3 py-3">
-          {audits.map((a) => (
-            <li key={a.provider} className="flex items-start justify-between gap-3 text-xs">
-              <span className="flex min-w-0 flex-col">
-                <span className="font-medium">{a.provider}</span>
-                {a.summary && (
-                  <span className="line-clamp-2 text-muted-foreground" title={a.summary}>
-                    {a.summary}
-                  </span>
-                )}
-              </span>
-              <span
-                className={cn(
-                  "shrink-0 rounded px-1.5 text-[11px] leading-5 font-medium",
-                  AUDIT_BADGE_CLASS[a.status],
-                )}
-              >
-                {AUDIT_LABEL[a.status]}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </CollapsibleContent>
-    </Collapsible>
+    <ExpanderRow
+      prefix={<Icon className={cn(AUDIT_ICON_CLASS, AUDIT_TEXT_CLASS[overall])} aria-hidden />}
+      title="Security audit"
+      subtitle={summarizeAudit(audits)}
+    >
+      <ul className="flex flex-col gap-3">
+        {audits.map((a) => (
+          <li key={a.provider} className="flex items-start justify-between gap-3 text-[13px]">
+            <span className="flex min-w-0 flex-col gap-0.5">
+              <span className="font-medium">{a.provider}</span>
+              {a.summary && (
+                <span className="line-clamp-2 text-muted-foreground" title={a.summary}>
+                  {a.summary}
+                </span>
+              )}
+            </span>
+            <span className={cn("shrink-0 font-medium", AUDIT_TEXT_CLASS[a.status])}>
+              {AUDIT_LABEL[a.status]}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </ExpanderRow>
   );
 }

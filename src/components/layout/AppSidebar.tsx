@@ -106,106 +106,110 @@ export function AppSidebar({ route, data }: AppSidebarProps) {
   const activeSessionId = route.name === "session" ? route.sessionId : null;
 
   return (
-    <Sidebar collapsible="offcanvas">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <a href={projectsPath()} onClick={go(projectsPath())}>
-                {/* Tint warna logo (sama dengan Settings -> About) agar logo
+    <>
+      <Sidebar collapsible="offcanvas">
+        <SidebarHeader>
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton size="lg" asChild>
+                <a href={projectsPath()} onClick={go(projectsPath())}>
+                  {/* Tint warna logo (sama dengan Settings -> About) agar logo
                     ungu tetap kontras di light & dark mode. */}
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#EEEBFF] p-1.5 ring-1 ring-[#6D5CFB]/20 dark:bg-[#6D5CFB]/15 dark:ring-[#6D5CFB]/30">
-                  <img src={logo} alt="" className="size-full" />
-                </span>
-                <span className="truncate font-semibold">KCG Code</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+                  <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-[#EEEBFF] p-1.5 ring-1 ring-[#6D5CFB]/20 dark:bg-[#6D5CFB]/15 dark:ring-[#6D5CFB]/30">
+                    <img src={logo} alt="" className="size-full" />
+                  </span>
+                  <span className="truncate font-semibold">KCG Code</span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
 
-        {/* Navigasi utama */}
-        <SidebarMenu className="mt-1">
-          <SidebarMenuItem>
-            {/* Homepage = composer chat: kirim pesan di sana membuat Session
+          {/* Navigasi utama */}
+          <SidebarMenu className="mt-1">
+            <SidebarMenuItem>
+              {/* Homepage = composer chat: kirim pesan di sana membuat Session
                 baru di Project yang dipilih. */}
-            <SidebarMenuButton
-              asChild
-              isActive={route.name === "projects"}
-              className={NAV_BUTTON_CLASS}
-            >
-              <a href={projectsPath()} onClick={go(projectsPath())}>
-                <MessageCirclePlusIcon />
-                <span>New session</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              type="button"
-              onClick={() => {
-                if (isMobile) setOpenMobile(false);
-                setSearchOpen(true);
-              }}
-              aria-haspopup="dialog"
-              aria-keyshortcuts="Control+K Meta+K"
-              className={NAV_BUTTON_CLASS}
-            >
-              <SearchIcon />
-              <span>Search</span>
-              <kbd className="ml-auto hidden rounded border bg-sidebar px-1.5 font-mono text-[10px] text-muted-foreground md:inline">
-                Ctrl K
-              </kbd>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              asChild
-              isActive={route.name === "skills"}
-              className={NAV_BUTTON_CLASS}
-            >
-              {/* Bawa Project aktif agar otomatis terpilih di halaman Skills. */}
-              <a href={skillsPath(activeProjectId)} onClick={go(skillsPath(activeProjectId))}>
-                <SparklesIcon />
-                <span>Skills</span>
-              </a>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
+              <SidebarMenuButton
+                asChild
+                isActive={route.name === "projects"}
+                className={NAV_BUTTON_CLASS}
+              >
+                <a href={projectsPath()} onClick={go(projectsPath())}>
+                  <MessageCirclePlusIcon />
+                  <span>New session</span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                type="button"
+                onClick={() => {
+                  if (isMobile) setOpenMobile(false);
+                  setSearchOpen(true);
+                }}
+                aria-haspopup="dialog"
+                aria-keyshortcuts="Control+K Meta+K"
+                className={NAV_BUTTON_CLASS}
+              >
+                <SearchIcon />
+                <span>Search</span>
+                <kbd className="ml-auto hidden rounded border bg-sidebar px-1.5 font-mono text-[10px] text-muted-foreground md:inline">
+                  Ctrl K
+                </kbd>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                isActive={route.name === "skills"}
+                className={NAV_BUTTON_CLASS}
+              >
+                {/* Bawa Project aktif agar otomatis terpilih di halaman Skills. */}
+                <a href={skillsPath(activeProjectId)} onClick={go(skillsPath(activeProjectId))}>
+                  <SparklesIcon />
+                  <span>Skills</span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarHeader>
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Projects</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarBody
-              data={data}
-              activeProjectId={activeProjectId}
-              activeSessionId={activeSessionId}
-              go={go}
-              navigate={navigateAndClose}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupLabel>Projects</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarBody
+                data={data}
+                activeProjectId={activeProjectId}
+                activeSessionId={activeSessionId}
+                go={go}
+                navigate={navigateAndClose}
+              />
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
 
-      <SidebarFooter className="gap-3 border-t">
-        {/* Versi baru di npm -> Settings -> About */}
-        <SidebarUpdateNotice onNavigate={navigateAndClose} />
-        {/* Tema: Light / Dark / System */}
-        <ThemeToggle />
-        {/* Profil + Settings + Lock */}
-        <SidebarAccount active={route.name === "settings"} onNavigate={navigateAndClose} />
-      </SidebarFooter>
+        <SidebarFooter className="gap-3 border-t">
+          {/* Versi baru di npm -> Settings -> About */}
+          <SidebarUpdateNotice onNavigate={navigateAndClose} />
+          {/* Tema: Light / Dark / System */}
+          <ThemeToggle />
+          {/* Profil + Settings + Lock */}
+          <SidebarAccount active={route.name === "settings"} onNavigate={navigateAndClose} />
+        </SidebarFooter>
 
-      <SidebarRail />
+        <SidebarRail />
+      </Sidebar>
 
+      {/* Di luar <Sidebar>: di HP sidebar adalah Sheet yang ditutup saat
+          Search diklik — dialog di dalamnya ikut ter-unmount. */}
       <SearchDialog
         open={searchOpen}
         onOpenChange={setSearchOpen}
         groups={data.groups}
         onSelect={navigate}
       />
-    </Sidebar>
+    </>
   );
 }
 

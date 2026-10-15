@@ -52,27 +52,3 @@ export function groupSessionsByProject(
     })
     .map((g) => g.group);
 }
-
-/**
- * Filter grup berdasarkan kata kunci: Project yang namanya cocok tampil
- * utuh; selain itu hanya Session yang judulnya cocok yang dipertahankan.
- * Grup tanpa kecocokan dibuang. Query kosong -> grup utuh.
- */
-export function filterSidebarGroups(
-  groups: readonly SidebarProjectGroup[],
-  query: string,
-  titleOf: (session: Session) => string,
-): SidebarProjectGroup[] {
-  const needle = query.trim().toLowerCase();
-  if (needle === "") return [...groups];
-  const out: SidebarProjectGroup[] = [];
-  for (const group of groups) {
-    if (group.project.name.toLowerCase().includes(needle)) {
-      out.push(group);
-      continue;
-    }
-    const sessions = group.sessions.filter((s) => titleOf(s).toLowerCase().includes(needle));
-    if (sessions.length > 0) out.push({ ...group, sessions });
-  }
-  return out;
-}

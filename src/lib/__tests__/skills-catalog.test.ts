@@ -10,6 +10,7 @@ import {
   installedAgentsFor,
   mergeInstalledSkills,
   resolveSkillsProject,
+  summarizeAudit,
   visibleInstalledSkills,
 } from "../skills-catalog";
 
@@ -119,5 +120,32 @@ describe("visibleInstalledSkills", () => {
     expect(visibleInstalledSkills(all, "").map((x) => x.name)).toEqual(["p1", "g1"]);
     expect(visibleInstalledSkills(all, "react").map((x) => x.name)).toEqual(["p1"]);
     expect(visibleInstalledSkills(all, "G1").map((x) => x.name)).toEqual(["g1"]);
+  });
+});
+
+describe("summarizeAudit", () => {
+  test("semua lolos", () => {
+    expect(summarizeAudit([{ provider: "Socket", status: "pass" }])).toBe("1 check passed");
+    expect(
+      summarizeAudit([
+        { provider: "Socket", status: "pass" },
+        { provider: "Snyk", status: "pass" },
+      ]),
+    ).toBe("All 2 checks passed");
+  });
+  test("yang menandai disebut lebih dulu daripada yang minta review", () => {
+    expect(
+      summarizeAudit([
+        { provider: "Socket", status: "pass" },
+        { provider: "Snyk", status: "warn" },
+        { provider: "Runlayer", status: "fail" },
+      ]),
+    ).toBe("Flagged by Runlayer · 1 of 3 passed");
+    expect(
+      summarizeAudit([
+        { provider: "Socket", status: "pass" },
+        { provider: "Snyk", status: "warn" },
+      ]),
+    ).toBe("Snyk suggests a review · 1 of 2 passed");
   });
 });

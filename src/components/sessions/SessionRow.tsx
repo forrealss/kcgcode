@@ -80,7 +80,7 @@ const STATUS_TEXT: Record<Session["status"], string> = {
  * Status di awal subjudul — titik + label berwarna, seperti status MCP.
  * `stopped` (keadaan biasa) tidak ditampilkan agar daftar tidak ramai.
  */
-function StatusLabel({ session, busy }: { session: Session; busy: boolean }) {
+export function StatusLabel({ session, busy = false }: { session: Session; busy?: boolean }) {
   if (busy) {
     return (
       <span className="inline-flex shrink-0 items-center gap-1.5">
