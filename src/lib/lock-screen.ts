@@ -1,8 +1,10 @@
 /**
  * Logika murni lock screen (tanpa DOM) — dipisah agar dapat diuji `bun test`.
  */
+import { PIN_MAX } from "@/lib/lock-secret";
 
-export const PIN_MAX = 12;
+// Diekspor ulang: batas panjang PIN bersumber dari `lib/lock-secret.ts`.
+export { PIN_MAX };
 
 export type PinKeyAction =
   | { type: "digit"; digit: string }

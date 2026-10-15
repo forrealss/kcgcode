@@ -5,6 +5,8 @@
  * - `getPromptActions`: aksi yang dirender untuk sebuah prompt.
  * - `groupPrompts`: beberapa permission identik (kind + title sama) menjadi
  *   SATU kartu (bug kartu nyepam).
+ * - `toggleChoice` / `collectAnswer`: state jawaban kartu pertanyaan
+ *   (checkbox/radio + teks kustom) dan bentuk jawaban yang dikirim.
  */
 import type { InteractivePrompt, PromptQuestion, PromptResponse } from "@/types";
 
@@ -84,4 +86,34 @@ export function groupPrompts(prompts: readonly InteractivePrompt[]): Interactive
     else groups.set(key, [p]);
   }
   return [...groups.values()];
+}
+
+/**
+ * Toggle satu opsi jawaban. `allowMulti: false` = radio — pilihan baru
+ * menggantikan yang lama (memilih ulang opsi yang sama tetap terpilih).
+ */
+export function toggleChoice(
+  selected: ReadonlySet<string> | undefined,
+  label: string,
+  allowMulti: boolean,
+): Set<string> {
+  if (!allowMulti) return new Set([label]);
+  const next = new Set(selected);
+  if (next.has(label)) next.delete(label);
+  else next.add(label);
+  return next;
+}
+
+/**
+ * Jawaban satu pertanyaan: label opsi terpilih (urut pilih) ditambah teks
+ * kustom bila diisi. Array kosong = pertanyaan belum dijawab.
+ */
+export function collectAnswer(
+  selected: Iterable<string> | undefined,
+  customText: string | undefined,
+): string[] {
+  const labels = [...(selected ?? [])];
+  const text = customText?.trim() ?? "";
+  if (text.length > 0) labels.push(text);
+  return labels;
 }

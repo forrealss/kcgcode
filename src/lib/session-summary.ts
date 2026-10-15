@@ -3,7 +3,7 @@
  * fetch), dipisah agar dapat diuji `bun test` seperti `lib/routes.ts` dan
  * `lib/project-overview.ts`.
  *
- * Dipakai `components/sessions/SessionList.tsx`: mengurutkan Session sehingga
+ * Dipakai `components/sessions/SessionList/`: mengurutkan Session sehingga
  * yang paling relevan untuk dilanjutkan berada di atas, dan menyediakan
  * ringkasan status untuk header Project.
  */

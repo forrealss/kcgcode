@@ -4,7 +4,7 @@
  *
  * Dipakai bersama oleh `components/sessions/ModelPicker.tsx` (ganti model &
  * thinking effort Session yang sedang berjalan) dan
- * `components/sessions/SessionList.tsx` (pilih model saat membuat Session)
+ * `components/sessions/SessionList/` (pilih model saat membuat Session)
  * supaya keduanya memakai aturan kunci, pencarian, dan pengelompokan yang sama.
  */
 
