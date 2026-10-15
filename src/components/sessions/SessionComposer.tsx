@@ -14,6 +14,10 @@
  * (mengirim `{ type: "interrupt" }`) — menghentikan balasan saja,
  * Session tetap berjalan.
  *
+ * Dikte suara (`useSpeechToText`): tombol mic di sebelah kirim; ucapan tampil
+ * live di textarea, bar frekuensi di pil pengganti mic, dan pesan langsung
+ * terkirim begitu pengguna diam (tanpa Enter).
+ *
  * UI punya dua varian:
  * - Desktop: attach image | textarea | AgentPicker | kirim/stop.
  * - Mobile: satu tombol aksi (attach image + agent mode) lewat `Sheet`;
@@ -40,6 +44,7 @@ import {
 } from "@/components/sessions/PendingAttachments";
 import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
 import { SlashCommandDropdown } from "@/components/sessions/SlashCommandDropdown";
+import { MicButton, VoiceDictationPill } from "@/components/sessions/VoiceInput";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetTrigger } from "@/components/ui/sheet";
 import { Spinner } from "@/components/ui/spinner";
@@ -48,6 +53,7 @@ import { useIsMobile } from "@/hooks/useMediaQuery";
 import { useFileMention } from "@/hooks/useMention";
 import { usePermissionModes } from "@/hooks/usePermissionModes";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
+import { useSpeechToText } from "@/hooks/useSpeechToText";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { agentQuery } from "@/lib/agent-types";
 import { ApiError, apiErrorMessage, apiUploadFile } from "@/lib/api";
@@ -189,12 +195,12 @@ export function SessionComposer({
   const measureRef = useRef<HTMLSpanElement | null>(null);
   /**
    * Perkiraan lebar kontrol yang berbagi baris dengan textarea saat inline —
-   * SENGAJA dilebihkan (attach + agent + kirim di desktop; plus + kirim di
-   * mobile) agar teks di dekat batas selalu dianggap multiline, bukan
+   * SENGAJA dilebihkan (attach + agent + mic + kirim di desktop; plus + mic +
+   * kirim di mobile) agar teks di dekat batas selalu dianggap multiline, bukan
    * pas-pasan (sumber flip-flop). Mobile lebih kecil karena barisnya hanya
-   * dua tombol.
+   * tiga tombol.
    */
-  const INLINE_CONTROLS_RESERVE_PX = isMobile ? 88 : 192;
+  const INLINE_CONTROLS_RESERVE_PX = isMobile ? 128 : 232;
   /**
    * Putuskan `multiline` dari LEBAR TEKS terhadap lebar baris inline — BUKAN
    * dari scrollHeight textarea. Mengukur tinggi membuat keputusan bergantung
@@ -321,23 +327,27 @@ export function SessionComposer({
   const canInput = inputAllowed && !sending;
   const canSubmit = canInput && (text.trim() !== "" || pendingImages.length > 0);
 
-  const submitText = async (event: React.FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  /**
+   * Kirim `message` (+ lampiran). Dipisah dari handler form agar dikte suara
+   * bisa mengirim teks finalnya langsung — `text` di closure ini bisa jadi
+   * belum memuat hasil dikte terakhir.
+   */
+  const submitMessage = async (message: string) => {
     if (!canInput || sending) return;
-    if (text.trim() === "" && pendingImages.length === 0) return;
+    if (message.trim() === "" && pendingImages.length === 0) return;
     setSending(true);
     try {
       // Referensi @path dikenal dijadikan part `file` — teks asli tidak
       // diubah (tetap tampil di bubble); part `file` hanya penanda tambahan
       // agar isi file benar-benar dibaca opencode.
-      const files = extractMentionedFiles(text, suggestedCacheRef.current);
+      const files = extractMentionedFiles(message, suggestedCacheRef.current);
       // Upload gambar dulu; id lampiran dipakai pesan WS berikutnya.
       const images: string[] = [];
       for (const img of pendingImages) {
         const up = await apiUploadFile(`/api/sessions/${session.id}/uploads`, img.file);
         images.push(up.id);
       }
-      send({ type: "input", sessionId: session.id, text: text.trim(), files, images });
+      send({ type: "input", sessionId: session.id, text: message.trim(), files, images });
       for (const img of pendingImages) if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
       setPendingImages([]);
       setText("");
@@ -349,6 +359,21 @@ export function SessionComposer({
       setSending(false);
     }
   };
+
+  const submitText = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submitMessage(text);
+  };
+
+  /** Dikte suara: teks live ke textarea, diam -> langsung kirim. */
+  const dictation = useSpeechToText({
+    onText: setText,
+    onFinish: (spoken) => {
+      setText(spoken);
+      void submitMessage(spoken);
+    },
+    onError: reportError,
+  });
 
   /** Lampirkan file yang di-paste (screenshot, file dari file manager). */
   const handlePaste = useCallback(
@@ -452,7 +477,8 @@ export function SessionComposer({
             // Ala Gemini: begitu input tumbuh ke 2 baris (multiline), tombol
             // aksi & kirim/stop pindah ke baris di BAWAH textarea — berlaku
             // di desktop maupun mobile. Satu baris: semuanya dalam satu baris.
-            const stacked = multiline;
+            // Selama dikte: selalu bertumpuk agar pil mic (lebih lebar) muat.
+            const stacked = multiline || dictation.listening;
 
             // Mention @file yang dikenali -> latar tipis transparan (tanpa
             // bingkai / garis bawah — garis bawah mirip penanda autocorrect
@@ -525,9 +551,12 @@ export function SessionComposer({
                     canInput,
                     compact: isMobile,
                     hasAttachments: pendingImages.length > 0,
+                    listening: dictation.listening,
                   })}
                   aria-label="Free-form input"
                   disabled={!canInput}
+                  // Selama dikte isinya milik pengenal suara.
+                  readOnly={dictation.listening}
                   rows={1}
                   // `relative` = di atas lapisan sorot; latar transparan agar
                   // sorotan di belakangnya terlihat.
@@ -571,6 +600,29 @@ export function SessionComposer({
               )
             );
 
+            // Mic (dikte) di depan kirim/stop. Selama mendengarkan, pil dikte
+            // menggantikan keduanya — ✓ di pil sudah berarti kirim.
+            const trailingEl = dictation.listening ? (
+              <VoiceDictationPill
+                key="composer-dictation"
+                analyser={dictation.analyser}
+                activity={dictation.voiceActivity}
+                onCancel={dictation.cancel}
+                onFinish={dictation.finish}
+              />
+            ) : (
+              <div key="composer-trailing" className="flex shrink-0 items-center gap-1">
+                {!generating && (
+                  <MicButton
+                    support={dictation.support}
+                    disabled={!canInput}
+                    onClick={() => dictation.start(text)}
+                  />
+                )}
+                {sendOrStopEl}
+              </div>
+            );
+
             // Mobile: satu tombol aksi (attach image + agent mode) lewat Sheet,
             // supaya baris composer HP tetap ringkas (3 elemen saja).
             if (isMobile) {
@@ -598,14 +650,14 @@ export function SessionComposer({
                         {textareaEl}
                         <div className="flex items-center justify-between gap-1">
                           {actionTrigger}
-                          {sendOrStopEl}
+                          {trailingEl}
                         </div>
                       </>
                     ) : (
                       <>
                         {actionTrigger}
                         {textareaEl}
-                        {sendOrStopEl}
+                        {trailingEl}
                       </>
                     )}
                   </div>
@@ -684,7 +736,7 @@ export function SessionComposer({
                     {attachImageEl}
                     <div className="flex items-center gap-1">
                       {agentPickerEl}
-                      {sendOrStopEl}
+                      {trailingEl}
                     </div>
                   </div>
                 </div>
@@ -696,7 +748,7 @@ export function SessionComposer({
                 {attachImageEl}
                 {textareaEl}
                 {agentPickerEl}
-                {sendOrStopEl}
+                {trailingEl}
               </div>
             );
           })()}

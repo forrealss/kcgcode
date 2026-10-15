@@ -10,7 +10,8 @@
 const DEV = new URL(self.location.href).searchParams.has("dev");
 
 // Naikkan versi bila strategi cache berubah — cache lama dihapus saat activate.
-const CACHE_NAME = "kcg-code-v4";
+// v5: asset `/_bun/*` tidak lagi di-cache (lihat handler fetch).
+const CACHE_NAME = "kcg-code-v5";
 const PRECACHE = [
   "/",
   "/manifest.json",
@@ -52,6 +53,14 @@ self.addEventListener("fetch", (event) => {
 
   // Network-only untuk API dan WebSocket.
   if (url.pathname.startsWith("/api/") || url.pathname === "/ws") return;
+
+  // Network-only untuk asset server dev Bun (`/_bun/client/*`, `/_bun/asset/*`).
+  // Namanya TIDAK ikut berubah saat isinya berubah, jadi cache-first akan
+  // menyajikan CSS/JS basi. Ini terjadi bila SW produksi pernah terpasang di
+  // origin yang sama (mis. `kcgcode` lalu `bun dev` di port yang sama): SW
+  // tetap aktif walau server dev tidak mendaftarkannya. Build produksi memakai
+  // nama ber-hash di root, bukan `/_bun/`.
+  if (url.pathname.startsWith("/_bun/")) return;
 
   // Network-first untuk halaman: shell HTML lama (chunk usang) tidak boleh
   // terjebak di cache setelah update. Cache hanya dipakai saat offline.

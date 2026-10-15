@@ -87,7 +87,7 @@ export const SETTINGS_PANELS: readonly SettingsPageInfo[] = [
   {
     id: "appearance",
     label: "Appearance",
-    description: "Effects & animations",
+    description: "Animations & voice input",
     icon: PaletteIcon,
   },
   {

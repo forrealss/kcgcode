@@ -23,6 +23,8 @@ export interface ComposerPlaceholderState {
    * jadi petunjuk panjang diganti ajakan singkat yang relevan.
    */
   hasAttachments?: boolean;
+  /** Dikte suara sedang mendengarkan (sebelum ada ucapan yang terdengar). */
+  listening?: boolean;
 }
 
 /**
@@ -31,6 +33,7 @@ export interface ComposerPlaceholderState {
  * keduanya diperiksa lebih dulu.
  */
 export function composerPlaceholder(state: ComposerPlaceholderState): string {
+  if (state.listening) return "Listening…";
   if (state.busy) return state.compact ? "Responding…" : "Model is responding…";
   if (!state.canInput) return "Session is not active";
   if (state.hasAttachments) return "Add a message…";

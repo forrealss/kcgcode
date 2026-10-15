@@ -16,6 +16,9 @@
  * Pemilih model & agent sama dengan Session (`ModelPicker`, `AgentPicker`) —
  * tanpa Session, pilihan dikirim di body `POST /api/sessions`.
  * Keduanya di-reset saat Project berganti karena daftarnya per Project.
+ *
+ * Dikte suara (`useSpeechToText`): tombol mic di sebelah kirim — ucapan tampil
+ * live di input dan Session baru langsung dibuat begitu pengguna diam.
  */
 import {
   CheckIcon,
@@ -32,6 +35,7 @@ import { ComposerSuggestions } from "@/components/sessions/ComposerSuggestions";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
 import { PermissionModePicker } from "@/components/sessions/PermissionModePicker";
 import { SlashCommandDropdown } from "@/components/sessions/SlashCommandDropdown";
+import { MicButton, VoiceDictationPill } from "@/components/sessions/VoiceInput";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -53,6 +57,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { usePermissionModes } from "@/hooks/usePermissionModes";
 import { useRouter } from "@/hooks/useRouter";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
+import { useSpeechToText } from "@/hooks/useSpeechToText";
 import { agentQuery, readPreferredAgentType, storePreferredAgentType } from "@/lib/agent-types";
 import { ApiError, apiFetch } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
@@ -194,9 +199,11 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
 
   const canSend = selected !== null && text.trim() !== "" && !sending;
 
-  const submit = async (event?: React.FormEvent<HTMLFormElement>) => {
+  /** `override`: teks final dikte suara (`text` di closure bisa belum memuatnya). */
+  const submit = async (event?: React.FormEvent<HTMLFormElement>, override?: string) => {
     event?.preventDefault();
-    if (!canSend || selected === null) return;
+    const prompt = override ?? text;
+    if (selected === null || prompt.trim() === "" || sending) return;
     setSending(true);
     setError(null);
     try {
@@ -212,7 +219,7 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
         }),
       });
       const { session } = (await res.json()) as { session: Session };
-      setPendingPrompt(session.id, text);
+      setPendingPrompt(session.id, prompt);
       // Session view dirender langsung dari data ini (tanpa fetch ulang),
       // lalu composer "berpindah" ke dasar layar lewat View Transition.
       seedSession(session);
@@ -223,6 +230,16 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
       setSending(false);
     }
   };
+
+  /** Dikte suara: teks live ke input, diam -> langsung buat Session. */
+  const dictation = useSpeechToText({
+    onText: setText,
+    onFinish: (spoken) => {
+      setText(spoken);
+      void submit(undefined, spoken);
+    },
+    onError: setError,
+  });
 
   return (
     // `isolate`: stacking context untuk `HomeBackdrop` (-z-10) — tergambar di
@@ -291,9 +308,17 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
                   void submit();
                 }
               }}
-              placeholder={selected ? `Ask anything in ${selected.name}…` : "Pick a project first"}
+              placeholder={
+                dictation.listening
+                  ? "Listening…"
+                  : selected
+                    ? `Ask anything in ${selected.name}…`
+                    : "Pick a project first"
+              }
               aria-label="Message"
               disabled={sending}
+              // Selama dikte isinya milik pengenal suara.
+              readOnly={dictation.listening}
               rows={2}
               className="max-h-60 min-h-20 px-4 text-base leading-6 md:text-base"
             />
@@ -309,16 +334,37 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
                   disabled={sending}
                 />
               )}
-              <InputGroupButton
-                type="submit"
-                size="icon-sm"
-                variant="default"
-                className="ml-auto size-9 rounded-full"
-                disabled={!canSend}
-                aria-label="Send"
-              >
-                {sending ? <Spinner /> : <SendHorizontalIcon />}
-              </InputGroupButton>
+              {/* Mic + kirim di kanan; selama dikte pil (✕ / bar / ✓)
+                  menggantikan keduanya. */}
+              <div className="ml-auto flex items-center gap-1">
+                {dictation.listening ? (
+                  <VoiceDictationPill
+                    analyser={dictation.analyser}
+                    activity={dictation.voiceActivity}
+                    onCancel={dictation.cancel}
+                    onFinish={dictation.finish}
+                  />
+                ) : (
+                  <>
+                    <MicButton
+                      support={dictation.support}
+                      disabled={selected === null || sending}
+                      onClick={() => dictation.start(text)}
+                      className="rounded-full"
+                    />
+                    <InputGroupButton
+                      type="submit"
+                      size="icon-sm"
+                      variant="default"
+                      className="size-9 rounded-full"
+                      disabled={!canSend}
+                      aria-label="Send"
+                    >
+                      {sending ? <Spinner /> : <SendHorizontalIcon />}
+                    </InputGroupButton>
+                  </>
+                )}
+              </div>
             </InputGroupAddon>
           </InputGroup>
 

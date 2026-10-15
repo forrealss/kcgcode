@@ -354,6 +354,141 @@
 }
 
 /* ---------------------------------------------------------------------------
+   Api di belakang card thinking effort saat effort di tingkat tertinggi
+   (`EffortFire`, `-z-10` di belakang card `EffortSlider`). Masuk/keluar diurus
+   motion; di sini bentuk & gerakan api.
+
+   - Lapisan api (`__flames`) berpangkal 1.5rem di bawah tepi atas card dan
+     sedikit lebih lebar dari card: pangkal lidah api tertutup card, nyalanya
+     mencuat di atas tepi atas (puncak ~15–50px). Lidah sisi (`--b` negatif)
+     berpangkal di sekitar tengah card dan menjilat kedua sisinya.
+   - Lidah api: elips terang (kuning -> oranye -> merah) yang naik, menyempit,
+     lalu padam; jeda berbeda-beda -> nyala tak pernah serempak. Baris
+     belakang lebih merah, besar & lambat untuk kedalaman. Filter SVG
+     turbulence di elemen induk meliukkan tepinya.
+   - Blend normal (bukan `screen`) agar tetap terlihat di tema terang.
+   - Percikan (`__spark`) opacity 0 di luar animasi: reduced motion (animasi
+     dimatikan global, src/index.css) -> tidak ada titik diam yang tertinggal.
+   --------------------------------------------------------------------------- */
+.effort-fire__glow {
+  position: absolute;
+  inset: -5px;
+  border-radius: 1.1rem;
+  background: linear-gradient(90deg, #f59e0b, #f97316 30%, #ef4444 60%, #f97316 85%, #f59e0b);
+  filter: blur(14px);
+  animation: effort-glow 1.6s ease-in-out infinite alternate;
+}
+
+.effort-fire__flames {
+  position: absolute;
+  inset-inline: -3%;
+  bottom: calc(100% - 1.5rem);
+  height: 3.5rem;
+}
+
+.effort-fire__tongue {
+  position: absolute;
+  bottom: var(--b, 0%);
+  left: var(--x);
+  width: var(--w);
+  height: var(--h);
+  translate: -50% 0;
+  border-radius: 50% 50% 38% 38% / 68% 68% 32% 32%;
+  background: radial-gradient(
+    50% 62% at 50% 72%,
+    #fff6c4 0%,
+    #ffd54a 20%,
+    #ff8a1f 45%,
+    rgb(239 68 68 / 0.65) 68%,
+    transparent 100%
+  );
+  filter: blur(2.5px);
+  transform-origin: 50% 100%;
+  animation: effort-flame var(--d) ease-in infinite;
+  animation-delay: var(--delay);
+  will-change: transform, opacity;
+}
+
+.effort-fire__tongue--back {
+  background: radial-gradient(
+    50% 62% at 50% 72%,
+    #ffb347 0%,
+    #ff6a1a 30%,
+    rgb(220 38 38 / 0.75) 58%,
+    transparent 100%
+  );
+  filter: blur(4px);
+}
+
+.effort-fire__sparks {
+  position: absolute;
+  inset: 0;
+}
+
+/* Mulai tepat di bawah tepi atas card (tertutup card), lalu muncul dari
+   baliknya. */
+.effort-fire__spark {
+  position: absolute;
+  bottom: calc(100% - 1rem);
+  left: var(--x);
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: #ffe08a;
+  box-shadow: 0 0 6px 2px rgb(255 136 32 / 0.8);
+  opacity: 0;
+  animation: effort-spark var(--d) linear infinite;
+  animation-delay: var(--delay);
+  will-change: transform, opacity;
+}
+
+@keyframes effort-flame {
+  0% {
+    transform: translateY(8%) scale(1, 0.55);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  55% {
+    transform: translateY(-18%) scale(0.85, 1.1);
+    opacity: 0.95;
+  }
+  100% {
+    transform: translateY(-55%) scale(0.3, 0.85);
+    opacity: 0;
+  }
+}
+
+@keyframes effort-spark {
+  0% {
+    transform: translate(0, 0) scale(1);
+    opacity: 0;
+  }
+  10% {
+    opacity: 1;
+  }
+  70% {
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(var(--dx), calc(-1 * var(--rise))) scale(0.3);
+    opacity: 0;
+  }
+}
+
+@keyframes effort-glow {
+  from {
+    opacity: 0.35;
+    scale: 0.985;
+  }
+  to {
+    opacity: 0.7;
+    scale: 1.01;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    View Transition homepage -> Session (`navigate(..., { transition: "to-session" })`)
    — pola "container transform": kotak composer homepage MELUAS menjadi
    seluruh area Session view, lalu isi Session muncul di dalamnya.

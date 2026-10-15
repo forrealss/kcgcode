@@ -17,6 +17,14 @@ describe("composerPlaceholder", () => {
     ).toBe("Model is responding…");
   });
 
+  test("dikte suara: 'Listening…' di kedua ukuran", () => {
+    for (const compact of [false, true]) {
+      expect(composerPlaceholder({ busy: false, canInput: true, compact, listening: true })).toBe(
+        "Listening…",
+      );
+    }
+  });
+
   test("wide screen: full hint when input is ready", () => {
     expect(composerPlaceholder({ busy: false, canInput: true, compact: false })).toBe(
       "Type a message… / for commands, @ for files, or drop files here",
