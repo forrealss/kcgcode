@@ -11,12 +11,17 @@ import type {
   PermissionMode,
   SDKControlGetContextUsageResponse,
   SDKMessage,
+  SDKSessionInfo,
   SDKUserMessage,
+  SessionMessage,
   SlashCommand,
 } from "@anthropic-ai/claude-agent-sdk";
 import {
   deleteSession as sdkDeleteSession,
+  forkSession as sdkForkSession,
   getSessionInfo as sdkGetSessionInfo,
+  getSessionMessages as sdkGetSessionMessages,
+  listSessions as sdkListSessions,
   query as sdkQuery,
 } from "@anthropic-ai/claude-agent-sdk";
 
@@ -48,10 +53,29 @@ export type ClaudeQueryFn = (params: {
 export const defaultQuery: ClaudeQueryFn = (params) =>
   sdkQuery(params) as unknown as ClaudeQueryLike;
 
+/**
+ * Pesan transcript (`getSessionMessages`). Runtime SDK juga menyertakan
+ * `timestamp` (ISO) & `origin` (`{ kind: "human" | "peer" | … }`) walau belum
+ * ada di tipe publiknya.
+ */
+export type ClaudeTranscriptMessage = SessionMessage & {
+  timestamp?: string;
+  origin?: { kind?: string } | null;
+};
+
 /** Akses transcript Session di `~/.claude/projects` (di-mock pada test). */
 export interface ClaudeTranscripts {
   exists(sessionId: string, dir: string): Promise<boolean>;
   remove(sessionId: string, dir: string): Promise<void>;
+  /**
+   * Session interaktif milik direktori ini saja (tanpa worktree lain — id-nya
+   * tidak bisa di-`resume` dari `cwd` Project — dan tanpa Session SDK/headless).
+   */
+  list(dir: string): Promise<SDKSessionInfo[]>;
+  /** Rantai pesan user/assistant transcript (urut kronologis). */
+  messages(sessionId: string, dir: string): Promise<ClaudeTranscriptMessage[]>;
+  /** Salin transcript ke Session baru; kembalikan id barunya. */
+  fork(sessionId: string, dir: string, title?: string): Promise<string>;
 }
 
 export const defaultTranscripts: ClaudeTranscripts = {
@@ -64,6 +88,15 @@ export const defaultTranscripts: ClaudeTranscripts = {
   },
   async remove(sessionId, dir) {
     await sdkDeleteSession(sessionId, { dir });
+  },
+  list(dir) {
+    return sdkListSessions({ dir, includeWorktrees: false, includeProgrammatic: false });
+  },
+  messages(sessionId, dir) {
+    return sdkGetSessionMessages(sessionId, { dir });
+  },
+  async fork(sessionId, dir, title) {
+    return (await sdkForkSession(sessionId, { dir, ...(title ? { title } : {}) })).sessionId;
   },
 };
 

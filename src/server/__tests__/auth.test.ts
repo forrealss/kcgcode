@@ -92,6 +92,7 @@ describe("kunci aplikasi — HTTP & WebSocket", () => {
       "/api/projects/x/agents",
       "/api/projects/x/capabilities",
       "/api/projects/x/skills/install",
+      "/api/projects/x/external-sessions",
       "/api/fs",
       "/api/sessions",
       "/api/sessions/x",

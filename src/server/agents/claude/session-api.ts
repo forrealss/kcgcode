@@ -17,6 +17,7 @@ import {
   USAGE_REFRESH_MS,
 } from "./constants";
 import { buildUserContent } from "./files";
+import type { ClaudeHostSessions } from "./host-sessions";
 import { beginInterrupt, type LiveSession, settleInterrupt } from "./live-session";
 import type { ClaudeProcesses } from "./processes";
 import { type ClaudeTranscripts, withTimeout } from "./sdk";
@@ -24,6 +25,7 @@ import { type ClaudeTranscripts, withTimeout } from "./sdk";
 export interface ClaudeSessionApiDeps {
   cwd: string;
   transcripts: ClaudeTranscripts;
+  host: ClaudeHostSessions;
   now: () => number;
   /** Jeda pengecekan ulang transcript setelah proses ditutup saat hapus. */
   deleteSettleMs: number;
@@ -41,7 +43,21 @@ function selectedModel(model: ModelSelection | null): string | null {
 }
 
 export function createClaudeSessionApi(deps: ClaudeSessionApiDeps): AgentClient["session"] {
-  const { cwd, transcripts, now, deleteSettleMs, sessions, getOrCreate, asks, processes } = deps;
+  const { cwd, transcripts, host, now, deleteSettleMs, sessions, getOrCreate, asks, processes } =
+    deps;
+
+  /**
+   * Transcript Session sedang dipegang proses `claude` interaktif lain
+   * (Claude Desktop / CLI) -> pesan error; `resume` dari sini akan membuat dua
+   * penulis pada satu transcript.
+   */
+  async function openElsewhere(sessionId: string): Promise<string | null> {
+    const proc = (await host.running().catch(() => new Map())).get(sessionId);
+    if (!proc) return null;
+    const where =
+      proc.entrypoint === "claude-desktop" ? "Claude Desktop" : "another Claude Code window";
+    return `This conversation is still open in ${where}. Close it there, then send again.`;
+  }
 
   async function prompt(input: {
     sessionID: string;
@@ -66,8 +82,13 @@ export function createClaudeSessionApi(deps: ClaudeSessionApiDeps): AgentClient[
       const respawn =
         live.system !== live.wantSystem || (live.effort !== null && live.wantEffort === null);
       if (live.query && respawn && !live.running) processes.closeQuery(live);
-      if (live.query) await processes.syncLiveSettings(live, live.query);
-      else await processes.startQuery(live);
+      if (live.query) {
+        await processes.syncLiveSettings(live, live.query);
+      } else {
+        const busy = live.persisted ? await openElsewhere(live.id) : null;
+        if (busy) return { ok: false, error: `AGENT_PROMPT_FAILED: ${busy}` };
+        await processes.startQuery(live);
+      }
       live.turnError = null;
       live.manualCompact = COMPACT_PROMPT.test(input.text.trim());
       live.translator.beginTurn();

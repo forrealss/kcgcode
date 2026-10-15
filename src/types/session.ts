@@ -62,3 +62,29 @@ export interface Session {
   createdAt: number;
   updatedAt: number;
 }
+
+/**
+ * Session agent yang dibuat di luar KCG (Claude Desktop tab Code, `claude`
+ * CLI, TUI / desktop opencode) untuk direktori Project yang sama — kandidat
+ * impor
+ * (`GET /api/projects/:id/external-sessions`).
+ */
+export interface ExternalSession {
+  /** id Session agent (UUID Session Claude Code, `ses_…` opencode). */
+  id: string;
+  title: string;
+  /** Cuplikan prompt pertama bila diketahui. */
+  firstPrompt?: string;
+  createdAt?: number;
+  updatedAt: number;
+  gitBranch?: string;
+  /**
+   * Session sedang terbuka di proses agent lain (Claude Desktop / CLI) atau
+   * sedang menjalankan balasan (opencode). Melanjutkan riwayat yang sama dari
+   * KCG = dua penulis pada satu riwayat, jadi hanya salinannya yang bisa
+   * dilanjutkan (impor dengan `fork`).
+   */
+  openElsewhere: boolean;
+  /** Asal Session bila diketahui (`claude-desktop`, `cli`, `opencode`, …). */
+  source?: string;
+}

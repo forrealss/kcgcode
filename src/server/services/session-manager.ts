@@ -23,7 +23,8 @@
  * sambungan proyektor event (`projector-wiring`), client agent per Project
  * (`agent-clients`), pemetaan id Session agent (`agent-session-map`),
  * lifecycle Session (`lifecycle`), pilihan per Session (`settings`),
- * konteks panel kanan (`session-context`), kirim pesan + antrean per Session
+ * konteks panel kanan (`session-context`), Session agent buatan Desktop/CLI
+ * (`external-sessions`), kirim pesan + antrean per Session
  * (`send-message`), startup/shutdown & agent hilang (`startup-shutdown`),
  * refresh skill tertunda (`skill-refresh`), operasi daftar Project
  * (`project-queries`), input prompt (`prompt-input`), dan jawaban kartu
@@ -34,6 +35,7 @@
  * berhasil dibuat di agent.
  */
 import type { SimpleResult } from "../result";
+import { createExternalSessions } from "./sessions/external-sessions";
 import { createSessionLifecycle } from "./sessions/lifecycle";
 import { createProjectQueries } from "./sessions/project-queries";
 import { createPromptResolver } from "./sessions/prompt-resolver";
@@ -78,6 +80,7 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
   });
 
   const lifecycle = createSessionLifecycle(rt);
+  const external = createExternalSessions(rt);
   const settings = createSessionSettings({ rt, listCapabilities: queries.listCapabilities });
   const sessionContext = createSessionContextReader(rt);
   const sendFreeTextInput = createMessageSender(rt);
@@ -95,6 +98,8 @@ export function createSessionManager(opts: SessionManagerOptions): SessionManage
     resumeSession: lifecycle.resumeSession,
     deleteSession: lifecycle.deleteSession,
     releaseProject: lifecycle.releaseProject,
+    listExternalSessions: external.listExternalSessions,
+    importExternalSession: external.importExternalSession,
     ...queries,
     refreshSkills: (projectId, agentType) => skills.refresh(projectId, agentType),
     hasPendingSkillRefresh: (projectId) => skills.hasPending(projectId),

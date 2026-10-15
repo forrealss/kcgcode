@@ -70,7 +70,14 @@ describe("sub-agent & pemakaian Claude Code", () => {
     const client = createClaudeClient("/proj", {
       query: fn,
       env: {},
-      transcripts: { exists: async () => false, remove: async () => {} },
+      transcripts: {
+        exists: async () => false,
+        remove: async () => {},
+        list: async () => [],
+        messages: async () => [],
+        fork: async () => "",
+      },
+      host: { running: async () => new Map(), desktop: async () => new Map() },
       setTimeoutFn: (cb) => timers.push(cb),
       clearTimeoutFn: () => {},
     });

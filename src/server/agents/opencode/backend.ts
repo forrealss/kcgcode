@@ -24,6 +24,7 @@ import { defaultConnector, type OpencodeConnector } from "./api";
 import { createOpencodeCatalog } from "./catalog";
 import { OpencodeConnection } from "./connection";
 import { OpencodeEvents } from "./events";
+import { createOpencodeExternal } from "./external";
 import { createOpencodeSession } from "./session";
 import { OpencodeUsage } from "./usage";
 import { directoryKey } from "./util";
@@ -97,6 +98,7 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
       event: {
         subscribe: (cb) => events.subscribe(dirKey, cb),
       },
+      external: createOpencodeExternal({ conn, directory }),
     };
   }
 

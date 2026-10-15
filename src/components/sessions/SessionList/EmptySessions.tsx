@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 
 /**
  * Empty state saat Project belum punya Session — pola AdwStatusPage: ikon
- * simbolik besar redup, judul, deskripsi, satu tombol pil aksi utama.
+ * simbolik besar redup, judul, deskripsi, tombol pil aksi utama. Session
+ * Claude Desktop / CLI / OpenCode yang bisa dilanjutkan tampil di grup di
+ * bawahnya.
  */
 export function EmptySessions({
   projectName,

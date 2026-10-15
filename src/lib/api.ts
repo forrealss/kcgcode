@@ -74,6 +74,21 @@ export function apiErrorMessage(code: string): string {
   if (code.startsWith("AGENT_PERMISSION_MODE_FAILED")) {
     return "The agent could not switch to that permission mode.";
   }
+  if (code.startsWith("CC_EXTERNAL_LIST_FAILED") || code.startsWith("CC_EXTERNAL_HISTORY_FAILED")) {
+    return "Couldn't read the Claude Code session history.";
+  }
+  if (code.startsWith("CC_FORK_FAILED")) {
+    return "Couldn't copy the Claude Code session.";
+  }
+  if (code.startsWith("AGENT_EXTERNAL_LIST_FAILED")) {
+    return "Couldn't list the OpenCode sessions.";
+  }
+  if (code.startsWith("AGENT_EXTERNAL_HISTORY_FAILED")) {
+    return "Couldn't read the OpenCode session history.";
+  }
+  if (code.startsWith("AGENT_FORK_FAILED")) {
+    return "Couldn't copy the OpenCode session.";
+  }
   if (code.startsWith("SERVER_START_FAILED")) {
     return "Failed to connect to the opencode service.";
   }
@@ -107,6 +122,10 @@ export function apiErrorMessage(code: string): string {
       return "The session is not running.";
     case "SESSION_ALREADY_RUNNING":
       return "The session is already running.";
+    case "EXTERNAL_SESSION_OPEN":
+      return "This conversation is still busy in another app (open in Claude Desktop or the claude CLI, or replying in OpenCode). Close it or wait, or import a copy.";
+    case "EXTERNAL_SESSIONS_UNSUPPORTED":
+      return "This agent can't import sessions from outside KCG Code.";
     case "MODEL_NOT_FOUND":
       return "The model is not available for this project's agent.";
     case "INVALID_INSTRUCTIONS":

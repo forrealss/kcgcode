@@ -22,11 +22,12 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
   let app: KcgServer;
   let root: string;
   let opencode: FakeBackend;
+  let claude: FakeBackend;
   let installCalls: E2EServer["installCalls"];
 
   beforeAll(() => {
     e2e = startE2EServer();
-    ({ store, app, root, opencode, installCalls } = e2e);
+    ({ store, app, root, opencode, claude, installCalls } = e2e);
   });
 
   afterAll(() => stopE2EServer(e2e));
@@ -426,5 +427,63 @@ describe("createKcgServer — alur utama e2e (headless)", () => {
 
     expect((await install(proj.project.id, { source: 1, skill: "c" })).status).toBe(400);
     expect((await install("tidak-ada", { source: "a/b", skill: "c" })).status).toBe(404);
+  });
+
+  test("external-sessions: daftar Session Claude Desktop/CLI, 409 bila masih terbuka, impor salinan", async () => {
+    mkdirSync(path.join(root, "proj-import"), { recursive: true });
+    const proj = (await (
+      await fetch(`${baseUrl()}/api/projects`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "import-proj", path: "proj-import" }),
+      })
+    ).json()) as { project: Project };
+    const url = `${baseUrl()}/api/projects/${proj.project.id}/external-sessions`;
+
+    // Client palsu belum punya `external` -> agent tidak mendukung impor.
+    const unsupported = await fetch(url);
+    expect(unsupported.status).toBe(400);
+    expect(((await unsupported.json()) as { error: string }).error).toBe(
+      "EXTERNAL_SESSIONS_UNSUPPORTED",
+    );
+
+    const client = e2eClient(claude, proj.project.id);
+    if (!client) throw new Error("client claude belum dibuat");
+    const desktop = { id: "cc-open", title: "From Desktop", updatedAt: 1, openElsewhere: true };
+    client.external = {
+      list: async () => ({ ok: true, data: [desktop] }),
+      history: async () => ({
+        ok: true,
+        data: [{ id: "usr_1", role: "user", parts: [{ type: "text", text: "hi" }], createdAt: 1 }],
+      }),
+      fork: async (id) => ({ ok: true, data: { id: `${id}-copy` } }),
+    };
+
+    const listRes = await fetch(url);
+    expect(listRes.status).toBe(200);
+    expect(((await listRes.json()) as { sessions: unknown[] }).sessions).toEqual([desktop]);
+
+    const post = (body: unknown) =>
+      fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const open = await post({ id: "cc-open" });
+    expect(open.status).toBe(409);
+    expect(((await open.json()) as { error: string }).error).toBe("EXTERNAL_SESSION_OPEN");
+    expect((await post({})).status).toBe(404);
+
+    const copy = await post({ id: "cc-open", fork: true });
+    expect(copy.status).toBe(201);
+    const { session } = (await copy.json()) as { session: Session };
+    expect(session).toMatchObject({
+      agentType: "claude-code",
+      ocSessionId: "cc-open-copy",
+      title: "From Desktop",
+      status: "running",
+    });
+    const msgs = store.getMessages(session.id);
+    expect(msgs.ok && msgs.data.map((m) => m.id)).toEqual(["usr_1"]);
   });
 });

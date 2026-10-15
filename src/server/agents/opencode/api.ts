@@ -7,9 +7,13 @@ import { OPENCODE_MIN_MAJOR } from "./version";
 export interface OpencodeApi {
   server: { info(): Promise<unknown> };
   session: {
+    list(input: Record<string, unknown>): Promise<unknown>;
+    /** Session yang sedang menjalankan turn (id -> `{ type: "running" }`). */
+    active(): Promise<unknown>;
     create(input: Record<string, unknown>): Promise<unknown>;
     get(input: { sessionID: string }): Promise<unknown>;
     remove(input: { sessionID: string }): Promise<unknown>;
+    fork(input: { sessionID: string }): Promise<unknown>;
     switchModel(input: Record<string, unknown>): Promise<unknown>;
     switchAgent(input: Record<string, unknown>): Promise<unknown>;
     prompt(input: Record<string, unknown>): Promise<unknown>;
@@ -27,6 +31,8 @@ export interface OpencodeApi {
       cancel(input: Record<string, unknown>): Promise<unknown>;
     };
   };
+  /** Riwayat pesan Session (berhalaman, `cursor` tidak boleh digabung `order`). */
+  message: { list(input: Record<string, unknown>): Promise<unknown> };
   permission: { reply(input: Record<string, unknown>): Promise<unknown> };
   model: {
     list(input: Record<string, unknown>): Promise<unknown>;

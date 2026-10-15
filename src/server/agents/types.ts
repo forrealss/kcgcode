@@ -16,8 +16,10 @@ import type {
   AgentOption,
   AgentType,
   ContextUsage,
+  ExternalSession,
   FileChange,
   McpServerInfo,
+  MessagePart,
   ModelOption,
   PermissionModeOption,
   SkillInfo,
@@ -232,6 +234,20 @@ export interface AgentSessionInfo {
   directory?: string;
 }
 
+/**
+ * Session agent yang dibuat DI LUAR KCG (Claude Desktop tab Code, `claude`
+ * CLI, TUI / desktop opencode) untuk direktori yang sama — kandidat impor (lihat `ExternalSession`).
+ */
+export type AgentExternalSession = ExternalSession;
+
+/** Satu pesan riwayat Session agent, sudah dalam bentuk part KCG. */
+export interface AgentHistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  parts: MessagePart[];
+  createdAt: number;
+}
+
 /** Lampiran prompt: `@file` teks maupun gambar/berkas upload. */
 export interface AgentPromptFile {
   /** URL `file:///abs/path`. */
@@ -364,6 +380,20 @@ export interface AgentClient {
   event: {
     /** Langganan event Session di direktori ini; kembalikan fungsi berhenti. */
     subscribe(cb: (ev: AgentEvent) => void): () => void;
+  };
+  /**
+   * Session yang dibuat di luar KCG untuk direktori ini (opsional: hanya
+   * agent yang berbagi storage Session dengan CLI-nya — Claude Code lewat
+   * transcript `~/.claude/projects`, opencode lewat service v2 bersama).
+   * Session yang diimpor dilanjutkan lewat `session.get` + `session.prompt`
+   * seperti Session KCG biasa.
+   */
+  external?: {
+    list(): Promise<Result<AgentExternalSession[]>>;
+    /** Riwayat percakapan untuk ditampilkan di timeline KCG. */
+    history(sessionID: string): Promise<Result<AgentHistoryMessage[]>>;
+    /** Salin Session ke id baru (riwayat sama, penulis terpisah). */
+    fork(sessionID: string, title?: string): Promise<Result<{ id: string }>>;
   };
 }
 

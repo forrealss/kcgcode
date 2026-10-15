@@ -23,6 +23,8 @@
  * - `processes.ts`: siklus hidup proses per Session (spawn/resume, sinkron
  *   model/effort/mode, idle close, pengukuran usage);
  * - `session-api.ts`: operasi Session (prompt, interrupt, hapus, dst.);
+ * - `external.ts`: Session yang dibuat Claude Desktop / CLI (daftar,
+ *   riwayat, fork) untuk diimpor;
  * - `events.ts`: listener `AgentEvent`.
  */
 import type { Options } from "@anthropic-ai/claude-agent-sdk";
@@ -31,7 +33,9 @@ import { createPendingAsks } from "./asks";
 import { createClaudeCatalog } from "./catalog";
 import { CLAUDE_IDLE_CLOSE_MS, CLAUDE_PERMISSION_MODES } from "./constants";
 import { ClaudeEventHub } from "./events";
+import { createClaudeExternal } from "./external";
 import { gitFileStatus } from "./files";
+import { type ClaudeHostSessions, createHostSessions } from "./host-sessions";
 import { createLiveSession, type LiveSession } from "./live-session";
 import { createClaudeProcesses } from "./processes";
 import {
@@ -46,6 +50,8 @@ import { createClaudeSessionApi } from "./session-api";
 export interface ClaudeClientOptions {
   query?: ClaudeQueryFn;
   transcripts?: ClaudeTranscripts;
+  /** Jejak Session milik Claude Desktop / CLI yang sedang berjalan. */
+  host?: ClaudeHostSessions;
   /** Lingkungan proses `claude` (default `process.env`). */
   env?: Record<string, string | undefined>;
   /** Path binary `claude`; default binary bawaan SDK. */
@@ -67,6 +73,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   const runQuery = opts.query ?? defaultQuery;
   const transcripts = opts.transcripts ?? defaultTranscripts;
   const baseEnv = opts.env ?? process.env;
+  const host = opts.host ?? createHostSessions(baseEnv);
   const idleCloseMs = opts.idleCloseMs ?? CLAUDE_IDLE_CLOSE_MS;
   const deleteSettleMs = opts.deleteSettleMs ?? 1000;
   const now = opts.now ?? Date.now;
@@ -131,6 +138,7 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   const session = createClaudeSessionApi({
     cwd,
     transcripts,
+    host,
     now,
     deleteSettleMs,
     sessions,
@@ -177,6 +185,8 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
         return events.subscribe(cb);
       },
     },
+    // Session Desktop/CLI berbagi storage transcript dengan proses KCG.
+    external: createClaudeExternal({ cwd, transcripts, host }),
     async close() {
       for (const live of sessions.values()) {
         asks.dropSession(live.id, "Claude Code backend stopped.");

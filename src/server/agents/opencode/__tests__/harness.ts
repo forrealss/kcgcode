@@ -24,9 +24,17 @@ export function fakeApi(pid = 100) {
   const api: OpencodeApi = {
     server: { info: async () => ({ pid, version: "2.0.28" }) },
     session: {
+      list: rec("session.list", { data: [], cursor: {} }),
+      active: async () => {
+        calls.push(["session.active", undefined]);
+        const err = errors.get("session.active");
+        if (err) throw err;
+        return {};
+      },
       create: rec("session.create", { id: "ses_new", title: undefined }),
       get: rec("session.get", { id: "ses_x", location: { directory: "/proj" } }),
       remove: rec("session.remove"),
+      fork: rec("session.fork", { id: "ses_fork" }),
       switchModel: rec("session.switchModel"),
       switchAgent: rec("session.switchAgent"),
       prompt: rec("session.prompt"),
@@ -38,6 +46,7 @@ export function fakeApi(pid = 100) {
       },
       form: { reply: rec("form.reply"), cancel: rec("form.cancel") },
     },
+    message: { list: rec("message.list", { data: [], cursor: {} }) },
     permission: { reply: rec("permission.reply") },
     model: {
       list: rec("model.list", {

@@ -132,6 +132,12 @@ export function makeFakeSessionManager(): FakeSessionManager {
     async releaseProject() {
       return { ok: false, error: "not-used" };
     },
+    async listExternalSessions() {
+      return { ok: false, error: "not-used" };
+    },
+    async importExternalSession() {
+      return { ok: false, error: "not-used" };
+    },
     async findFiles() {
       return { ok: false, error: "not-used" };
     },

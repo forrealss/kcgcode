@@ -21,10 +21,11 @@ import type {
   SkillInfo,
   SlashCommandInfo,
 } from "../../../types";
-import type { AgentBackend } from "../../agents/types";
+import type { AgentBackend, AgentExternalSession } from "../../agents/types";
 import type { Result, SimpleResult } from "../../result";
 import type { AttachmentManager } from "../attachments";
 import type { TurnOutcome } from "../turn-stream";
+import type { ImportExternalSessionRequest } from "./external-sessions";
 
 export const MAX_FREE_TEXT_LENGTH = 10000;
 /**
@@ -186,6 +187,21 @@ export interface SessionManager {
    * error diteruskan tanpa melanjutkan, agar tidak ada sesi yatim.
    */
   releaseProject(projectId: string): Promise<SimpleResult>;
+  /**
+   * Session agent yang dibuat di luar KCG (Claude Desktop / CLI) untuk
+   * direktori Project — yang sudah dipakai Session KCG tidak ikut.
+   */
+  listExternalSessions(
+    projectId: string,
+    agentType: AgentType,
+  ): Promise<Result<AgentExternalSession[]>>;
+  /**
+   * Impor Session agent eksternal sebagai Session KCG `running` beserta
+   * riwayatnya; prompt berikutnya melanjutkan transcript yang sama. Session
+   * yang masih terbuka di aplikasi lain ditolak (`EXTERNAL_SESSION_OPEN`)
+   * kecuali `fork` (lanjut di salinan).
+   */
+  importExternalSession(req: ImportExternalSessionRequest): Promise<CreateSessionResult>;
   /** Daftar model yang tersedia pada server headless milik Project. */
   listModels(projectId: string, agentType?: AgentType): Promise<Result<ModelOption[]>>;
   /**

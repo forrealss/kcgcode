@@ -65,6 +65,10 @@ export function errorStatus(code: string): number {
     case "PASSKEY_CHALLENGE_INVALID":
     case "PASSKEY_VERIFY_FAILED":
       return 400;
+    case "EXTERNAL_SESSIONS_UNSUPPORTED":
+      return 400;
+    case "EXTERNAL_SESSION_OPEN":
+      return 409;
     case "PASSKEY_LOCK_REQUIRED":
     case "PASSKEY_ALREADY_REGISTERED":
     case "PASSKEY_LIMIT":

@@ -3,10 +3,16 @@
  * mencatat input & opsi (pesan SDK didorong dari test), `setup()` client
  * in-process di atasnya, dan helper kecil yang dipakai bersama.
  */
-import type { Options, SDKMessage, SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  Options,
+  SDKMessage,
+  SDKSessionInfo,
+  SDKUserMessage,
+} from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent } from "../../types";
 import { createClaudeClient } from "../client";
-import type { ClaudeQueryLike } from "../sdk";
+import type { DesktopSessionMeta, RunningClaudeSession } from "../host-sessions";
+import type { ClaudeQueryLike, ClaudeTranscriptMessage } from "../sdk";
 
 export const SID = "11111111-1111-4111-8111-111111111111";
 
@@ -170,7 +176,26 @@ export function fakeQuery(
 
 export const tick = () => new Promise((r) => setTimeout(r, 0));
 
-export function setup(existing: string[] = [], mcp?: Parameters<typeof fakeQuery>[0]) {
+/**
+ * Transcript & proses Claude Code lain (Desktop / CLI) palsu: daftar Session
+ * di direktori, pesan per Session, fork, dan Session yang sedang dipegang
+ * proses lain — semuanya bisa diubah dari test.
+ */
+export function fakeHostState() {
+  return {
+    infos: [] as SDKSessionInfo[],
+    messages: new Map<string, ClaudeTranscriptMessage[]>(),
+    forks: [] as { from: string; title?: string; id: string }[],
+    running: new Map<string, RunningClaudeSession>(),
+    desktop: new Map<string, DesktopSessionMeta>(),
+  };
+}
+
+export function setup(
+  existing: string[] = [],
+  mcp?: Parameters<typeof fakeQuery>[0],
+  external = fakeHostState(),
+) {
   const { fn, calls } = fakeQuery(mcp);
   const removed: string[] = [];
   const client = createClaudeClient("/proj", {
@@ -185,11 +210,27 @@ export function setup(existing: string[] = [], mcp?: Parameters<typeof fakeQuery
         removed.push(id);
         existing.splice(existing.indexOf(id), 1);
       },
+      async list() {
+        return external.infos;
+      },
+      async messages(id) {
+        return external.messages.get(id) ?? [];
+      },
+      async fork(id, _dir, title) {
+        const forked = `fork-${external.forks.length + 1}`;
+        external.forks.push({ from: id, id: forked, ...(title ? { title } : {}) });
+        existing.push(forked);
+        return forked;
+      },
+    },
+    host: {
+      running: async () => external.running,
+      desktop: async () => external.desktop,
     },
   });
   const events: AgentEvent[] = [];
   client.event.subscribe((ev) => events.push(ev));
-  return { client, calls, events, removed };
+  return { client, calls, events, removed, external };
 }
 
 export const state = (s: string) => ({

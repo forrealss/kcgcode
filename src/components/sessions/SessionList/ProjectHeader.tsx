@@ -69,9 +69,9 @@ export function CopyablePath({ path }: { path: string }) {
 }
 
 /**
- * Aksi sekunder Project (Reload, Delete) di satu menu "..." — Delete jarang
- * dipakai & berbahaya, jadi tidak perlu tombol sendiri yang selalu terlihat.
- * Delete tetap lewat dialog konfirmasi.
+ * Aksi sekunder Project (Reload, Delete) di satu
+ * menu "..." — Delete jarang dipakai & berbahaya, jadi tidak perlu tombol
+ * sendiri yang selalu terlihat. Delete tetap lewat dialog konfirmasi.
  */
 export function ProjectMenu({
   loading,

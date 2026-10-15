@@ -7,7 +7,8 @@
  * direktori untuk Folder_Browser), `/api/projects/:id/models` (GET model
  * yang tersedia pada server headless Project), daftar agent / MCP / skill /
  * slash command Project, serta kendali MCP (aktif/nonaktif, reconnect) dan
- * reload skill di agent. Dipasang composition root
+ * reload skill di agent, serta impor Session Claude Desktop / CLI
+ * (`/api/projects/:id/external-sessions`). Dipasang composition root
  * (`app.ts`) bersama tabel rute lain — pola kcgcode (`*.routes.ts`).
  */
 import type { BunRequest } from "bun";
@@ -258,6 +259,54 @@ export function projectsRoutes(ctx: ApiRouteContext) {
           const res = await sessionManager.listAgents(req.params.id, agentTypeParam(req));
           if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
           return json({ agents: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+    },
+
+    // ---- Session agent buatan Claude Desktop / CLI / opencode untuk direktori Project ----
+    "/api/projects/:id/external-sessions": {
+      /** Kandidat impor (`?agent=`, default Claude Code). */
+      GET: async (req: BunRequest<"/api/projects/:id/external-sessions">) => {
+        try {
+          const agent = new URL(req.url).searchParams.get("agent");
+          const res = await sessionManager.listExternalSessions(
+            req.params.id,
+            (agent ?? "claude-code") as AgentType,
+          );
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          return json({ sessions: res.data });
+        } catch (e) {
+          return serverError(e);
+        }
+      },
+      /**
+       * Impor satu Session: body `{ id, agentType?, fork? }`. Session yang
+       * masih terbuka di aplikasi lain -> 409 `EXTERNAL_SESSION_OPEN` kecuali
+       * `fork: true` (lanjut di salinan).
+       */
+      POST: async (req: BunRequest<"/api/projects/:id/external-sessions">) => {
+        try {
+          const body = await readJson(req);
+          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
+          const { id, agentType, fork } = body.data as {
+            id?: unknown;
+            agentType?: unknown;
+            fork?: unknown;
+          };
+          if (typeof id !== "string" || id.trim() === "") {
+            return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
+          }
+          const res = await sessionManager.importExternalSession({
+            projectId: req.params.id,
+            agentType: (typeof agentType === "string" ? agentType : "claude-code") as AgentType,
+            externalId: id.trim(),
+            fork: fork === true,
+          });
+          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
+          notifyDataChanged();
+          return json({ session: res.session }, 201);
         } catch (e) {
           return serverError(e);
         }
