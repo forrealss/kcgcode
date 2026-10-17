@@ -82,6 +82,11 @@ export interface SessionManagerOptions {
    * fitur gambar dinonaktifkan — pesan dengan `images` ditolak.
    */
   attachments?: AttachmentManager;
+  /**
+   * Instruksi sistem tambahan dari kcgcode untuk Session (mis. dev server
+   * Preview dipegang kcgcode) — digabung setelah instruksi Project.
+   */
+  extraInstructions?: (session: Session) => string | null;
   now?: () => number;
   shutdownBudgetMs?: number;
   /**

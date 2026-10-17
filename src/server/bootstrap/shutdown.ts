@@ -6,6 +6,9 @@
 
 import type { Server } from "bun";
 import type { SessionStore } from "../../db";
+import type { DevServerManager } from "../services/preview/dev-servers";
+import type { PreviewServer } from "../services/preview/preview-server";
+import type { Screenshotter } from "../services/preview/screenshot";
 import type { UpdateChecker } from "../services/update-check";
 import type { Access } from "./access";
 import type { SessionCore } from "./session-core";
@@ -18,16 +21,22 @@ export interface ShutdownDeps {
   updates: UpdateChecker;
   server: Server<WsData>;
   store: SessionStore;
+  devServers: DevServerManager;
+  preview: PreviewServer;
+  screenshotter: Screenshotter;
 }
 
 export function createShutdown(deps: ShutdownDeps): () => Promise<void> {
-  const { sweepTimer, core, access, updates, server, store } = deps;
+  const { sweepTimer, core, access, updates, server, store, devServers, preview, screenshotter } =
+    deps;
   return async function close(): Promise<void> {
     clearInterval(sweepTimer);
     core.notifications.close();
     updates.close();
     // Hentikan frpc lebih dulu agar URL publik tidak menunjuk server mati.
     await Promise.all([access.tunnel.shutdown(), access.lhr.shutdown()]);
+    // Dev server Preview dimatikan per process group agar tidak ada yatim.
+    await Promise.all([devServers.shutdown(), preview.stop(), screenshotter.close()]);
     // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
     await core.skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.

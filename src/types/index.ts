@@ -6,9 +6,11 @@
  * `src/server/result.ts` — jangan diimpor dari sini.
  */
 export * from "./agent";
+export * from "./changes";
 export * from "./context";
 export * from "./message";
 export * from "./notification";
+export * from "./preview";
 export * from "./project";
 export * from "./prompt";
 export * from "./session";

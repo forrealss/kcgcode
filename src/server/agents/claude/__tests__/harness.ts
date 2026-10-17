@@ -10,7 +10,7 @@ import type {
   SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentEvent } from "../../types";
-import { createClaudeClient } from "../client";
+import { type ClaudeClientOptions, createClaudeClient } from "../client";
 import type { DesktopSessionMeta, RunningClaudeSession } from "../host-sessions";
 import type { ClaudeQueryLike, ClaudeTranscriptMessage } from "../sdk";
 
@@ -195,10 +195,12 @@ export function setup(
   existing: string[] = [],
   mcp?: Parameters<typeof fakeQuery>[0],
   external = fakeHostState(),
+  extra: Partial<ClaudeClientOptions> = {},
 ) {
   const { fn, calls } = fakeQuery(mcp);
   const removed: string[] = [];
   const client = createClaudeClient("/proj", {
+    ...extra,
     query: fn,
     deleteSettleMs: 0,
     env: { HOME: "/home/u" },

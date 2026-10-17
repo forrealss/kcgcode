@@ -21,8 +21,9 @@ import { TIMELINE_MAX_W } from "@/lib/layout";
 import { indexSubagents } from "@/lib/subagents";
 import { groupTurns, lastAssistantGroup, textOf, turnStatus } from "@/lib/turns";
 import { cn } from "@/lib/utils";
-import type { SessionMessage, SessionStatus } from "@/types";
+import type { SessionMessage, SessionStatus, TurnDiff } from "@/types";
 import { AssistantTurn } from "./AssistantTurn";
+import { TurnChangesCard } from "./ChangesViewer";
 import { Mascot } from "./Mascot";
 import { MessageRail, type UserMessageMark } from "./MessageRail";
 import { SubagentIndexContext } from "./SubagentCard";
@@ -41,6 +42,9 @@ export interface SessionTimelineProps {
   generating: boolean;
   /** Agent sedang meringkas riwayat (compact) — label maskot khusus. */
   compacting?: boolean;
+  /** Perubahan file milik grup turn assistant (kartu "N files changed"). */
+  changesFor?: (messages: readonly SessionMessage[]) => TurnDiff | null;
+  onOpenChanges?: (diff: TurnDiff) => void;
 }
 
 export function SessionTimeline({
@@ -51,6 +55,8 @@ export function SessionTimeline({
   onToggle,
   generating,
   compacting = false,
+  changesFor,
+  onOpenChanges,
 }: SessionTimelineProps) {
   /**
    * Ambang "menempel ke bawah" (dan kemunculan tombol panah) = setinggi SATU
@@ -198,12 +204,13 @@ export function SessionTimeline({
                     <UserMessage message={group.message} />
                   </div>
                 ) : (
-                  <AssistantTurn
+                  <TurnWithChanges
                     key={group.id}
-                    group={group}
-                    collapsible={collapsible}
-                    onToggle={onToggle}
-                  />
+                    changes={changesFor?.(group.messages) ?? null}
+                    onOpenChanges={onOpenChanges}
+                  >
+                    <AssistantTurn group={group} collapsible={collapsible} onToggle={onToggle} />
+                  </TurnWithChanges>
                 ),
               )}
               {/* Maskot GLOBAL — selalu menjadi item paling bawah di scroller,
@@ -229,6 +236,25 @@ export function SessionTimeline({
         </MessageScroller>
       </MessageScrollerProvider>
     </SubagentIndexContext.Provider>
+  );
+}
+
+/** Turn assistant + kartu perubahan file di bawahnya (bila ada). */
+function TurnWithChanges({
+  changes,
+  onOpenChanges,
+  children,
+}: {
+  changes: TurnDiff | null;
+  onOpenChanges?: (diff: TurnDiff) => void;
+  children: React.ReactNode;
+}) {
+  if (!changes || !onOpenChanges) return <>{children}</>;
+  return (
+    <div className="flex flex-col gap-3">
+      {children}
+      <TurnChangesCard diff={changes} onOpen={() => onOpenChanges(changes)} />
+    </div>
   );
 }
 

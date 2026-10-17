@@ -24,6 +24,8 @@ export interface AccessOptions extends Pick<KcgServerOptions, "auth" | "tunnel" 
   store: SessionStore;
   port: number;
   hostname: string;
+  /** Port listener Preview (diekspos frpc sebagai `<user>--preview`). */
+  previewPort?: () => number | null;
 }
 
 export interface Access {
@@ -53,6 +55,7 @@ export function createAccess(opts: AccessOptions): Access {
           installer: createFrpcInstaller(),
           localPort: port,
           localHost: hostname,
+          previewPort: opts.previewPort,
           configPath: resolveFrpcConfigPath(),
           isProtected: () => auth.isProtected(),
         });

@@ -12,7 +12,7 @@ import { buildPromptInput, type ResolvedAttachment, validateFreeText } from "./p
 import type { SessionRuntime } from "./runtime";
 
 export function createMessageSender(rt: SessionRuntime) {
-  const { store, attachments, now, turns, onMessage } = rt;
+  const { store, attachments, now, turns, onMessage, extraInstructions } = rt;
 
   /** Serialisasi kirim pesan per Session agar turn tidak tumpang tindih. */
   const inflight = new Map<string, Promise<void>>();
@@ -87,7 +87,11 @@ export function createMessageSender(rt: SessionRuntime) {
     // Custom instruction Project dibaca saat kirim (bukan saat Session dibuat)
     // agar perubahan instruksi langsung berlaku di prompt berikutnya.
     const projectRes = store.getProjectById(session.projectId);
-    const system = projectRes.ok ? (projectRes.data.instructions ?? null) : null;
+    const system =
+      [projectRes.ok ? projectRes.data.instructions : null, extraInstructions?.(session)]
+        .map((t) => t?.trim())
+        .filter(Boolean)
+        .join("\n\n") || null;
 
     enqueue(sessionId, async () => {
       try {

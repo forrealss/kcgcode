@@ -5,10 +5,13 @@
  */
 import type {
   AgentNotification,
+  DevServerStatus,
   InteractivePrompt,
   MessagePart,
+  PreviewSnapshot,
   SessionMessage,
   SessionStatus,
+  TurnDiff,
 } from "../../../types";
 import type { SubscriberRegistry } from "./subscriber-registry";
 import type { WebSocketGateway } from "./types";
@@ -29,6 +32,9 @@ export type GatewayNotifications = Pick<
   | "notifyPromptResolved"
   | "notifyError"
   | "notifyAgent"
+  | "notifyPreviewStatus"
+  | "notifyPreviewSnapshot"
+  | "notifyTurnDiff"
 >;
 
 export function createGatewayNotifications(registry: SubscriberRegistry): GatewayNotifications {
@@ -108,6 +114,19 @@ export function createGatewayNotifications(registry: SubscriberRegistry): Gatewa
     broadcast(sessionId, () => ({ type: "error", code, message }));
   }
 
+  function notifyPreviewStatus(projectId: string, server: DevServerStatus | null): void {
+    // Seperti `notifyAgent`: sekali per tab lewat koneksi mode daftar.
+    broadcastListMode(() => ({ type: "preview_status", projectId, server }));
+  }
+
+  function notifyPreviewSnapshot(sessionId: string, snapshot: PreviewSnapshot): void {
+    broadcast(sessionId, () => ({ type: "preview_snapshot", sessionId, snapshot }));
+  }
+
+  function notifyTurnDiff(sessionId: string, diff: TurnDiff): void {
+    broadcast(sessionId, () => ({ type: "turn_diff", sessionId, diff }));
+  }
+
   function notifyAgent(notification: AgentNotification): void {
     // Hanya koneksi mode daftar: tiap halaman punya sidebar (mode daftar),
     // jadi cukup sekali per tab tanpa ikut ke koneksi per-Session.
@@ -128,6 +147,9 @@ export function createGatewayNotifications(registry: SubscriberRegistry): Gatewa
     notifyDataChanged,
     notifyPromptResolved,
     notifyError,
+    notifyPreviewStatus,
+    notifyPreviewSnapshot,
+    notifyTurnDiff,
     notifyAgent,
   };
 }

@@ -28,12 +28,14 @@ import { openSessionStore } from "../db";
 import { resolveEffectiveUploadsDir } from "../paths";
 import { autoStartSelectedTunnel, createAccess } from "./bootstrap/access";
 import { createApiRoutes } from "./bootstrap/api-routes";
+import { createPreviewWiring } from "./bootstrap/preview";
 import { createSessionCore } from "./bootstrap/session-core";
 import { createShutdown } from "./bootstrap/shutdown";
 import { publicAssetRoutes, spaRoutes } from "./bootstrap/static-routes";
 import type { KcgServer, KcgServerOptions } from "./bootstrap/types";
 import { createWsConnections, startAuthSweep, type WsData } from "./bootstrap/ws-connections";
 import { resolveHostname } from "./host";
+import { AGENT_MCP_PATH } from "./services/preview/agent-mcp";
 import { createUpdateChecker } from "./services/update-check";
 
 export type { KcgServer, KcgServerOptions } from "./bootstrap/types";
@@ -65,8 +67,12 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // valid. Default sesuai mode runtime (dev: ./data/uploads, cli: ~/.kcgcode/...).
   const uploadsRoot = opts.uploadsRoot ?? resolveEffectiveUploadsDir();
 
+  // Preview: opsi session-core dulu, dev server & listener setelah core siap.
+  const previewWiring = createPreviewWiring({ store, hostname, port });
+
   // Termasuk `reconcileOnStartup()` (Requirement 2.4).
   const core = createSessionCore({
+    ...previewWiring.coreOptions,
     store,
     sandboxRoot: config.sandboxRoot,
     uploadsRoot,
@@ -75,15 +81,21 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     skillsRegistry: opts.skillsRegistry,
     pushFetch: opts.pushFetch,
   });
+  // frpc membaca port listener Preview saat tunnel dinyalakan (setelah listen).
   const access = createAccess({
     store,
     port,
     hostname,
+    previewPort: previewWiring.previewPort,
     auth: opts.auth,
     tunnel: opts.tunnel,
     lhr: opts.lhr,
   });
   const { auth } = access;
+  const { devServers, preview, agentMcp, screenshotter, snapshots } = previewWiring.start({
+    core,
+    auth,
+  });
   const ws = createWsConnections({ auth, gateway: core.gateway });
   const sweepTimer = startAuthSweep(auth, ws);
 
@@ -91,7 +103,18 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const updates = opts.updates ?? createUpdateChecker();
   void updates.start();
 
-  const apiRoutes = createApiRoutes({ config, store, uploadsRoot, core, access, updates });
+  const apiRoutes = createApiRoutes({
+    config,
+    store,
+    uploadsRoot,
+    core,
+    access,
+    updates,
+    devServers,
+    preview,
+    screenshotter,
+    snapshots,
+  });
 
   const server = serve<WsData>({
     hostname,
@@ -110,6 +133,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
       // ---- WebSocket_Gateway upgrade (Requirement 4) ----
       "/ws": ws.upgrade,
 
+      // ---- MCP `kcg_preview` untuk proses agent (token Bearer per Project) ----
+      [AGENT_MCP_PATH]: (req: Request) => agentMcp.handle(req),
+
       // ---- Shell SPA hanya untuk rute halaman terdaftar (disuntik entry,
       //      default 404) — path tak dikenal tidak menangkap shell SPA ----
       ...spaRoutes(opts.spaPaths, opts.spa),
@@ -122,6 +148,9 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   });
 
   // Nyalakan ulang tunnel terpilih setelah server listen.
+  // Port nyata (0 di test) untuk URL MCP yang diberikan ke proses agent.
+  previewWiring.setListenPort(server.port ?? port);
+
   autoStartSelectedTunnel(store, access);
 
   return {
@@ -138,6 +167,17 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     updates,
     tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
     apiRoutePatterns: Object.keys(apiRoutes),
-    close: createShutdown({ sweepTimer, core, access, updates, server, store }),
+    previewPort: preview.port,
+    close: createShutdown({
+      sweepTimer,
+      core,
+      access,
+      updates,
+      server,
+      store,
+      devServers,
+      preview,
+      screenshotter,
+    }),
   };
 }

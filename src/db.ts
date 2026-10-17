@@ -126,6 +126,12 @@ export function openSessionStore(dbPath?: string): SessionStore {
   }
   const db = new Database(resolvedPath, { create: true });
   db.exec("PRAGMA journal_mode = WAL;");
+  // K tuning untuk akses latensi rendah: tunggu lock sebentar daripada throw,
+  // kurangi fsync (aman dengan WAL, fsync tetap saat checkpoint), cache in-memory.
+  db.exec("PRAGMA busy_timeout = 5000;");
+  db.exec("PRAGMA synchronous = NORMAL;");
+  db.exec("PRAGMA cache_size = -8192;");
+  db.exec("PRAGMA temp_store = MEMORY;");
   runMigrations(db);
 
   const projects: ProjectRepo = createProjectRepo(db);

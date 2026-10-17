@@ -134,6 +134,7 @@ export function createTunnelManager(opts: TunnelManagerOptions): TunnelManager {
           configPath: opts.configPath,
           localHost: opts.localHost,
           localPort: opts.localPort,
+          previewPort: opts.previewPort?.() ?? null,
           log,
         },
         account,

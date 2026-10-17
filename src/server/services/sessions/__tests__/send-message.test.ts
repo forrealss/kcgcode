@@ -7,7 +7,16 @@
  * (`fake-agent.ts`); `bun:sqlite` asli. Harness bersama ada di `harness.ts`.
  */
 import { expect, test } from "bun:test";
-import { clientOf, createSession, emitAll, ev, flush, freshHarness, textPart } from "./harness";
+import {
+  clientOf,
+  createSession,
+  emitAll,
+  ev,
+  flush,
+  freshHarness,
+  freshHarnessWithHooks,
+  textPart,
+} from "./harness";
 
 // ---------------------------------------------------------------------------
 // Free-text input
@@ -114,6 +123,30 @@ test("sendFreeTextInput meneruskan custom instruction Project sebagai system", a
     await flush();
 
     expect(clientOf(h).promptSystems).toEqual([null, "Selalu jawab dalam Bahasa Indonesia."]);
+  } finally {
+    h.close();
+  }
+});
+
+test("extraInstructions kcgcode digabung setelah instruksi Project", async () => {
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    {
+      extraInstructions: (s) => (s.agentType === "opencode" ? "Dev server is managed." : null),
+    },
+  );
+  try {
+    const sid = await createSession(h, "opencode");
+    await h.sm.sendFreeTextInput(sid, "halo");
+    await flush();
+    h.store.updateProjectInstructions(h.project.id, "Be brief.");
+    await h.sm.sendFreeTextInput(sid, "lagi");
+    await flush();
+    expect(clientOf(h).promptSystems).toEqual([
+      "Dev server is managed.",
+      "Be brief.\n\nDev server is managed.",
+    ]);
   } finally {
     h.close();
   }

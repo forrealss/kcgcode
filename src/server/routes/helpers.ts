@@ -89,6 +89,26 @@ export function errorStatus(code: string): number {
       return 502;
     case "PASSKEY_NOT_FOUND":
       return 404;
+    // Preview: dev server Project.
+    case "PREVIEW_NO_CONFIG":
+      return 404;
+    case "PREVIEW_TUNNEL_UNSUPPORTED":
+      return 400;
+    case "PREVIEW_NOT_RUNNING":
+      return 409;
+    case "DIFF_NOT_FOUND":
+    case "FILE_NOT_FOUND":
+      return 404;
+    case "PATH_OUTSIDE_PROJECT":
+      return 403;
+    case "UNSUPPORTED_TYPE":
+      return 415;
+    case "DIFF_UNAVAILABLE":
+      return 410;
+    case "PREVIEW_NO_BROWSER":
+      return 501;
+    case "PREVIEW_SCREENSHOT_FAILED":
+      return 502;
     // Tunnel: prasyarat belum terpenuhi.
     case "TUNNEL_LOCK_REQUIRED":
     case "TUNNEL_SIGNED_OUT":

@@ -1,8 +1,9 @@
 import { ChevronDownIcon, FileTextIcon } from "lucide-react";
 import { useState } from "react";
+import { openFileViewer } from "@/lib/changes-events";
 import { baseName, type FileReference } from "@/lib/references";
 import { cn } from "@/lib/utils";
-import { Box, Empty, Row, Section } from "./primitives";
+import { Box, Empty, ROW, RowContent, Section } from "./primitives";
 
 /**
  * Jumlah file yang langsung tampil. Sisanya di balik "Show N more" supaya
@@ -28,14 +29,24 @@ export function ReferenceSection({ references }: { references: FileReference[] }
         <>
           <Box>
             {visible.map((ref) => (
-              <Row
-                key={ref.path}
-                icon={<FileTextIcon />}
-                label={baseName(ref.path)}
-                // Folder induk sebagai konteks; path lengkap di `title`.
-                hint={parentDir(ref.path)}
-                title={ref.path}
-              />
+              // Tap -> viewer file (host di halaman Session).
+              <li key={ref.path} title={ref.path}>
+                <button
+                  type="button"
+                  onClick={() => openFileViewer(ref.path)}
+                  className={cn(
+                    ROW,
+                    "w-full rounded-md text-left outline-none hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/40",
+                  )}
+                >
+                  <RowContent
+                    icon={<FileTextIcon />}
+                    label={baseName(ref.path)}
+                    // Folder induk sebagai konteks; path lengkap di `title`.
+                    hint={parentDir(ref.path)}
+                  />
+                </button>
+              </li>
             ))}
           </Box>
           {hidden > 0 && (

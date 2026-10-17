@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { ModelPicker } from "@/components/sessions/ModelPicker";
+import { PreviewButton } from "@/components/sessions/PreviewSheet";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -44,6 +45,9 @@ export interface SessionHeaderProps {
   onRequestDelete: () => void;
   stopping: boolean;
   starting: boolean;
+  /** Kirim pesan ke agent (mis. dari sheet Preview). */
+  onAskAgent: (text: string) => void;
+  canAskAgent: boolean;
 }
 
 export function SessionHeader({
@@ -55,6 +59,8 @@ export function SessionHeader({
   onRequestDelete,
   stopping,
   starting,
+  onAskAgent,
+  canAskAgent,
 }: SessionHeaderProps) {
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === "dark";
@@ -90,6 +96,14 @@ export function SessionHeader({
             {wsStatus !== "connected" && ` · ${wsStatusLabel(wsStatus)}`}
           </span>
         </div>
+
+        {/* Preview dev server Project (ikon + titik status). */}
+        <PreviewButton
+          projectId={session.projectId}
+          sessionId={session.id}
+          onAskAgent={onAskAgent}
+          canAskAgent={canAskAgent}
+        />
 
         {/* Status = teks biasa + titik (bukan pil yang terlihat seperti
           tombol). Di HP cukup titiknya; label teks mulai dari sm. */}

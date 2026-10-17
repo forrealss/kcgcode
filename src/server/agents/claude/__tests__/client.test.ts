@@ -62,6 +62,23 @@ describe("createClaudeClient", () => {
     expect(calls[0]?.inputs.length).toBe(2);
   });
 
+  test("MCP kcgcode ditambahkan ke proses (di atas MCP user) + tool baca-saja diizinkan", async () => {
+    const { client, calls } = setup([], undefined, undefined, {
+      extraMcp: () => ({
+        servers: {
+          kcg_preview: { type: "http", url: "http://127.0.0.1:3000/mcp/preview?project=p" },
+        },
+        allowedTools: ["mcp__kcg_preview__dev_server_status"],
+      }),
+    });
+    await client.session.prompt({ sessionID: SID, text: "a" });
+    await tick();
+    expect(calls[0]?.options.mcpServers).toEqual({
+      kcg_preview: { type: "http", url: "http://127.0.0.1:3000/mcp/preview?project=p" },
+    });
+    expect(calls[0]?.options.allowedTools).toEqual(["mcp__kcg_preview__dev_server_status"]);
+  });
+
   test("instruksi Project berubah -> proses diganti dengan systemPrompt append", async () => {
     const { client, calls } = setup();
     await client.session.prompt({ sessionID: SID, text: "a" });

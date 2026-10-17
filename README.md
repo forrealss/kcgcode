@@ -28,6 +28,24 @@ you reach it through a tunnel.
   management, and brute-force protection.
 - **Installable PWA** with light, dark, or system theme. On a phone that hasn't installed it yet,
   KCG Code explains the benefits and how to install it (once; "Not now" waits 14 days).
+- **Preview from your phone.** Tap the globe in a session to start the project's dev server
+  (from `.claude/launch.json`, or the `dev` script in `package.json`) and open the app you're
+  building, with hot reload. Over KCG remote access it lives at
+  `https://<username>--preview.<domain>`; locally on the next port (`KCG_PREVIEW_PORT`).
+  A small floating button on the preview page lets you reload, switch to a desktop-width view,
+  see console errors, and message the agent without leaving the page. An unused dev server
+  stops on its own after 30 minutes (`KCG_PREVIEW_IDLE_MIN`, `0` to keep it running).
+  Claude Code sessions get `kcg_preview` tools (dev server status, logs, restart) so the agent
+  uses the same server instead of starting its own; a server the agent did start is picked up
+  for the preview anyway. No config yet? The Preview sheet can ask the agent to set it up.
+  With Chrome or Chromium on the computer (or `KCG_CHROME_PATH`), you can take a screenshot from
+  the preview, draw on it, and send it to the agent; after each agent turn a snapshot of the
+  page shows up in the chat (`KCG_PREVIEW_SNAPSHOTS=0` to turn that off). Snapshots also work
+  over localhost.run, where the live preview can't open.
+- **Review changes from your phone.** After each agent turn in a git project, a "N files changed"
+  card shows what the agent touched; tap it for the list, a diff per file, and the file itself
+  (code highlighted, Markdown rendered, images shown). Files in the Reference list open the same
+  viewer. Snapshots use a temporary git index, so your index, branch and files are never touched.
 - **Terminal dashboard.** `kcgcode` shows the server status right in your terminal.
 
 ## Requirements
@@ -205,6 +223,10 @@ Dashboard keys: `q` quit · `o` open browser · `Ctrl+C` stop.
 | Environment variable | Description |
 | --- | --- |
 | `KCG_PORT` | HTTP port |
+| `KCG_PREVIEW_PORT` | Port of the Preview proxy (default: HTTP port + 1) |
+| `KCG_CHROME_PATH` | Chrome/Chromium used for Preview screenshots (default: found automatically) |
+| `KCG_PREVIEW_SNAPSHOTS=0` | Don't snapshot the preview after each agent turn |
+| `KCG_PREVIEW_IDLE_MIN` | Stop an unused Preview dev server after this many minutes (default `30`, `0` = never) |
 | `KCG_HOST` | Bind host |
 | `KCG_CONFIG_PATH` | Config file path |
 | `KCG_DB_PATH` | SQLite path (default `~/.kcgcode/data/kcg-code.sqlite`) |

@@ -54,6 +54,8 @@ export interface TunnelManagerOptions {
   /** Port & host kcgcode yang diekspos. */
   localPort: number;
   localHost: string;
+  /** Port listener Preview; null = tanpa proxy preview. */
+  previewPort?: () => number | null;
   configPath: string;
   isProtected: () => boolean;
   /** Nama perangkat di halaman persetujuan (default: hostname OS). */

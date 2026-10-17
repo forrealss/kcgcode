@@ -24,6 +24,7 @@
  *   kartu. Di bawah `lg` (HP & tablet) tampil sebagai bottom sheet.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useChangesViewer } from "@/components/sessions/ChangesViewer";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
 import {
   ContextPanel,
@@ -31,6 +32,7 @@ import {
   ContextSheet,
 } from "@/components/sessions/ContextPanel";
 import { FileDropOverlay } from "@/components/sessions/FileDropOverlay";
+import { PreviewSnapshotCard } from "@/components/sessions/PreviewSnapshotCard";
 import { ProcessingGlow } from "@/components/sessions/ProcessingGlow";
 import { SessionComposer, type SessionComposerHandle } from "@/components/sessions/SessionComposer";
 import { SessionHeader } from "@/components/sessions/SessionHeader";
@@ -43,6 +45,7 @@ import { useMcpActions } from "@/hooks/useMcpActions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
+import { useTurnDiffs } from "@/hooks/useTurnDiffs";
 import { useProcessingGlow } from "@/lib/appearance";
 import { CONVERSATION_MAX_W } from "@/lib/layout";
 import { collectReferences } from "@/lib/references";
@@ -66,6 +69,9 @@ export interface SessionViewProps {
 
 export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const chat = useSessionChat({ session, onBack, onDeleted });
+  /** Perubahan file per turn + viewer (diff, isi file). */
+  const changes = useTurnDiffs(session.id);
+  const changesViewer = useChangesViewer(session.projectId, session.id);
   const glowEnabled = useProcessingGlow();
   /**
    * Riwayat belum tiba dari WebSocket. `messages` kosong di fase ini BUKAN
@@ -134,6 +140,8 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
           bukan memproses. */}
       <ProcessingGlow active={glowEnabled && chat.generating && chat.prompts.length === 0} />
 
+      {changesViewer.element}
+
       <SessionHeader
         session={session}
         status={chat.status}
@@ -143,6 +151,10 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
         onRequestDelete={chat.beginDelete}
         stopping={chat.stopping}
         starting={chat.starting}
+        onAskAgent={(text) =>
+          chat.send({ type: "input", sessionId: session.id, text, files: [], images: [] })
+        }
+        canAskAgent={chat.canInput && !chat.busy}
       />
 
       {/* Percakapan + kartu konteks berdampingan. `relative` jadi acuan tombol
@@ -194,7 +206,12 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
                 onToggle={chat.toggleBlock}
                 generating={chat.generating}
                 compacting={chat.compacting}
+                changesFor={changes.forGroup}
+                onOpenChanges={changesViewer.openDiff}
               />
+
+              {/* Snapshot preview setelah turn agent selesai (bila dev server hidup). */}
+              <PreviewSnapshotCard sessionId={session.id} hidden={chat.generating} />
 
               {/* Question pending: panel DOCKED menggantikan composer — jawaban
               pertanyaan adalah satu-satunya input saat ini (ala TUI opencode).

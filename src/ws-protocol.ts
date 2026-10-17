@@ -11,11 +11,14 @@
  */
 import type {
   AgentNotification,
+  DevServerStatus,
   InteractivePrompt,
   MessagePart,
+  PreviewSnapshot,
   PromptResponse,
   SessionMessage,
   SessionStatus,
+  TurnDiff,
 } from "./types";
 
 /** Pesan Client -> Server. */
@@ -92,6 +95,12 @@ export type ServerMessage =
    * `notify_ack`; perangkat yang tidak membalas menerima Web Push.
    */
   | { type: "notify"; notification: AgentNotification }
+  /** Status dev server Preview sebuah Project berubah — dikirim ke semua koneksi. */
+  | { type: "preview_status"; projectId: string; server: DevServerStatus | null }
+  /** Snapshot preview baru setelah turn agent selesai — ke koneksi Session itu. */
+  | { type: "preview_snapshot"; sessionId: string; snapshot: PreviewSnapshot }
+  /** File yang diubah agent di turn yang baru selesai — ke koneksi Session itu. */
+  | { type: "turn_diff"; sessionId: string; diff: TurnDiff }
   | { type: "error"; code: string; message: string };
 
 /** Kode error umum pada pesan `error`. */

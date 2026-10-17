@@ -17,6 +17,8 @@ export interface PrepareConfigDeps {
   configPath: string;
   localHost: string;
   localPort: number;
+  /** Port listener Preview; null = tanpa proxy `<user>--preview`. */
+  previewPort?: number | null;
   log: TunnelLogFn;
 }
 
@@ -47,6 +49,7 @@ export async function prepareFrpcConfig(
     tunnelSecret: account.tunnelSecret,
     localIp: frpcLocalIp(deps.localHost),
     localPort,
+    previewPort: deps.previewPort ?? null,
   });
   mkdirSync(path.dirname(configPath), { recursive: true });
   writeFileSync(configPath, toml, { encoding: "utf8", mode: 0o600 });

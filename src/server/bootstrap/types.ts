@@ -88,6 +88,8 @@ export interface KcgServer {
   updates: UpdateChecker;
   /** Provider tunnel terpilih: "kcg" | "lhr". */
   tunnelProvider: () => "kcg" | "lhr";
+  /** Port listener Preview (proxy dev server Project). */
+  previewPort: number;
   /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
   apiRoutePatterns: string[];
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */

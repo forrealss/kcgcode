@@ -27,7 +27,7 @@
  *   riwayat, fork) untuk diimpor;
  * - `events.ts`: listener `AgentEvent`.
  */
-import type { Options } from "@anthropic-ai/claude-agent-sdk";
+import type { McpServerConfig, Options } from "@anthropic-ai/claude-agent-sdk";
 import type { AgentClient } from "../types";
 import { createPendingAsks } from "./asks";
 import { createClaudeCatalog } from "./catalog";
@@ -47,7 +47,16 @@ import {
 } from "./sdk";
 import { createClaudeSessionApi } from "./session-api";
 
+/** Server MCP tambahan dari kcgcode untuk proses `claude` Project ini. */
+export interface ClaudeExtraMcp {
+  servers: Record<string, McpServerConfig>;
+  /** Tool yang boleh dipakai tanpa izin (baca-saja). */
+  allowedTools: string[];
+}
+
 export interface ClaudeClientOptions {
+  /** MCP kcgcode (mis. dev server Preview); dibaca setiap proses dibuat. */
+  extraMcp?: () => ClaudeExtraMcp | null;
   query?: ClaudeQueryFn;
   transcripts?: ClaudeTranscripts;
   /** Jejak Session milik Claude Desktop / CLI yang sedang berjalan. */
@@ -87,8 +96,11 @@ export function createClaudeClient(cwd: string, opts: ClaudeClientOptions = {}):
   const sessions = new Map<string, LiveSession>();
 
   function sharedOptions(): Options {
+    const extra = opts.extraMcp?.() ?? null;
     return {
       cwd,
+      // Ditambahkan di atas MCP milik user (bukan menggantikan).
+      ...(extra ? { mcpServers: extra.servers, allowedTools: extra.allowedTools } : {}),
       // Ikuti konfigurasi Claude Code user apa adanya (auth, custom
       // inference, model, MCP, CLAUDE.md) — konsisten dengan `claude` CLI.
       settingSources: ["user", "project", "local"],

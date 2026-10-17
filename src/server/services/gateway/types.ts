@@ -5,11 +5,14 @@
 import type { SessionStore } from "../../../db";
 import type {
   AgentNotification,
+  DevServerStatus,
   InteractivePrompt,
   MessagePart,
+  PreviewSnapshot,
   PromptResponse,
   SessionMessage,
   SessionStatus,
+  TurnDiff,
 } from "../../../types";
 import type { ServerMessage } from "../../../ws-protocol";
 import type { SessionManager } from "../session-manager";
@@ -79,6 +82,12 @@ export interface WebSocketGateway {
   notifyError(sessionId: string, code: string, message: string): void;
   /** Notifikasi agent ke koneksi mode daftar (sidebar ada di tiap halaman). */
   notifyAgent(notification: AgentNotification): void;
+  /** Status dev server Preview berubah — ke koneksi mode daftar. */
+  notifyPreviewStatus(projectId: string, server: DevServerStatus | null): void;
+  /** Snapshot preview setelah turn — ke koneksi yang attach Session. */
+  notifyPreviewSnapshot(sessionId: string, snapshot: PreviewSnapshot): void;
+  /** File berubah di turn yang baru selesai — ke koneksi yang attach Session. */
+  notifyTurnDiff(sessionId: string, diff: TurnDiff): void;
   /** Teruskan `notify_ack` dari Client ke layanan notifikasi. */
   notifyAck(id: string, endpoint: string): void;
   detach(sub: Subscriber): void;

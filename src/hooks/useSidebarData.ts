@@ -20,6 +20,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { handleAgentNotification } from "@/lib/agent-notify";
 import { apiFetch, errorText } from "@/lib/api";
 import { onDataChanged } from "@/lib/data-events";
+import { emitPreviewStatus } from "@/lib/preview-events";
 import { groupSessionsByProject, type SidebarProjectGroup } from "@/lib/sidebar-groups";
 import type { Project, Session } from "@/types";
 
@@ -92,6 +93,8 @@ export function useSidebarData(pathname: string): UseSidebarDataResult {
         void refresh();
       } else if (msg.type === "notify") {
         handleAgentNotification(msg.notification, ws.send);
+      } else if (msg.type === "preview_status") {
+        emitPreviewStatus({ projectId: msg.projectId, server: msg.server });
       }
     },
   });

@@ -5,10 +5,12 @@
 import { existsSync, statSync } from "node:fs";
 import path from "node:path";
 import type { AgentBackend } from "../types";
-import { type ClaudeClient, createClaudeClient } from "./client";
+import { type ClaudeClient, type ClaudeExtraMcp, createClaudeClient } from "./client";
 
 export interface ClaudeBackendOptions {
-  clientFactory?: (cwd: string) => ClaudeClient;
+  clientFactory?: (cwd: string, projectId: string) => ClaudeClient;
+  /** MCP kcgcode per Project (default factory). */
+  extraMcp?: (projectId: string) => ClaudeExtraMcp | null;
 }
 
 function isDirectory(dir: string): boolean {
@@ -20,7 +22,10 @@ function isDirectory(dir: string): boolean {
 }
 
 export function createClaudeBackend(opts: ClaudeBackendOptions = {}): AgentBackend {
-  const factory = opts.clientFactory ?? ((cwd: string) => createClaudeClient(cwd));
+  const factory =
+    opts.clientFactory ??
+    ((cwd: string, projectId: string) =>
+      createClaudeClient(cwd, { extraMcp: () => opts.extraMcp?.(projectId) ?? null }));
   const clients = new Map<string, { client: ClaudeClient; cwd: string }>();
 
   async function release(projectId: string): Promise<void> {
@@ -37,7 +42,7 @@ export function createClaudeBackend(opts: ClaudeBackendOptions = {}): AgentBacke
       if (cur && cur.cwd === directory) return { ok: true, data: cur.client };
       if (!isDirectory(directory)) return { ok: false, error: "PROJECT_DIR_NOT_FOUND" };
       if (cur) await cur.client.close();
-      const client = factory(path.resolve(directory));
+      const client = factory(path.resolve(directory), projectId);
       clients.set(projectId, { client, cwd: directory });
       return { ok: true, data: client };
     },

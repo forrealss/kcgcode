@@ -254,6 +254,24 @@ export function apiErrorMessage(code: string): string {
       return "The attachment was not found (it may have been deleted).";
     case "TUNNEL_LOCK_REQUIRED":
       return "Set an app lock before turning on remote access.";
+    case "PREVIEW_NO_CONFIG":
+      return "No dev server found. Add a dev script to package.json or a .claude/launch.json.";
+    case "PREVIEW_TUNNEL_UNSUPPORTED":
+      return "Live preview isn't available over localhost.run. Take a snapshot instead, or use KCG remote access.";
+    case "PREVIEW_NOT_RUNNING":
+      return "Start the dev server first.";
+    case "DIFF_NOT_FOUND":
+      return "That change isn't available anymore.";
+    case "DIFF_UNAVAILABLE":
+      return "Couldn't read this change from git.";
+    case "FILE_NOT_FOUND":
+      return "File not found. It may have been moved or deleted.";
+    case "PATH_OUTSIDE_PROJECT":
+      return "That file is outside the project.";
+    case "PREVIEW_NO_BROWSER":
+      return "Snapshots need Chrome or Chromium on this computer (or set KCG_CHROME_PATH).";
+    case "PREVIEW_SCREENSHOT_FAILED":
+      return "Couldn't take a snapshot. Check that the page loads.";
     case "TUNNEL_NOT_CONFIGURED":
       return "Remote access isn't configured. Set KCG_TUNNEL_API_URL and restart kcgcode.";
     case "TUNNEL_SIGNED_OUT":

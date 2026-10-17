@@ -8,8 +8,11 @@
  * (Requirement 2.4).
  */
 
+import path from "node:path";
 import type { SessionStore } from "../../db";
+import type { MessagePart, Session } from "../../types";
 import { createClaudeBackend } from "../agents/claude/backend";
+import type { ClaudeExtraMcp } from "../agents/claude/client";
 import { createOpencodeBackend } from "../agents/opencode/backend";
 import { checkOpencodeVersion, OPENCODE_UPGRADE_REQUIRED } from "../agents/opencode/version";
 import type { AgentBackend } from "../agents/types";
@@ -24,6 +27,8 @@ import {
   isValidSource,
   type SkillsRegistry,
 } from "../services/skills-registry";
+import { createTurnDiffs, type TurnDiffs } from "../services/turn-diffs";
+import type { TurnOutcome } from "../services/turn-stream";
 import { createWebSocketGateway, type WebSocketGateway } from "../services/websocket-gateway";
 
 export interface SessionCoreOptions {
@@ -35,6 +40,14 @@ export interface SessionCoreOptions {
   claude?: AgentBackend;
   skillsRegistry?: SkillsRegistry;
   pushFetch?: typeof fetch;
+  /** MCP kcgcode untuk proses Claude Code per Project (Preview). */
+  claudeExtraMcp?: (projectId: string) => ClaudeExtraMcp | null;
+  /** Instruksi sistem tambahan per Session (Preview). */
+  extraInstructions?: (session: Session) => string | null;
+  /** Part pesan agent (final & streaming) — mis. deteksi dev server agent. */
+  onAgentParts?: (sessionId: string, parts: MessagePart[]) => void;
+  /** Turn agent selesai (mis. snapshot preview). */
+  onTurnEnded?: (sessionId: string, outcome: TurnOutcome) => void;
 }
 
 export interface SessionCore {
@@ -45,6 +58,10 @@ export interface SessionCore {
   notifications: NotificationService;
   sessionManager: SessionManager;
   gateway: WebSocketGateway;
+  /** Model sedang merespon di Session ini (overlay Preview butuh status awal). */
+  isTurnActive(sessionId: string): boolean;
+  /** File yang diubah agent per turn (snapshot git). */
+  turnDiffs: TurnDiffs;
 }
 
 /**
@@ -72,7 +89,7 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
   // Code menerima prompt.
   const backends = {
     opencode: opts.opencode ?? createOpencodeBackend(),
-    "claude-code": opts.claude ?? createClaudeBackend(),
+    "claude-code": opts.claude ?? createClaudeBackend({ extraMcp: opts.claudeExtraMcp }),
   };
   // Backend yang diinjeksi (test) dilewati.
   if (!opts.opencode) warnOutdatedOpencode();
@@ -89,6 +106,12 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
   });
 
   let gateway: WebSocketGateway;
+  const activeTurns = new Set<string>();
+  // Ringkasan perubahan per turn di samping folder lampiran (`<data>/turn-diffs`).
+  const turnDiffs = createTurnDiffs({
+    dir: path.join(path.dirname(opts.uploadsRoot), "turn-diffs"),
+    onDiff: (diff) => gateway.notifyTurnDiff(diff.sessionId, diff),
+  });
   // Notifikasi agent: kartu izin/pertanyaan & turn selesai -> tab terbuka
   // (WS `notify`) lalu Web Push ke perangkat yang tidak sedang membuka app.
   const notifications = createNotificationService({
@@ -100,9 +123,19 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
     store,
     backends,
     attachments,
-    onMessage: (message) => gateway.notifyMessage(message.sessionId, message),
-    onMessagePart: (sessionId, messageId, part) =>
-      gateway.notifyMessagePart(sessionId, messageId, part),
+    extraInstructions: opts.extraInstructions,
+    onMessage: (message) => {
+      if (message.role === "assistant") {
+        opts.onAgentParts?.(message.sessionId, message.parts);
+        turnDiffs.noteMessage(message.sessionId, message.id);
+      }
+      gateway.notifyMessage(message.sessionId, message);
+    },
+    onMessagePart: (sessionId, messageId, part) => {
+      opts.onAgentParts?.(sessionId, [part]);
+      turnDiffs.noteMessage(sessionId, messageId);
+      gateway.notifyMessagePart(sessionId, messageId, part);
+    },
     onMessagePartDelta: (sessionId, messageId, partId, field, delta) =>
       gateway.notifyMessagePartDelta(sessionId, messageId, partId, field, delta),
     onPrompt: (prompt) => {
@@ -119,11 +152,28 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
       gateway.notifySessionPermissionMode(sessionId, mode),
     onCompactionChange: (sessionId, compacting) =>
       gateway.notifySessionCompaction(sessionId, compacting),
-    onDeleted: (sessionId) => gateway.notifySessionDeleted(sessionId),
+    onDeleted: (sessionId) => {
+      turnDiffs.removeSession(sessionId);
+      gateway.notifySessionDeleted(sessionId);
+    },
     onError: (sessionId, message) => gateway.notifyError(sessionId, "AGENT_ERROR", message),
     // Turn mulai/selesai -> Client tahu kapan model merespon (tombol stop).
-    onTurnChange: (sessionId, active) => gateway.notifyTurnActive(sessionId, active),
-    onTurnEnd: (sessionId, outcome) => notifications.turnEnded(sessionId, outcome),
+    onTurnChange: (sessionId, active) => {
+      if (active) {
+        activeTurns.add(sessionId);
+        // Snapshot working tree sebelum agent mengubah apa pun.
+        const s = store.getSession(sessionId);
+        if (s.ok) turnDiffs.turnStarted(sessionId, s.data.cwd);
+      } else {
+        activeTurns.delete(sessionId);
+        void turnDiffs.turnEnded(sessionId);
+      }
+      gateway.notifyTurnActive(sessionId, active);
+    },
+    onTurnEnd: (sessionId, outcome) => {
+      notifications.turnEnded(sessionId, outcome);
+      opts.onTurnEnded?.(sessionId, outcome);
+    },
     // Refresh skill tertunda berjalan otomatis setelah chat selesai -> perbarui
     // notifikasi instalasi terkait ("aktif sekarang").
     onSkillsRefreshed: (projectId) => skillInstalls.markRefreshed(projectId),
@@ -145,5 +195,7 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
     notifications,
     sessionManager,
     gateway,
+    isTurnActive: (sessionId) => activeTurns.has(sessionId),
+    turnDiffs,
   };
 }
