@@ -3,7 +3,7 @@
  * (tombol melayang + sheet) beserta API kecilnya di origin preview.
  *
  * Semua di bawah `/__kcg/preview/` — path yang tidak akan dipakai app.
- * - `overlay.js`        script overlay (dibundel sekali dari `overlay-client.ts`)
+ * - `overlay.js`        script overlay (dibundel dari `overlay/index.ts`)
  * - `api/state`         Session terkait, status agent & dev server, URL chat
  * - `api/events`        SSE: turn agent, balasan terakhir, butuh jawaban, dev server
  * - `api/prompt`        kirim pesan ke Session (POST `{ text, images? }`)
@@ -16,6 +16,7 @@
  * status & pengiriman pesan memakai jalur yang persis sama.
  */
 
+import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import type { DevServerStatus, SessionStatus } from "../../../types";
 import type { ServerMessage } from "../../../ws-protocol";
@@ -96,13 +97,80 @@ export function injectOverlay(html: string): string {
   return tag + html;
 }
 
-let scriptCache: Promise<string> | null = null;
+/**
+ * Tambahkan izin minimal untuk overlay ke CSP dokumen app: script overlay,
+ * API overlay (fetch + SSE), dan `blob:` untuk gambar anotasi. Source dibatasi
+ * PATH overlay sendiri, jadi request app tetap tunduk pada CSP aslinya.
+ * Directive yang tidak ada (jatuh ke `default-src`) dibuat dari salinan
+ * `default-src` + izin overlay, supaya fallback lain tidak berubah.
+ */
+export function allowOverlayInCsp(header: string, origin: string): string {
+  const extra: Record<string, string[]> = {
+    "script-src": [`${origin}${OVERLAY_SCRIPT_PATH}`],
+    "script-src-elem": [`${origin}${OVERLAY_SCRIPT_PATH}`],
+    "connect-src": [`${origin}${API_PREFIX}`],
+    "img-src": ["blob:"],
+  };
+  // Beberapa policy dalam satu header dipisah koma; semuanya ditegakkan.
+  return header
+    .split(",")
+    .map((policy) => {
+      const directives = policy
+        .split(";")
+        .map((d) => d.trim())
+        .filter(Boolean)
+        .map((d) => {
+          const [name = "", ...sources] = d.split(/\s+/);
+          return { name: name.toLowerCase(), sources };
+        });
+      const find = (n: string) => directives.find((d) => d.name === n);
+      const fallback = find("default-src");
+      for (const [name, add] of Object.entries(extra)) {
+        const d = find(name);
+        if (d) {
+          d.sources = [...d.sources.filter((s) => s !== "'none'"), ...add];
+        } else if (fallback && name !== "script-src-elem") {
+          // `script-src-elem` yang tidak ada jatuh ke `script-src` (sudah ditangani).
+          directives.push({
+            name,
+            sources: [...fallback.sources.filter((s) => s !== "'none'"), ...add],
+          });
+        }
+      }
+      return directives.map((d) => [d.name, ...d.sources].join(" ")).join("; ");
+    })
+    .join(", ");
+}
 
-/** Bundel `overlay-client.ts` sekali (lazy) — tanpa langkah build terpisah. */
+const OVERLAY_DIR = path.join(import.meta.dir, "overlay");
+let scriptCache: Promise<string> | null = null;
+/** Waktu ubah terbaru di `overlay/` saat `scriptCache` dibuat. */
+let scriptMtime = 0;
+
+/** Waktu ubah terbaru di antara file sumber overlay. */
+function overlayMtime(): number {
+  let latest = 0;
+  for (const name of readdirSync(OVERLAY_DIR)) {
+    latest = Math.max(latest, statSync(path.join(OVERLAY_DIR, name)).mtimeMs);
+  }
+  return latest;
+}
+
+/**
+ * Bundel overlay (`overlay/index.ts`, lazy) — tanpa langkah build terpisah.
+ * Dibundel ulang bila ada file di `overlay/` yang berubah: `bun --hot` tidak
+ * memuat ulang modul ini saat hanya file overlay yang diedit (file-file itu
+ * tidak di-import di server, jadi cache di memori akan basi).
+ */
 export function overlayScript(): Promise<string> {
+  const mtime = overlayMtime();
+  if (mtime !== scriptMtime) {
+    scriptCache = null;
+    scriptMtime = mtime;
+  }
   scriptCache ??= (async () => {
     const res = await Bun.build({
-      entrypoints: [path.join(import.meta.dir, "overlay-client.ts")],
+      entrypoints: [path.join(OVERLAY_DIR, "index.ts")],
       target: "browser",
       format: "iife",
       minify: true,

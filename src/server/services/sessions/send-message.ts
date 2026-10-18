@@ -12,7 +12,7 @@ import { buildPromptInput, type ResolvedAttachment, validateFreeText } from "./p
 import type { SessionRuntime } from "./runtime";
 
 export function createMessageSender(rt: SessionRuntime) {
-  const { store, attachments, now, turns, onMessage, extraInstructions } = rt;
+  const { store, attachments, now, turns, onMessage, extraInstructions, extraMcpServer } = rt;
 
   /** Serialisasi kirim pesan per Session agar turn tidak tumpang tindih. */
   const inflight = new Map<string, Promise<void>>();
@@ -98,6 +98,13 @@ export function createMessageSender(rt: SessionRuntime) {
         // Terapkan pilihan Session (model, agent, instruksi Project) lalu
         // kirim prompt; hasil turn tiba lewat event dan ditutup oleh
         // `session.execution.*` Session akar.
+        const mcp = client.mcp.register ? extraMcpServer?.(session) : null;
+        if (mcp && client.mcp.register) {
+          // Gagal mendaftar bukan alasan menggagalkan turn — agent tetap jalan
+          // tanpa tool tambahan.
+          const reg = await client.mcp.register(mcp.name, { url: mcp.url, headers: mcp.headers });
+          if (!reg.ok) console.warn(`[kcg-code] gagal mendaftarkan MCP ${mcp.name}:`, reg.error);
+        }
         const steps = [
           () => client.session.switchModel(ocSessionId, session.model, session.effort ?? null),
           () => client.session.switchAgent(ocSessionId, session.agent),

@@ -8,9 +8,10 @@
  * - Satu proses per Project, dijalankan sebagai process group sendiri
  *   (`detached`) agar stop/restart ikut mematikan anak-anaknya (esbuild,
  *   watcher) — tidak ada proses yatim.
- * - Port: `PORT` diisi port kosong (Next/CRA/Bun membacanya); port nyata
- *   dideteksi dari URL di log (Vite, Next, dst.) atau dari `port` di
- *   launch.json, lalu dikonfirmasi lewat koneksi TCP.
+ * - Port: `port` di launch.json adalah jawaban pasti. Tanpanya, `PORT` diisi
+ *   port kosong (Next/CRA/Bun membacanya) dan port nyata dideteksi dari URL
+ *   PERTAMA di log (Vite, Next, dst.) — URL berikutnya sering listener lain
+ *   (API internal, HMR, Network) — lalu dikonfirmasi lewat koneksi TCP.
  * - Log disimpan di buffer bergulir (dibaca UI lewat `?from=`).
  * - Perubahan fase/port dilaporkan lewat `onChange` (broadcast WS).
  * - Server yang dijalankan agent sendiri bisa diadopsi (`adopt`) agar tetap
@@ -181,8 +182,12 @@ interface Entry {
   status: DevServerStatus;
   host: string | null;
   logs: TunnelLogBuffer;
-  /** Port kandidat (env PORT, launch.json, URL di log). */
-  candidates: Set<number>;
+  /** `port` dari launch.json (pasti) atau port server adopsi. */
+  declaredPort: number | null;
+  /** Port dari URL di log, urut kemunculan. */
+  logPorts: number[];
+  /** Port yang diisikan ke env `PORT`. */
+  envPort: number | null;
   stopping: boolean;
   timer: ReturnType<typeof setInterval> | null;
   lastActive: number;
@@ -225,6 +230,14 @@ export function createDevServerManager(opts: DevServerManagerOptions = {}): DevS
   // Jangan menahan proses tetap hidup hanya karena timer ini.
   if (idleTimer && typeof idleTimer === "object" && "unref" in idleTimer) idleTimer.unref();
 
+  /** Urutan port yang dicoba: deklarasi saja, atau URL log lalu env PORT. */
+  function probeOrder(e: Entry): number[] {
+    if (e.declaredPort !== null) return [e.declaredPort];
+    return e.envPort !== null && !e.logPorts.includes(e.envPort)
+      ? [...e.logPorts, e.envPort]
+      : e.logPorts;
+  }
+
   function clearTimer(e: Entry): void {
     if (e.timer) clearInterval(e.timer);
     e.timer = null;
@@ -236,7 +249,7 @@ export function createDevServerManager(opts: DevServerManagerOptions = {}): DevS
       if (busy || e.status.phase !== "starting") return;
       busy = true;
       try {
-        for (const port of e.candidates) {
+        for (const port of probeOrder(e)) {
           const host = await probe(port);
           if (host && e.status.phase === "starting") {
             e.status.phase = "running";
@@ -249,7 +262,11 @@ export function createDevServerManager(opts: DevServerManagerOptions = {}): DevS
           }
         }
         if (now() - e.status.startedAt > readyTimeoutMs) {
-          e.logs.write("[kcgcode] No port detected yet; still watching the log.");
+          e.logs.write(
+            e.declaredPort !== null
+              ? `[kcgcode] Nothing is listening on port ${e.declaredPort} (from launch.json) yet. Check the config.`
+              : "[kcgcode] No port detected yet; still watching the log.",
+          );
           clearTimer(e);
         }
       } finally {
@@ -318,7 +335,9 @@ export function createDevServerManager(opts: DevServerManagerOptions = {}): DevS
       },
       host: null,
       logs,
-      candidates: new Set([envPort]),
+      declaredPort: cfg.port,
+      logPorts: [],
+      envPort,
       stopping: false,
       timer: null,
       lastActive: now(),
@@ -332,9 +351,10 @@ export function createDevServerManager(opts: DevServerManagerOptions = {}): DevS
       if (entries.get(projectId) !== e) return;
       logs.write(line);
       const port = detectPortFromLine(line);
-      if (port !== null && !e.candidates.has(port)) {
-        // URL di log lebih akurat daripada PORT (mis. Vite pindah ke 5174).
-        e.candidates = new Set([port, ...e.candidates]);
+      if (e.declaredPort === null && port !== null && !e.logPorts.includes(port)) {
+        // URL di log lebih akurat daripada PORT (mis. Vite pindah ke 5174);
+        // yang pertama dicetak biasanya app-nya.
+        e.logPorts.push(port);
         if (e.status.phase === "starting" && !e.timer) watchReady(e);
       }
     };
@@ -406,7 +426,9 @@ export function createDevServerManager(opts: DevServerManagerOptions = {}): DevS
         },
         host,
         logs,
-        candidates: new Set([port]),
+        declaredPort: port,
+        logPorts: [],
+        envPort: null,
         stopping: false,
         timer: null,
         lastActive: now(),

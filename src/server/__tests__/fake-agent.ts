@@ -278,6 +278,10 @@ export function makeFakeClient(overrides: Partial<FakeAgentClient> = {}): FakeAg
         if (!client.mcpActionResult.ok) return fail(client.mcpActionResult, "AGENT_MCP_FAILED");
         return { ok: true };
       },
+      async register(name, server) {
+        calls.push(`mcp.register:${name}:${server.url}`);
+        return { ok: true };
+      },
     },
     skill: {
       async list() {

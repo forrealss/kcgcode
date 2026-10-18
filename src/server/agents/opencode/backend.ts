@@ -21,7 +21,7 @@
 import path from "node:path";
 import type { AgentBackend, AgentClient } from "../types";
 import { defaultConnector, type OpencodeConnector } from "./api";
-import { createOpencodeCatalog } from "./catalog";
+import { createOpencodeCatalog, type OpencodeCatalog } from "./catalog";
 import { OpencodeConnection } from "./connection";
 import { OpencodeEvents } from "./events";
 import { createOpencodeExternal } from "./external";
@@ -46,7 +46,10 @@ export interface OpencodeBackendOptions {
 
 export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentBackend {
   /** Client per Project. */
-  const clients = new Map<string, { client: AgentClient; dirKey: string }>();
+  const clients = new Map<
+    string,
+    { client: AgentClient; dirKey: string; catalog: OpencodeCatalog }
+  >();
   const lostCbs = new Set<(projectId: string) => void>();
   const usage = new OpencodeUsage();
   const events = new OpencodeEvents(usage);
@@ -63,10 +66,10 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
     },
   });
 
-  function createClient(directory: string): AgentClient {
+  function createClient(directory: string): { client: AgentClient; catalog: OpencodeCatalog } {
     const dirKey = directoryKey(directory);
     const catalog = createOpencodeCatalog({ conn, directory, usage });
-    return {
+    const client: AgentClient = {
       kind: "opencode",
       directory,
       capabilities: { skillReload: true, permissionModes: [] },
@@ -100,6 +103,12 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
       },
       external: createOpencodeExternal({ conn, directory }),
     };
+    return { client, catalog };
+  }
+
+  /** MCP kcgcode di service milik pengguna dicabut (best-effort, maks 2 dtk). */
+  async function unregister(catalog: OpencodeCatalog): Promise<void> {
+    await Promise.race([catalog.unregisterAll().catch(() => {}), Bun.sleep(2000)]);
   }
 
   return {
@@ -110,19 +119,23 @@ export function createOpencodeBackend(opts: OpencodeBackendOptions = {}): AgentB
       const dirKey = directoryKey(directory);
       const cur = clients.get(projectId);
       if (cur && cur.dirKey === dirKey) return { ok: true, data: cur.client };
-      const client = createClient(path.resolve(directory));
-      clients.set(projectId, { client, dirKey });
+      if (cur) void unregister(cur.catalog);
+      const { client, catalog } = createClient(path.resolve(directory));
+      clients.set(projectId, { client, dirKey, catalog });
       return { ok: true, data: client };
     },
     get(projectId) {
       return clients.get(projectId)?.client;
     },
     async release(projectId) {
+      const cur = clients.get(projectId);
       clients.delete(projectId);
+      if (cur) await unregister(cur.catalog);
     },
     async shutdown() {
       // Service opencode milik user (dipakai bersama aplikasi lain) tidak
-      // dimatikan — cukup lepas langganan event.
+      // dimatikan — cukup cabut MCP kcgcode dan lepas langganan event.
+      await Promise.all([...clients.values()].map((c) => unregister(c.catalog)));
       conn.stop();
       clients.clear();
     },

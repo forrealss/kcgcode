@@ -86,6 +86,8 @@ export function fakeApi(pid = 100) {
       }),
       connect: rec("mcp.connect"),
       disconnect: rec("mcp.disconnect"),
+      add: rec("mcp.add"),
+      remove: rec("mcp.remove"),
     },
     skill: {
       list: rec("skill.list", (input: unknown) => {

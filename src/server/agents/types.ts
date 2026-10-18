@@ -363,6 +363,16 @@ export interface AgentClient {
      * dulu lewat `setEnabled` (Claude Code menolak reconnect-nya).
      */
     reconnect(name: string): Promise<SimpleResult>;
+    /**
+     * Daftarkan MCP server HTTP milik kcgcode untuk Project ini tanpa
+     * menulis config (opencode: `mcp.add`, hanya di memori service).
+     * Idempoten — dipanggil sebelum setiap turn. Tidak ada = agent memberi
+     * MCP lewat jalur lain (Claude Code: opsi proses).
+     */
+    register?(
+      name: string,
+      server: { url: string; headers: Record<string, string> },
+    ): Promise<SimpleResult>;
   };
   skill: { list(): Promise<Result<SkillInfo[]>> };
   /** Slash command yang bisa dijalankan lewat prompt `/nama args`. */

@@ -76,4 +76,29 @@ describe("createOpencodeBackend", () => {
       error: "AGENT_MCP_FAILED: spawn ENOENT",
     });
   });
+
+  test("MCP kcgcode: mcp.add di memori service per direktori, dicabut saat release", async () => {
+    const { backend, apis } = setup();
+    const r = await backend.ensure("p1", PROJ);
+    if (!r.ok) throw new Error("ensure");
+    const server = {
+      url: "http://127.0.0.1:3000/mcp/preview?project=p1",
+      headers: { Authorization: "Bearer t" },
+    };
+    expect(await r.data.mcp.register?.("kcg_preview", server)).toEqual({ ok: true });
+    expect(apis[0]?.calls.filter(([n]) => n === "mcp.add")).toEqual([
+      [
+        "mcp.add",
+        {
+          location: { directory: PROJ },
+          server: "kcg_preview",
+          config: { type: "remote", ...server },
+        },
+      ],
+    ]);
+    await backend.release("p1");
+    expect(apis[0]?.calls.filter(([n]) => n === "mcp.remove")).toEqual([
+      ["mcp.remove", { location: { directory: PROJ }, server: "kcg_preview" }],
+    ]);
+  });
 });

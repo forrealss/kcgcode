@@ -28,6 +28,7 @@ export interface SessionRuntime {
   readonly clearTimeoutFn: (handle: unknown) => void;
   readonly onMessage: SessionManagerOptions["onMessage"];
   readonly extraInstructions: SessionManagerOptions["extraInstructions"];
+  readonly extraMcpServer: SessionManagerOptions["extraMcpServer"];
   readonly onDeleted: SessionManagerOptions["onDeleted"];
   /** Session lokal yang riwayatnya sedang diringkas agent (compact). */
   readonly compacting: Set<string>;
@@ -152,6 +153,7 @@ export function createSessionRuntime(opts: SessionManagerOptions): SessionRuntim
     clearTimeoutFn,
     onMessage,
     extraInstructions: opts.extraInstructions,
+    extraMcpServer: opts.extraMcpServer,
     onDeleted,
     compacting,
     agentSessions,

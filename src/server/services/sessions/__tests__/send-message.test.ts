@@ -152,6 +152,35 @@ test("extraInstructions kcgcode digabung setelah instruksi Project", async () =>
   }
 });
 
+test("extraMcpServer didaftarkan ke agent sebelum setiap turn", async () => {
+  const h = freshHarnessWithHooks(
+    {},
+    {},
+    {
+      extraMcpServer: (s) => ({
+        name: "kcg_preview",
+        url: `http://127.0.0.1:1/mcp/preview?project=${s.projectId}`,
+        headers: { Authorization: "Bearer t" },
+      }),
+    },
+  );
+  try {
+    const sid = await createSession(h, "opencode");
+    await h.sm.sendFreeTextInput(sid, "satu");
+    await flush();
+    await h.sm.sendFreeTextInput(sid, "dua");
+    await flush();
+    const calls = clientOf(h).calls;
+    const reg = calls.filter((c) => c.startsWith("mcp.register:"));
+    expect(reg).toEqual([
+      "mcp.register:kcg_preview:http://127.0.0.1:1/mcp/preview?project=p1",
+      "mcp.register:kcg_preview:http://127.0.0.1:1/mcp/preview?project=p1",
+    ]);
+  } finally {
+    h.close();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Judul Session
 // ---------------------------------------------------------------------------

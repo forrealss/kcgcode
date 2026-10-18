@@ -14,6 +14,7 @@ import type { DevServerManager, DevServerStatus } from "../preview/dev-servers";
 import { createDevServerManager, detectPortFromLine } from "../preview/dev-servers";
 import { formatCommand, resolveLaunchConfig } from "../preview/launch-config";
 import {
+  allowOverlayInCsp,
   injectOverlay,
   OVERLAY_SCRIPT_PATH,
   type PreviewBridge,
@@ -331,6 +332,25 @@ describe("overlay helpers", () => {
     expect(injectOverlay("<p>x</p>")).toBe(`${tag}<p>x</p>`);
     // `<header>` is not `<head>`.
     expect(injectOverlay("<header>x</header>")).toBe(`${tag}<header>x</header>`);
+  });
+
+  test("allowOverlayInCsp adds only the overlay's paths", () => {
+    const landing =
+      "default-src 'none'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; img-src 'self' data:; frame-ancestors 'none'";
+    const o = "http://localhost:3002";
+    expect(allowOverlayInCsp(landing, o)).toBe(
+      "default-src 'none'; script-src 'self' http://localhost:3002/__kcg/preview/overlay.js; " +
+        "style-src 'self' https://fonts.googleapis.com; img-src 'self' data: blob:; frame-ancestors 'none'; " +
+        "connect-src http://localhost:3002/__kcg/preview/api/",
+    );
+    // `'none'` diganti, directive lain dibiarkan; tanpa default-src tidak ada yang dibuat.
+    expect(allowOverlayInCsp("connect-src 'none'; frame-ancestors 'self'", o)).toBe(
+      "connect-src http://localhost:3002/__kcg/preview/api/; frame-ancestors 'self'",
+    );
+    // Dua policy dalam satu header -> keduanya disesuaikan.
+    expect(allowOverlayInCsp("img-src 'self', img-src data:", o)).toBe(
+      "img-src 'self' blob:, img-src data: blob:",
+    );
   });
 
   test("wantsDocument", () => {
@@ -763,6 +783,16 @@ describe("agent MCP (kcg_preview)", () => {
       (await call({ jsonrpc: "2.0", id: 1, method: "ping" }, mcp.tokenFor("p1"), "p2")).status,
     ).toBe(401);
     expect(mcp.tokenFor("p1")).not.toBe(mcp.tokenFor("p2"));
+    // opencode menambahkan query sendiri (`&codemode=false`).
+    expect(
+      (
+        await call(
+          { jsonrpc: "2.0", id: 1, method: "ping" },
+          mcp.tokenFor("p1"),
+          "p1&codemode=false",
+        )
+      ).status,
+    ).toBe(200);
   });
 
   test("initialize, notifications, tools/list", async () => {
@@ -903,5 +933,94 @@ describe("preview snapshots after a turn", () => {
     const off = setup({ enabled: false });
     await off.snaps.onTurnEnd("s1", "done");
     expect([failed, stopped, off].flatMap((x) => x.captured)).toEqual([]);
+  });
+});
+
+describe("dev server port detection", () => {
+  function fakeServer(lines: string[]) {
+    return () => ({
+      pid: 1,
+      exited: new Promise<number | null>(() => {}),
+      stdout: new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode(`${lines.join("\n")}\n`));
+        },
+      }),
+      stderr: new ReadableStream<Uint8Array>(),
+      kill: () => {},
+    });
+  }
+  // Server dengan dua listener: app di 3210, plugin internal di 7210.
+  const banner = [
+    "[server] Listening on http://localhost:3210",
+    "[internal] Listening on http://127.0.0.1:7210 (/handler, /caddy/ask)",
+  ];
+  const cfg = (port: number | null) => ({
+    source: "launch.json" as const,
+    name: "web",
+    argv: ["x"],
+    port,
+    cwd: "/",
+  });
+
+  async function ready(port: number | null): Promise<number | null> {
+    const mgr = createDevServerManager({
+      spawn: fakeServer(banner),
+      probe: async () => "127.0.0.1", // keduanya menerima koneksi
+      freePort: async () => 4999,
+      pollMs: 5,
+      idleMs: 0,
+    });
+    await mgr.start("p", cfg(port));
+    for (let i = 0; i < 100 && mgr.status("p")?.phase !== "running"; i++) await Bun.sleep(5);
+    const result = mgr.status("p")?.port ?? null;
+    await mgr.shutdown();
+    return result;
+  }
+
+  test("launch.json port is authoritative", async () => {
+    expect(await ready(3210)).toBe(3210);
+  });
+
+  test("without a declared port, the first URL printed wins", async () => {
+    expect(await ready(null)).toBe(3210);
+  });
+});
+
+describe("preview listener under bun --hot", () => {
+  test("re-creating on the same port replaces the old listener", async () => {
+    const free = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    const port = free.port ?? 0;
+    free.stop(true);
+    const devServers = {
+      status: () => null,
+      upstream: () => null,
+      touch: () => {},
+    } as unknown as DevServerManager;
+    const make = () =>
+      createPreviewServer({ hostname: "127.0.0.1", port, devServers, isAuthorized: () => true });
+    const first = make();
+    const second = make();
+    expect(first.port).toBe(port);
+    expect(second.port).toBe(port);
+    await second.stop();
+  });
+
+  test("a taken port falls back to the next one, not a random port", async () => {
+    const taken = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response() });
+    const port = taken.port ?? 0;
+    const p = createPreviewServer({
+      hostname: "127.0.0.1",
+      port,
+      devServers: { status: () => null, upstream: () => null } as unknown as DevServerManager,
+      isAuthorized: () => true,
+    });
+    try {
+      expect(p.port).toBeGreaterThan(port);
+      expect(p.port).toBeLessThan(port + 20);
+    } finally {
+      await p.stop();
+      taken.stop(true);
+    }
   });
 });

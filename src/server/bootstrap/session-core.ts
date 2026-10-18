@@ -19,7 +19,11 @@ import type { AgentBackend } from "../agents/types";
 import { type AttachmentManager, createAttachmentManager } from "../services/attachments";
 import { createNotificationService, type NotificationService } from "../services/notifications";
 import { createProjectManager, type ProjectManager } from "../services/project-manager";
-import { createSessionManager, type SessionManager } from "../services/session-manager";
+import {
+  createSessionManager,
+  type SessionManager,
+  type SessionManagerOptions,
+} from "../services/session-manager";
 import { createSkillInstallJobs, type SkillInstallJobs } from "../services/skill-install-jobs";
 import {
   createSkillsRegistry,
@@ -44,6 +48,8 @@ export interface SessionCoreOptions {
   claudeExtraMcp?: (projectId: string) => ClaudeExtraMcp | null;
   /** Instruksi sistem tambahan per Session (Preview). */
   extraInstructions?: (session: Session) => string | null;
+  /** MCP HTTP kcgcode per Session (didaftarkan ke opencode sebelum turn). */
+  extraMcpServer?: SessionManagerOptions["extraMcpServer"];
   /** Part pesan agent (final & streaming) — mis. deteksi dev server agent. */
   onAgentParts?: (sessionId: string, parts: MessagePart[]) => void;
   /** Turn agent selesai (mis. snapshot preview). */
@@ -124,6 +130,7 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
     backends,
     attachments,
     extraInstructions: opts.extraInstructions,
+    extraMcpServer: opts.extraMcpServer,
     onMessage: (message) => {
       if (message.role === "assistant") {
         opts.onAgentParts?.(message.sessionId, message.parts);

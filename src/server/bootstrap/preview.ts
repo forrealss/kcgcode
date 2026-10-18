@@ -40,7 +40,7 @@ export interface PreviewWiring {
   /** Opsi session-core (dibaca saat runtime, setelah `start`). */
   coreOptions: Pick<
     SessionCoreOptions,
-    "claudeExtraMcp" | "extraInstructions" | "onAgentParts" | "onTurnEnded"
+    "claudeExtraMcp" | "extraMcpServer" | "extraInstructions" | "onAgentParts" | "onTurnEnded"
   >;
   /** Port listener preview (null sebelum `start`). */
   previewPort(): number | null;
@@ -48,6 +48,8 @@ export interface PreviewWiring {
   /** Port nyata app utama setelah listen (port 0 di test). */
   setListenPort(port: number): void;
 }
+
+const LIVE_DEV_SERVERS = Symbol.for("kcg.preview.devServers");
 
 /**
  * Port listener Preview: env KCG_PREVIEW_PORT, default port utama + 1
@@ -103,6 +105,18 @@ export function createPreviewWiring(opts: {
     return ip.includes(":") ? `[${ip}]` : ip;
   })();
 
+  /** MCP `kcg_preview` untuk proses agent Project (token Bearer per Project). */
+  function mcpServer(
+    projectId: string,
+  ): { name: string; url: string; headers: Record<string, string> } | null {
+    if (!parts) return null;
+    return {
+      name: AGENT_MCP_NAME,
+      url: `http://${mcpHost}:${listenPort}${AGENT_MCP_PATH}?project=${encodeURIComponent(projectId)}`,
+      headers: { Authorization: `Bearer ${parts.agentMcp.tokenFor(projectId)}` },
+    };
+  }
+
   /** Dev server yang dijalankan agent sendiri -> adopsi agar bisa di-preview. */
   function adoptAgentServers(
     sessionId: string,
@@ -127,22 +141,18 @@ export function createPreviewWiring(opts: {
   return {
     coreOptions: {
       claudeExtraMcp: (projectId) => {
-        if (!parts) return null;
-        const url = `http://${mcpHost}:${listenPort}${AGENT_MCP_PATH}?project=${encodeURIComponent(projectId)}`;
+        const server = mcpServer(projectId);
+        if (!server) return null;
         return {
-          servers: {
-            [AGENT_MCP_NAME]: {
-              type: "http",
-              url,
-              headers: { Authorization: `Bearer ${parts.agentMcp.tokenFor(projectId)}` },
-            },
-          },
+          servers: { [server.name]: { type: "http", url: server.url, headers: server.headers } },
           allowedTools: AGENT_MCP_READONLY_TOOLS,
         };
       },
-      // Hanya agent yang mendapat tool `kcg_preview` (Claude Code).
-      extraInstructions: (session) =>
-        session.agentType === "claude-code" ? AGENT_PREVIEW_INSTRUCTIONS : null,
+      // opencode: `mcp.add` (memori service saja) sebelum setiap turn.
+      extraMcpServer: (session) => mcpServer(session.projectId),
+      // Instruksi per Session (bukan per direktori): Session opencode milik
+      // pengguna di luar kcgcode tidak mendapatnya walau tool-nya terlihat.
+      extraInstructions: () => (parts ? AGENT_PREVIEW_INSTRUCTIONS : null),
       onAgentParts: adoptAgentServers,
       onTurnEnded: (sessionId, outcome) => void parts?.snapshots.onTurnEnd(sessionId, outcome),
     },
@@ -152,6 +162,10 @@ export function createPreviewWiring(opts: {
     },
     start({ core, auth }) {
       let preview: PreviewServer | null = null;
+      // `bun --hot`: hentikan dev server milik evaluasi modul sebelumnya agar
+      // tidak jadi proses yatim yang memegang port.
+      const live = globalThis as unknown as Record<symbol, DevServerManager | undefined>;
+      void live[LIVE_DEV_SERVERS]?.shutdown();
       const devServers = createDevServerManager({
         // Status dev server -> sheet Preview di semua tab & overlay yang terbuka.
         onChange: (projectId, status) => {
@@ -184,6 +198,7 @@ export function createPreviewWiring(opts: {
         remove: (sessionId, id) => core.attachments.remove(sessionId, id),
         notify: (sessionId, snapshot) => core.gateway.notifyPreviewSnapshot(sessionId, snapshot),
       });
+      live[LIVE_DEV_SERVERS] = devServers;
       const agentMcp = createAgentMcp({
         devServers,
         projectPath: (projectId) => {

@@ -48,6 +48,8 @@ export type OpencodeCatalog = Pick<
 > & {
   /** Nama `/nama` dikenal opencode? Daftar gagal dimuat -> dianggap teks biasa. */
   isCommand(name: string): Promise<boolean>;
+  /** Cabut MCP yang didaftarkan kcgcode (`mcp.register`) dari service. */
+  unregisterAll(): Promise<void>;
 };
 
 export function createOpencodeCatalog(deps: {
@@ -59,6 +61,8 @@ export function createOpencodeCatalog(deps: {
   const location = { location: { directory } };
   /** Slash command terakhir (untuk merutekan prompt `/nama`). */
   let commandsCache: { at: number; names: Set<string> } | null = null;
+  /** MCP yang didaftarkan kcgcode lewat `mcp.add` di direktori ini. */
+  const registered = new Set<string>();
 
   async function listCommands(): Promise<Result<SlashCommandInfo[]>> {
     const res = await conn.call("AGENT_LIST_COMMANDS_FAILED", (a) => a.command.list(location));
@@ -77,6 +81,15 @@ export function createOpencodeCatalog(deps: {
   }
 
   return {
+    async unregisterAll() {
+      const names = [...registered];
+      registered.clear();
+      await Promise.all(
+        names.map((server) =>
+          conn.call("AGENT_MCP_FAILED", (a) => a.mcp.remove({ ...location, server })),
+        ),
+      );
+    },
     async isCommand(name) {
       if (!commandsCache || Date.now() - commandsCache.at > COMMANDS_CACHE_MS) {
         await listCommands();
@@ -176,6 +189,22 @@ export function createOpencodeCatalog(deps: {
         return ok(
           await conn.call("AGENT_MCP_FAILED", (a) => a.mcp.connect({ ...location, server: name })),
         );
+      },
+      // `mcp.add` menyimpan server di memori service untuk direktori ini saja
+      // (hilang saat service restart / `location.reload`) — tidak menulis
+      // config pengguna atau Project. Konfigurasi sama -> tanpa reconnect.
+      async register(name, server) {
+        const res = ok(
+          await conn.call("AGENT_MCP_FAILED", (a) =>
+            a.mcp.add({
+              ...location,
+              server: name,
+              config: { type: "remote", url: server.url, headers: server.headers },
+            }),
+          ),
+        );
+        if (res.ok) registered.add(name);
+        return res;
       },
     },
     skill: {

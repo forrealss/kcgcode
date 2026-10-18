@@ -35,7 +35,8 @@ you reach it through a tunnel.
   A small floating button on the preview page lets you reload, switch to a desktop-width view,
   see console errors, and message the agent without leaving the page. An unused dev server
   stops on its own after 30 minutes (`KCG_PREVIEW_IDLE_MIN`, `0` to keep it running).
-  Claude Code sessions get `kcg_preview` tools (dev server status, logs, restart) so the agent
+  Claude Code and opencode sessions get `kcg_preview` tools (dev server status, logs, restart;
+  for opencode they're registered in the running service's memory only, never in a config file) so the agent
   uses the same server instead of starting its own; a server the agent did start is picked up
   for the preview anyway. No config yet? The Preview sheet can ask the agent to set it up.
   With Chrome or Chromium on the computer (or `KCG_CHROME_PATH`), you can take a screenshot from

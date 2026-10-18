@@ -42,6 +42,9 @@ export interface OpencodeApi {
   agent: { list(input: Record<string, unknown>): Promise<unknown> };
   mcp: {
     list(input: Record<string, unknown>): Promise<unknown>;
+    /** Daftarkan server di memori service untuk satu direktori (tanpa menulis config). */
+    add(input: Record<string, unknown>): Promise<unknown>;
+    remove(input: Record<string, unknown>): Promise<unknown>;
     connect(input: Record<string, unknown>): Promise<unknown>;
     disconnect(input: Record<string, unknown>): Promise<unknown>;
   };

@@ -1,14 +1,21 @@
 /**
- * Preview dev server Project: tombol di header Session + sheet kontrol.
+ * Preview dev server Project: tombol di header Session + side sheet kontrol.
  *
  * Tombol hanya ikon dunia dengan titik status (di layar lebar ditambah
- * `:port`), supaya header HP tidak bertambah sesak. Sheet (bawah di HP,
- * kanan di layar lebar) berisi status, Start/Stop/Restart, Open preview,
- * dan log dev server. Perintah ditampilkan sebelum Start — tekan Start itu
- * persetujuannya, karena config bisa ditulis agent.
- *
- * Tanpa config: tombol meminta agent di chat ini menyiapkannya. Server yang
- * dijalankan agent sendiri (diadopsi) ditandai; Stop hanya melepasnya.
+ * `:port`), supaya header HP tidak bertambah sesak. Sheet muncul dari kanan
+ * (desktop) atau dari bawah (HP), dan memakai primitif kartu konteks Session
+ * (`Section` / `Box` / `Row`) agar proporsinya sama dengan panel detail
+ * Session. Isinya:
+ * - **Dev server**: baris status (Restart/Stop sebagai tombol bundar kecil),
+ *   baris perintah, lalu aksi utama di baris terakhir:
+ *   - Server hidup -> Open preview + Snapshot.
+ *   - Server mati  -> Start. Perintah ditampilkan sebelum Start — tekan Start
+ *     itu persetujuannya, karena config bisa ditulis agent.
+ *   - Tanpa config -> minta agent di chat ini menyiapkannya.
+ * - **Snapshot**: hasil snapshot terakhir (ketuk -> lightbox).
+ * - **Output**: log dev server, mengikuti baris terbaru.
+ * Server yang dijalankan agent sendiri (diadopsi) ditandai; Stop hanya
+ * melepasnya.
  */
 import {
   BotIcon,
@@ -19,12 +26,15 @@ import {
   RotateCwIcon,
   SquareIcon,
   TerminalIcon,
+  XIcon,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
+import { Box, CardSkeleton, Row, Section } from "@/components/sessions/ContextPanel/primitives";
 import { ImageLightbox } from "@/components/sessions/ImageLightbox";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
+  SheetClose,
   SheetContent,
   SheetDescription,
   SheetHeader,
@@ -67,6 +77,12 @@ export const PREVIEW_SETUP_PROMPT =
   '{"version":"0.0.1","configurations":[{"name":"web","runtimeExecutable":"bun","runtimeArgs":["run","dev"],"port":5173}]}. ' +
   "Make sure the dev server listens on that port (or reads PORT from the environment). Don't start it yourself; I'll start it from KCG Code.";
 
+/** Tombol aksi di baris terakhir `Box` (proporsi tombol compact kartu konteks). */
+const ACTION = "h-8 flex-1 rounded-lg text-[12.5px] max-sm:h-10 max-sm:text-[13.5px]";
+/** Tombol bundar kecil di kanan baris status. */
+const CIRCULAR =
+  "size-7 rounded-full text-muted-foreground max-sm:size-9 hover:text-foreground [&_svg:not([class*='size-'])]:size-3.5";
+
 export function PreviewButton({
   projectId,
   sessionId,
@@ -83,7 +99,7 @@ export function PreviewButton({
   const [open, setOpen] = useState(false);
   const mobile = useMediaQuery(MOBILE_QUERY);
   const preview = usePreview(projectId, sessionId, open);
-  const { server } = preview;
+  const { server, config } = preview;
   const phase = server?.phase;
 
   return (
@@ -94,6 +110,7 @@ export function PreviewButton({
         size="sm"
         onClick={() => setOpen(true)}
         aria-label={`Preview: ${statusLabel(server)}`}
+        aria-expanded={open}
         className="relative h-10 shrink-0 gap-1.5 px-2.5 sm:h-9"
       >
         <span className="relative" aria-hidden>
@@ -112,26 +129,94 @@ export function PreviewButton({
           <span className="hidden font-mono text-xs sm:inline">:{server?.port}</span>
         )}
       </Button>
-      <PreviewSheetContent
+      <SheetContent
         side={mobile ? "bottom" : "right"}
-        preview={preview}
-        canAskAgent={canAskAgent}
-        onAskAgent={(text) => {
-          onAskAgent(text);
-          setOpen(false);
-        }}
-      />
+        showCloseButton={false}
+        className={cn(
+          "gap-0",
+          mobile
+            ? "max-h-[85dvh] pb-[max(0.75rem,env(safe-area-inset-bottom))]"
+            : "w-[22rem] sm:max-w-[22rem]",
+        )}
+      >
+        <SheetHeader className="flex-row items-center gap-2.5 px-4 pt-3.5 pb-3 max-sm:pt-2">
+          <span
+            aria-hidden
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground [&>svg]:size-4"
+          >
+            <GlobeIcon />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <SheetTitle className="truncate text-[15px] leading-5">Preview</SheetTitle>
+            <SheetDescription className="truncate text-xs leading-4">
+              {config ? `${config.name} · ${config.source}` : "Dev server"}
+            </SheetDescription>
+          </div>
+          {!mobile && (
+            <SheetClose asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Close preview"
+                title="Close (Esc)"
+                className="size-7 shrink-0 rounded-full [&_svg]:size-3.5"
+              >
+                <XIcon />
+              </Button>
+            </SheetClose>
+          )}
+        </SheetHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-4 [scrollbar-width:thin]">
+          <PreviewSections
+            preview={preview}
+            canAskAgent={canAskAgent}
+            onAskAgent={(text) => {
+              onAskAgent(text);
+              setOpen(false);
+            }}
+          />
+        </div>
+      </SheetContent>
     </Sheet>
   );
 }
 
-function PreviewSheetContent({
-  side,
+/** Baris aksi di dasar `Box` (tombol selebar baris). */
+function ActionsRow({ children }: { children: ReactNode }) {
+  return <li className="flex gap-1.5 px-2.5 py-2">{children}</li>;
+}
+
+function StatusDot({ phase }: { phase: DevServerStatus["phase"] | undefined }) {
+  return (
+    <span
+      className={cn(
+        "size-2 rounded-full",
+        DOT[phase ?? "stopped"],
+        phase === "starting" && "animate-pulse motion-reduce:animate-none",
+      )}
+    />
+  );
+}
+
+function Notice({ tone, children }: { tone?: "error"; children: ReactNode }) {
+  return (
+    <p
+      className={cn(
+        "px-1 text-[11.5px] leading-snug",
+        tone === "error" ? "text-destructive" : "text-muted-foreground",
+      )}
+    >
+      {children}
+    </p>
+  );
+}
+
+function PreviewSections({
   preview,
   onAskAgent,
   canAskAgent,
 }: {
-  side: "bottom" | "right";
   preview: ReturnType<typeof usePreview>;
   onAskAgent: (text: string) => void;
   canAskAgent: boolean;
@@ -142,89 +227,138 @@ function PreviewSheetContent({
   const running = server?.phase === "running";
   const external = server?.external === true;
   const snap = useSnapshot(preview.projectId);
+  const command = server?.command ?? config?.command ?? "";
+
+  if (!loaded) return <CardSkeleton />;
+
+  // Belum ada config: arahkan ke agent.
+  if (!config && !active) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Section title="Dev server" summary="Not configured">
+          <Box>
+            <Row
+              icon={<TerminalIcon />}
+              label="No dev server found"
+              hint="Add a dev script or .claude/launch.json"
+              muted
+            />
+            <ActionsRow>
+              <Button
+                type="button"
+                className={ACTION}
+                onClick={() => onAskAgent(PREVIEW_SETUP_PROMPT)}
+                disabled={!canAskAgent}
+              >
+                <BotIcon data-icon="inline-start" />
+                Ask the agent to set it up
+              </Button>
+            </ActionsRow>
+          </Box>
+          {!canAskAgent && <Notice>Start the session to ask the agent.</Notice>}
+        </Section>
+      </div>
+    );
+  }
+
+  const commandRow = command && (
+    <Row icon={<TerminalIcon />} label={command} title={command} mono muted />
+  );
+
+  // Server mati / crash: tampilkan perintah sebelum Start.
+  if (!active) {
+    const crashed = server?.phase === "crashed";
+    return (
+      <div className="flex flex-col gap-4">
+        <Section title="Dev server" summary={crashed ? "Crashed" : "Stopped"}>
+          <div className="flex flex-col gap-1.5">
+            <Box>
+              <Row icon={<StatusDot phase={server?.phase} />} label={statusLabel(server)} />
+              {commandRow}
+              <ActionsRow>
+                <Button
+                  type="button"
+                  className={ACTION}
+                  onClick={() => void start()}
+                  disabled={busy !== null}
+                >
+                  {busy === "start" ? (
+                    <Spinner data-icon="inline-start" />
+                  ) : (
+                    <PlayIcon data-icon="inline-start" className="fill-current" />
+                  )}
+                  {crashed ? "Restart dev server" : "Start dev server"}
+                </Button>
+              </ActionsRow>
+            </Box>
+            {error && <Notice tone="error">{error}</Notice>}
+          </div>
+        </Section>
+        {logs.length > 0 && <OutputSection lines={logs} />}
+      </div>
+    );
+  }
 
   return (
-    <SheetContent
-      side={side}
-      className={cn(
-        "gap-0",
-        side === "bottom" && "max-h-[85dvh] pb-[max(0.75rem,env(safe-area-inset-bottom))]",
-      )}
-    >
-      <SheetHeader className="pb-2">
-        <SheetTitle>Preview</SheetTitle>
-        <SheetDescription>
-          {config
-            ? `Dev server from ${config.source} · ${config.name}`
-            : "See the app you're building, from anywhere."}
-        </SheetDescription>
-      </SheetHeader>
-
-      <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain px-4 pb-2">
-        {!loaded ? (
-          <div className="flex justify-center py-6">
-            <Spinner />
-          </div>
-        ) : !config && !active ? (
-          <div className="flex flex-col gap-3 rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
-            <p>
-              No dev server found. Add a <code className="font-mono">dev</code> script to{" "}
-              <code className="font-mono">package.json</code>, or a{" "}
-              <code className="font-mono">.claude/launch.json</code> to the project.
-            </p>
-            <Button
-              variant="outline"
-              onClick={() => onAskAgent(PREVIEW_SETUP_PROMPT)}
-              disabled={!canAskAgent}
-            >
-              <BotIcon data-icon="inline-start" />
-              Ask the agent to set it up
-            </Button>
-            {!canAskAgent && <p className="text-xs">Start the session to ask the agent.</p>}
-          </div>
-        ) : (
-          <>
-            <div className="flex items-center gap-2 text-sm" role="status">
-              <span
-                className={cn("size-2 shrink-0 rounded-full", DOT[server?.phase ?? "stopped"])}
-                aria-hidden
-              />
-              <span className="font-medium">{statusLabel(server)}</span>
-            </div>
-
-            <div className="flex items-center gap-2 rounded-lg bg-muted/60 px-3 py-2 font-mono text-xs">
-              <TerminalIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 truncate">{server?.command ?? config?.command}</span>
-            </div>
-
-            {external && (
-              <p className="text-sm text-muted-foreground">
-                The agent started this server. KCG Code shows it in the preview but doesn't control
-                it.
-              </p>
-            )}
-
-            {error && <p className="text-sm text-destructive">{error}</p>}
-
-            <div className="flex flex-col gap-2">
-              {running &&
-                (openUrl ? (
-                  <Button asChild size="lg" className="w-full">
-                    <a href={openUrl} target="_blank" rel="noopener" onClick={consumeOpenUrl}>
-                      <ExternalLinkIcon data-icon="inline-start" />
-                      Open preview
-                    </a>
+    <div className="flex flex-col gap-4">
+      <Section title="Dev server" summary={running ? `:${server?.port}` : "Starting…"}>
+        <div className="flex flex-col gap-1.5">
+          <Box>
+            <Row
+              icon={<StatusDot phase={server?.phase} />}
+              label={statusLabel(server)}
+              hint={external ? "Started by the agent" : undefined}
+              value={
+                <span className="-me-1 flex items-center">
+                  {(!external || config) && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={CIRCULAR}
+                      onClick={() => void start()}
+                      disabled={busy !== null || !config}
+                      aria-label={external ? "Run with KCG Code" : "Restart"}
+                      title={external ? "Run with KCG Code" : "Restart"}
+                    >
+                      {busy === "start" ? <Spinner /> : <RotateCwIcon />}
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className={cn(CIRCULAR, "hover:text-destructive")}
+                    onClick={() => void stop()}
+                    disabled={busy !== null}
+                    aria-label={external ? "Detach" : "Stop"}
+                    title={external ? "Detach" : "Stop"}
+                  >
+                    {busy === "stop" ? <Spinner /> : <SquareIcon className="size-3 fill-current" />}
                   </Button>
-                ) : error ? null : (
-                  <Button size="lg" className="w-full" disabled>
-                    <Spinner data-icon="inline-start" />
+                </span>
+              }
+            />
+            {commandRow}
+            <ActionsRow>
+              {running && openUrl ? (
+                <Button asChild className={ACTION}>
+                  <a href={openUrl} target="_blank" rel="noopener" onClick={consumeOpenUrl}>
+                    <ExternalLinkIcon data-icon="inline-start" />
                     Open preview
-                  </Button>
-                ))}
+                  </a>
+                </Button>
+              ) : running && error ? null : (
+                <Button type="button" className={ACTION} disabled>
+                  <Spinner data-icon="inline-start" />
+                  {running ? "Open preview" : "Starting…"}
+                </Button>
+              )}
               {running && (
                 <Button
+                  type="button"
                   variant="outline"
-                  className="w-full"
+                  className={ACTION}
                   onClick={() => void snap.take()}
                   disabled={snap.busy}
                 >
@@ -233,85 +367,65 @@ function PreviewSheetContent({
                   ) : (
                     <CameraIcon data-icon="inline-start" />
                   )}
-                  Take a snapshot
+                  Snapshot
                 </Button>
               )}
-              <div className="flex gap-2">
-                {active ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      className={cn("flex-1", external && !config && "hidden")}
-                      onClick={() => void start()}
-                      disabled={busy !== null || !config}
-                    >
-                      {busy === "start" ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : (
-                        <RotateCwIcon data-icon="inline-start" />
-                      )}
-                      {external ? "Run with KCG Code" : "Restart"}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      className="flex-1"
-                      onClick={() => void stop()}
-                      disabled={busy !== null}
-                    >
-                      {busy === "stop" ? (
-                        <Spinner data-icon="inline-start" />
-                      ) : (
-                        <SquareIcon data-icon="inline-start" className="fill-current" />
-                      )}
-                      {external ? "Detach" : "Stop"}
-                    </Button>
-                  </>
-                ) : (
-                  <Button
-                    size="lg"
-                    className="w-full"
-                    onClick={() => void start()}
-                    disabled={busy !== null || !config}
-                  >
-                    {busy === "start" ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <PlayIcon data-icon="inline-start" className="fill-current" />
-                    )}
-                    Start dev server
-                  </Button>
-                )}
-              </div>
-            </div>
+            </ActionsRow>
+          </Box>
+          {external && (
+            <Notice>
+              KCG Code shows this server in the preview but doesn't control it. Stop only detaches.
+            </Notice>
+          )}
+          {error && <Notice tone="error">{error}</Notice>}
+          {snap.error && <Notice tone="error">{snap.error}</Notice>}
+        </div>
+      </Section>
 
-            {snap.error && <p className="text-sm text-destructive">{snap.error}</p>}
-            {snap.url && (
-              <button
-                type="button"
-                onClick={() => snap.setLightbox(0)}
-                className="shrink-0 overflow-hidden rounded-xl border outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                aria-label="Open the snapshot"
-              >
-                <img
-                  src={snap.url}
-                  alt="Snapshot of the preview"
-                  className="max-h-80 w-full object-cover object-top"
-                />
-              </button>
-            )}
-            {snap.url && (
-              <ImageLightbox
-                images={[{ src: snap.url, alt: "Snapshot of the preview" }]}
-                index={snap.lightbox}
-                onIndexChange={snap.setLightbox}
-              />
-            )}
+      {snap.url && (
+        <Section title="Snapshot">
+          <button
+            type="button"
+            onClick={() => snap.setLightbox(0)}
+            className="block w-full overflow-hidden rounded-xl border bg-card shadow-xs outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            aria-label="Open the snapshot"
+          >
+            <img
+              src={snap.url}
+              alt="Snapshot of the preview"
+              className="max-h-64 w-full object-cover object-top"
+            />
+          </button>
+          <ImageLightbox
+            images={[{ src: snap.url, alt: "Snapshot of the preview" }]}
+            index={snap.lightbox}
+            onIndexChange={snap.setLightbox}
+          />
+        </Section>
+      )}
 
-            <LogView lines={logs} />
-          </>
-        )}
-      </div>
-    </SheetContent>
+      <OutputSection lines={logs} />
+    </div>
+  );
+}
+
+/** Log dev server dalam kartu; ringkasan jumlah baris di judul. */
+function OutputSection({ lines }: { lines: string[] }) {
+  return (
+    <Section
+      title="Output"
+      summary={
+        lines.length > 0 ? `${lines.length} ${lines.length === 1 ? "line" : "lines"}` : undefined
+      }
+    >
+      {lines.length > 0 ? (
+        <LogView lines={lines} />
+      ) : (
+        <p className="rounded-xl border border-dashed px-2.5 py-2.5 text-[12px] text-muted-foreground">
+          No output yet
+        </p>
+      )}
+    </Section>
   );
 }
 
@@ -354,16 +468,12 @@ function LogView({ lines }: { lines: string[] }) {
     const el = ref.current;
     if (el && lines.length > 0) el.scrollTop = el.scrollHeight;
   }, [lines]);
-  if (lines.length === 0) return null;
   return (
-    <section aria-label="Dev server log" className="flex flex-col gap-1">
-      <h3 className="text-xs font-medium text-muted-foreground">Log</h3>
-      <pre
-        ref={ref}
-        className="max-h-64 overflow-auto rounded-lg bg-muted/60 p-3 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all"
-      >
-        {lines.join("\n")}
-      </pre>
-    </section>
+    <pre
+      ref={ref}
+      className="max-h-[22rem] overflow-auto rounded-xl border bg-card px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-foreground/85 shadow-xs [scrollbar-width:thin]"
+    >
+      {lines.join("\n")}
+    </pre>
   );
 }

@@ -87,6 +87,15 @@ export interface SessionManagerOptions {
    * Preview dipegang kcgcode) — digabung setelah instruksi Project.
    */
   extraInstructions?: (session: Session) => string | null;
+  /**
+   * MCP server HTTP milik kcgcode untuk Session (mis. `kcg_preview`).
+   * Didaftarkan ulang sebelum setiap turn ke agent yang mendukung
+   * `client.mcp.register` (opencode) — murah bila konfigurasinya sama, dan
+   * memulihkannya setelah service agent restart.
+   */
+  extraMcpServer?: (
+    session: Session,
+  ) => { name: string; url: string; headers: Record<string, string> } | null;
   now?: () => number;
   shutdownBudgetMs?: number;
   /**

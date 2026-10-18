@@ -25,6 +25,7 @@ import type { Server, ServerWebSocket } from "bun";
 import type { DevServerStatus } from "../../../types";
 import type { DevServerManager } from "./dev-servers";
 import {
+  allowOverlayInCsp,
   createOverlayApi,
   injectOverlay,
   OVERLAY_PREFIX,
@@ -38,6 +39,8 @@ export const PREVIEW_AUTH_PATH = "/__kcg/preview/auth";
 export const PREVIEW_COOKIE = "__kcg_preview";
 
 const TICKET_TTL_MS = 60_000;
+/** Listener preview yang hidup per port yang diminta (lihat `bun --hot`). */
+const LIVE_SERVERS = Symbol.for("kcg.preview.servers");
 const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
 const RECHECK_MS = 15_000;
 
@@ -81,7 +84,7 @@ interface WsData {
 
 export interface PreviewServerOptions {
   hostname: string;
-  /** Port yang diminta; bila terpakai, pakai port acak. */
+  /** Port yang diminta; bila terpakai, port berikutnya (lalu acak). */
   port: number;
   devServers: DevServerManager;
   /** Sesi app utama masih sah (dipanggil ulang tiap `RECHECK_MS`). */
@@ -400,6 +403,10 @@ export function createPreviewServer(opts: PreviewServerOptions): PreviewServer {
         !res.headers.get("content-encoding");
       if (html) {
         outHeaders.delete("content-length");
+        // CSP ketat milik app tidak boleh mematikan overlay (lihat allowOverlayInCsp).
+        const csp = outHeaders.get("content-security-policy");
+        if (csp)
+          outHeaders.set("content-security-policy", allowOverlayInCsp(csp, publicOrigin(req)));
         return new Response(injectOverlay(await res.text()), {
           status: res.status,
           statusText: res.statusText,
@@ -479,12 +486,28 @@ export function createPreviewServer(opts: PreviewServerOptions): PreviewServer {
     fetch: handle,
     websocket,
   });
-  let server: Server<WsData>;
-  try {
-    server = Bun.serve<WsData>(serveOpts(opts.port));
-  } catch {
-    server = Bun.serve<WsData>(serveOpts(0));
+  // `bun --hot`: modul dievaluasi ulang di proses yang sama — listener lama
+  // masih memegang port, jadi tutup dulu agar port preview tetap stabil
+  // (frpc mengarah ke port ini).
+  const live = globalThis as unknown as Record<symbol, Map<number, Server<WsData>> | undefined>;
+  const byPort = live[LIVE_SERVERS] ?? new Map<number, Server<WsData>>();
+  live[LIVE_SERVERS] = byPort;
+  if (opts.port !== 0) byPort.get(opts.port)?.stop(true);
+  // Port terpakai aplikasi lain -> coba port berikutnya (bukan acak) agar
+  // tetap sama di setiap start/reload; baru terakhir port acak.
+  let server: Server<WsData> | null = null;
+  const tries = opts.port === 0 ? [0] : [...Array.from({ length: 20 }, (_, i) => opts.port + i), 0];
+  for (const port of tries) {
+    if (port > 65535) continue;
+    try {
+      server = Bun.serve<WsData>(serveOpts(port));
+      break;
+    } catch {
+      // terpakai — coba berikutnya
+    }
   }
+  if (!server) server = Bun.serve<WsData>(serveOpts(0));
+  if (opts.port !== 0) byPort.set(opts.port, server);
 
   return {
     get port() {
