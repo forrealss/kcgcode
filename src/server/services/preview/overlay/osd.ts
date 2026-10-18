@@ -47,8 +47,11 @@ export function createOsd(onOpen: () => void): { el: HTMLElement; update: () => 
   window.addEventListener("resize", place);
 
   let drag: { x: number; y: number; moved: boolean; id: number } | null = null;
+  /** Gerakan terakhir adalah geser — click sesudahnya bukan "buka". */
+  let dragged = false;
   pill.addEventListener("pointerdown", (e) => {
     drag = { x: e.clientX, y: e.clientY, moved: false, id: e.pointerId };
+    dragged = false;
     pill.setPointerCapture(e.pointerId);
   });
   pill.addEventListener("pointermove", (e) => {
@@ -62,14 +65,25 @@ export function createOsd(onOpen: () => void): { el: HTMLElement; update: () => 
   });
   pill.addEventListener("pointerup", (e) => {
     if (!drag || e.pointerId !== drag.id) return;
-    const moved = drag.moved;
+    dragged = drag.moved;
     drag = null;
     pill.classList.remove("dragging");
-    if (!moved) return onOpen();
+    if (!dragged) return;
     // Menempel ke tepi terdekat; posisi diingat untuk halaman berikutnya.
     pos = { side: e.clientX < window.innerWidth / 2 ? "left" : "right", top: e.clientY - HALF };
     store.set(local, PILL_KEY, JSON.stringify(pos));
     place();
+  });
+  // Buka di `click`, BUKAN `pointerup`: di layar sentuh browser mengirim click
+  // sintetis SETELAH pointerup ke elemen di bawah jari — bila sheet sudah
+  // terbuka saat itu, click jatuh ke scrim dan langsung menutupnya lagi.
+  // (Bonus: Enter/Spasi pada tombol juga membukanya.)
+  pill.addEventListener("click", () => {
+    if (dragged) {
+      dragged = false;
+      return;
+    }
+    onOpen();
   });
   pill.addEventListener("pointercancel", () => {
     drag = null;
@@ -78,7 +92,10 @@ export function createOsd(onOpen: () => void): { el: HTMLElement; update: () => 
   });
 
   function update(): void {
-    pill.style.display = state.hidden || state.open || state.annotating ? "none" : "flex";
+    // Menyingkir dengan animasi (bukan display:none) agar transisinya halus.
+    const away = state.open || state.annotating || state.picking;
+    pill.classList.toggle("away", away);
+    pill.tabIndex = away ? -1 : 0;
     dot.style.display = state.attention || state.turnActive ? "" : "none";
     dot.className = state.attention ? "dot attn" : "dot";
     const total = errors.reduce((n, e) => n + e.count, 0);

@@ -190,8 +190,12 @@ describe("helper murni", () => {
       "auth_failed",
     );
     expect(classifyFrpcLine("[demo] start error: subdomain [demo] is already used")).toBe(
-      "proxy_failed",
+      "address_in_use",
     );
+    expect(classifyFrpcLine("[W] [demo] start error: proxy [demo.demo] already exists")).toBe(
+      "address_in_use",
+    );
+    expect(classifyFrpcLine("[demo] start error: port not allowed")).toBe("proxy_failed");
     expect(classifyFrpcLine("try to reconnect to server...")).toBe("reconnecting");
   });
 
@@ -285,6 +289,22 @@ describe("Tunnel_Manager", () => {
     const stopped = await h.manager.stop();
     expect(stopped.phase).toBe("stopped");
     expect(stopped.enabled).toBe(false);
+  });
+
+  test("proxy ditolak tanpa frpc keluar -> error langsung, pulih saat sukses", async () => {
+    const h = harness();
+    await pair(h);
+    h.procs[0]?.push("login to server success, get run id [x]");
+    h.procs[0]?.push("[demo] start error: proxy [demo.demo] already exists");
+    await Bun.sleep(5);
+    expect(h.manager.status().phase).toBe("error");
+    expect(h.manager.status().error).toBe("TUNNEL_ADDRESS_IN_USE");
+
+    // frpc mencoba lagi sendiri; begitu instance lain mati, proxy jalan.
+    h.procs[0]?.push("[demo] start proxy success");
+    await Bun.sleep(5);
+    expect(h.manager.status().phase).toBe("online");
+    expect(h.manager.status().error).toBeNull();
   });
 
   test("crash -> restart otomatis; ditolak server -> berhenti permanen", async () => {

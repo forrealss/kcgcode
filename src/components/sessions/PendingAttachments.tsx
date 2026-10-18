@@ -10,6 +10,9 @@
  *   tetap menempati tempatnya (diukur sebagai tujuan animasi) tapi belum
  *   terlihat; `registerEl` memberi elemen tiap item ke pemanggil.
  *
+ * - Lampiran yang sedang diunggah diberi spinner (upload berjalan begitu file
+ *   ditambahkan agar langsung tersinkron ke draf Session / overlay Preview).
+ *
  * Object URL dibuat & dilepas oleh pemilik state (`SessionComposer`).
  */
 import { XIcon } from "lucide-react";
@@ -18,13 +21,24 @@ import * as m from "motion/react-m";
 import { useState } from "react";
 import { FileTile } from "@/components/sessions/AttachmentTile";
 import { ImageLightbox } from "@/components/sessions/ImageLightbox";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 export interface PendingAttachment {
   key: string;
-  file: File;
-  /** Object URL pratinjau — hanya untuk gambar yang bisa dipratinjau. */
+  name: string;
+  mime: string;
+  size: number;
+  /**
+   * File lokal (diunggah begitu ditambahkan). Kosong untuk lampiran yang
+   * datang dari perangkat lain lewat draf tersinkron.
+   */
+  file?: File;
+  /** Pratinjau gambar: object URL lokal atau URL lampiran di server. */
   previewUrl: string | null;
+  /** Id di Attachment_Store setelah terunggah. */
+  id?: string;
+  uploading?: boolean;
 }
 
 /** Ukuran kotak (dipakai juga oleh plate agar mendarat pas di tempatnya). */
@@ -33,20 +47,21 @@ export const FILE_TILE_CLASS = "h-16 w-48 sm:h-[4.5rem]";
 
 /** Isi visual satu lampiran tanpa tombol (dipakai list & plate). */
 export function AttachmentVisual({ item }: { item: PendingAttachment }) {
-  if (item.previewUrl) {
-    return (
-      <span className={cn("block overflow-hidden rounded-lg border bg-muted", IMAGE_TILE_CLASS)}>
-        <img src={item.previewUrl} alt="" className="size-full object-cover" draggable={false} />
-      </span>
-    );
-  }
+  const visual = item.previewUrl ? (
+    <span className={cn("block overflow-hidden rounded-lg border bg-muted", IMAGE_TILE_CLASS)}>
+      <img src={item.previewUrl} alt="" className="size-full object-cover" draggable={false} />
+    </span>
+  ) : (
+    <FileTile filename={item.name} mime={item.mime} size={item.size} className={FILE_TILE_CLASS} />
+  );
+  if (!item.uploading) return visual;
   return (
-    <FileTile
-      filename={item.file.name}
-      mime={item.file.type}
-      size={item.file.size}
-      className={FILE_TILE_CLASS}
-    />
+    <span className="relative block" aria-busy>
+      {visual}
+      <span className="absolute inset-0 flex items-center justify-center rounded-lg bg-background/50">
+        <Spinner className="size-4" aria-label="Uploading" />
+      </span>
+    </span>
   );
 }
 
@@ -92,20 +107,20 @@ export function PendingAttachments({
                   <button
                     type="button"
                     onClick={() => setPreview(imageIndex)}
-                    aria-label={`Preview ${it.file.name}`}
+                    aria-label={`Preview ${it.name}`}
                     className="block rounded-lg outline-none transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
                     <AttachmentVisual item={it} />
                   </button>
                 ) : (
-                  <span title={it.file.name} className="block">
+                  <span title={it.name} className="block">
                     <AttachmentVisual item={it} />
                   </span>
                 )}
                 <button
                   type="button"
                   onClick={() => onRemove(it.key)}
-                  aria-label={`Remove ${it.file.name}`}
+                  aria-label={`Remove ${it.name}`}
                   title="Remove"
                   className="absolute top-1 right-1 flex size-6 items-center justify-center rounded-full bg-black/60 text-white shadow-sm backdrop-blur-sm transition-colors outline-none hover:bg-black/80 focus-visible:ring-[3px] focus-visible:ring-white/60"
                 >
@@ -118,7 +133,7 @@ export function PendingAttachments({
       </ul>
 
       <ImageLightbox
-        images={images.map((it) => ({ src: it.previewUrl as string, alt: it.file.name }))}
+        images={images.map((it) => ({ src: it.previewUrl as string, alt: it.name }))}
         index={preview}
         onIndexChange={setPreview}
       />

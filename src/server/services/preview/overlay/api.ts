@@ -3,8 +3,10 @@
  * screenshot, dan unggah gambar. Semua lewat origin preview (cookie preview).
  */
 import { API } from "./config";
+import { applyRemoteDraft } from "./draft-sync";
+import { reloadKeepingState } from "./persist";
 import { notify, state } from "./state";
-import type { OverlayEvent, ServerInfo, SessionInfo } from "./types";
+import type { ComposerDraft, OverlayEvent, ServerInfo, SessionInfo } from "./types";
 
 export async function loadState(): Promise<void> {
   try {
@@ -17,6 +19,7 @@ export async function loadState(): Promise<void> {
       chatUrl: string | null;
       server: ServerInfo | null;
       screenshots?: boolean;
+      draft?: ComposerDraft;
     };
     state.screenshots = data.screenshots === true;
     state.session = data.session;
@@ -24,6 +27,7 @@ export async function loadState(): Promise<void> {
     state.server = data.server;
     state.turnActive = data.session?.turnActive ?? false;
     notify();
+    if (data.draft) applyRemoteDraft(data.draft, "server");
   } catch {
     // kcgcode tak terjangkau — overlay tetap bisa reload/ganti tampilan
   }
@@ -35,11 +39,9 @@ function apply(e: OverlayEvent): void {
       const finished = state.turnActive && !e.active;
       state.turnActive = e.active;
       if (e.active) state.agentError = null;
-      // Perubahan yang tidak tertangkap HMR: muat ulang setelah agent selesai.
-      if (finished && state.autoReload) {
-        location.reload();
-        return;
-      }
+      // Perubahan yang tidak tertangkap HMR: muat ulang setelah agent selesai
+      // (sheet, balasan, & draf dibawa melewati reload — lihat persist.ts).
+      if (finished && state.autoReload) reloadKeepingState();
       break;
     }
     case "status":
@@ -57,6 +59,9 @@ function apply(e: OverlayEvent): void {
     case "server":
       state.server = e.server;
       break;
+    case "draft":
+      applyRemoteDraft(e.draft, e.origin);
+      return;
   }
   notify();
 }
@@ -83,7 +88,7 @@ export async function send(text: string): Promise<boolean> {
       method: "POST",
       credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, images: state.images.map((i) => i.id) }),
+      body: JSON.stringify({ text, images: state.attachments.map((a) => a.id) }),
     });
     if (!res.ok) {
       const code = ((await res.json().catch(() => ({}))) as { error?: string }).error;
@@ -95,8 +100,9 @@ export async function send(text: string): Promise<boolean> {
     }
     state.turnActive = true;
     state.reply = null;
-    for (const i of state.images) URL.revokeObjectURL(i.url);
-    state.images = [];
+    for (const a of state.attachments) if (a.url) URL.revokeObjectURL(a.url);
+    state.attachments = [];
+    state.elements = [];
     return true;
   } catch {
     state.sendError = "Couldn't reach KCG Code.";

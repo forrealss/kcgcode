@@ -11,6 +11,7 @@
  */
 import type {
   AgentNotification,
+  ComposerDraft,
   DevServerStatus,
   InteractivePrompt,
   MessagePart,
@@ -46,7 +47,12 @@ export type ClientMessage =
    * server tidak perlu mengirim Web Push ke `endpoint` (subscription push
    * perangkat ini) untuk notifikasi `id` tersebut.
    */
-  | { type: "notify_ack"; id: string; endpoint: string };
+  | { type: "notify_ack"; id: string; endpoint: string }
+  /**
+   * Draf composer Session berubah di klien ini (teks / lampiran / elemen).
+   * `origin` = id klien acak — klien mengabaikan siaran balik miliknya.
+   */
+  | { type: "draft"; sessionId: string; draft: ComposerDraft; origin: string };
 
 /** Pesan Server -> Client. */
 export type ServerMessage =
@@ -101,6 +107,11 @@ export type ServerMessage =
   | { type: "preview_snapshot"; sessionId: string; snapshot: PreviewSnapshot }
   /** File yang diubah agent di turn yang baru selesai — ke koneksi Session itu. */
   | { type: "turn_diff"; sessionId: string; diff: TurnDiff }
+  /**
+   * Draf composer Session (app & overlay Preview tersinkron). Dikirim saat
+   * berubah, dan sebagai snapshot saat attach (`origin: "server"`).
+   */
+  | { type: "draft"; sessionId: string; draft: ComposerDraft; origin: string }
   | { type: "error"; code: string; message: string };
 
 /** Kode error umum pada pesan `error`. */

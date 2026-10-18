@@ -77,11 +77,22 @@ export function previewSubdomain(username: string): string {
 /** Klasifikasi baris log frpc -> transisi status. */
 export function classifyFrpcLine(
   line: string,
-): "online" | "logged_in" | "reconnecting" | "auth_failed" | "proxy_failed" | null {
+):
+  | "online"
+  | "logged_in"
+  | "reconnecting"
+  | "auth_failed"
+  | "address_in_use"
+  | "proxy_failed"
+  | null {
   // Proxy preview opsional: VPS lama menolaknya, tapi tunnel utama tetap jalan.
   if (/--preview\]/.test(line)) return null;
   if (/start proxy success/i.test(line)) return "online";
   if (/login to server success/i.test(line)) return "logged_in";
+  // Nama/subdomain dipegang frpc lain di akun yang sama (mis. instance kcgcode lain).
+  if (/start error.*(already (exists|used|in use)|router config conflict)/i.test(line)) {
+    return "address_in_use";
+  }
   if (/(start error|proxy .*error|subdomain .*(used|exist))/i.test(line)) return "proxy_failed";
   if (/(reject|authorization|invalid.*token|token.*invalid)/i.test(line)) return "auth_failed";
   if (

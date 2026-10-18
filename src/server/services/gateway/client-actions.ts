@@ -7,7 +7,7 @@
  * Session tidak ditemukan -> `error` + `close` (Requirement 4.3).
  */
 import type { SessionStore } from "../../../db";
-import type { PromptResponse } from "../../../types";
+import type { ComposerDraft, PromptResponse } from "../../../types";
 import { ErrorCodes } from "../../../ws-protocol";
 import type { SessionManager } from "../session-manager";
 import { friendlyPromptError, toErrorCode } from "./error-mapping";
@@ -20,6 +20,8 @@ export interface ClientActionsDeps {
   registry: SubscriberRegistry;
   /** Broadcast `prompt_resolved` ke koneksi yang attach Session. */
   notifyPromptResolved(sessionId: string, promptId: string): void;
+  /** Draf composer Session — dikirim sebagai snapshot saat attach. */
+  getDraft(sessionId: string): ComposerDraft;
 }
 
 export type ClientActions = Pick<
@@ -28,7 +30,7 @@ export type ClientActions = Pick<
 >;
 
 export function createClientActions(deps: ClientActionsDeps): ClientActions {
-  const { store, sessionManager, registry, notifyPromptResolved } = deps;
+  const { store, sessionManager, registry, notifyPromptResolved, getDraft } = deps;
   const { sendSafe } = registry;
 
   function attach(sub: Subscriber, sessionId: string): void {
@@ -63,6 +65,10 @@ export function createClientActions(deps: ClientActionsDeps): ClientActions {
 
     // (3) daftarkan sebagai subscriber live
     registry.register(sub, { sessionId });
+
+    // (4) snapshot draf composer (juga saat reconnect) — klien yang punya
+    // perubahan lokal belum terkirim akan membalas dengan drafnya sendiri.
+    sendSafe(sub, { type: "draft", sessionId, draft: getDraft(sessionId), origin: "server" });
   }
 
   function input(

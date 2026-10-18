@@ -6,6 +6,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { type ComposerDraft, EMPTY_DRAFT } from "../../../types";
 import { previewOrigin } from "../../routes/preview.routes";
 import type { Subscriber } from "../gateway/types";
 import { AGENT_MCP_PATH, AGENT_PREVIEW_INSTRUCTIONS, createAgentMcp } from "../preview/agent-mcp";
@@ -384,6 +385,9 @@ describe("overlay helpers", () => {
     expect(message("user", "hi")).toBeNull();
     expect(message("assistant", "partial", true)).toBeNull();
     expect(toOverlayEvent({ type: "data_changed" })).toBeNull();
+    expect(
+      toOverlayEvent({ type: "draft", sessionId: "s", draft: EMPTY_DRAFT, origin: "server" }),
+    ).toEqual({ type: "draft", draft: EMPTY_DRAFT, origin: "server" });
   });
 });
 
@@ -391,6 +395,9 @@ describe("overlay API", () => {
   let subscriber: Subscriber | null = null;
   const sent: Array<{ sessionId: string; text: string; images: string[] }> = [];
   const saved: Array<{ size: number; mime: string }> = [];
+  const drafts = new Map<string, { draft: ComposerDraft; origin: string }>();
+  const IMG_ID = "11111111-1111-1111-1111-111111111111";
+  const PDF_ID = "22222222-2222-2222-2222-222222222222";
   const bridge: PreviewBridge = {
     session: (projectId, sessionId) =>
       projectId === "p1" && sessionId === "s1"
@@ -410,6 +417,16 @@ describe("overlay API", () => {
         subscriber = null;
       };
     },
+    getDraft: (sessionId) => drafts.get(sessionId)?.draft ?? EMPTY_DRAFT,
+    setDraft: (sessionId, draft, origin) => {
+      drafts.set(sessionId, { draft, origin });
+    },
+    readAttachment: (_sessionId, id) =>
+      id === IMG_ID
+        ? { bytes: new Uint8Array([0xff, 0xd8]), mime: "image/jpeg" }
+        : id === PDF_ID
+          ? { bytes: new Uint8Array([0x25]), mime: "application/pdf" }
+          : null,
   };
   const devServers = {
     status: () => ({ phase: "running", port: 5173 }) as DevServerStatus,
@@ -457,6 +474,7 @@ describe("overlay API", () => {
       chatUrl: "https://alice.example.com/projects/p1/sessions/s1",
       server: { phase: "running", port: 5173 },
       screenshots: true,
+      draft: EMPTY_DRAFT,
     });
     // Viewport perangkat dicatat untuk snapshot otomatis.
     await fetch(`${base}/__kcg/preview/api/state?vw=390&vh=800&dpr=3`, { headers: { cookie } });
@@ -511,8 +529,60 @@ describe("overlay API", () => {
     expect(sent.at(-1)).toEqual({
       sessionId: "s1",
       text: "Fix this",
-      images: ["a", "b", "c", "d"],
+      images: ["a", "b", "c", "d", "e"],
     });
+  });
+
+  test("draft: validated, stored for the session, returned in state", async () => {
+    const cookie = await signIn("s1");
+    const post = (body: unknown) =>
+      fetch(`${base}/__kcg/preview/api/draft`, {
+        method: "POST",
+        headers: { cookie, origin: base, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    const draft: ComposerDraft = {
+      text: "Make it blue",
+      attachments: [{ id: IMG_ID, name: "shot.jpg", mime: "image/jpeg", size: 2 }],
+      elements: [
+        {
+          label: "button#save",
+          context: "Selected element: `button#save`",
+          key: "#save|<button>",
+          pages: ["/"],
+        },
+      ],
+    };
+    expect((await post({ draft, origin: "bad origin!" })).status).toBe(400);
+    expect(
+      (await post({ draft: { ...draft, attachments: [{ id: "../x" }] }, origin: "o1" })).status,
+    ).toBe(400);
+    expect((await post({ draft, origin: "o1" })).status).toBe(200);
+    expect(drafts.get("s1")).toEqual({ draft, origin: "o1" });
+    const state = await fetch(`${base}/__kcg/preview/api/state`, { headers: { cookie } }).then(
+      (r) => r.json(),
+    );
+    expect(state.draft).toEqual(draft);
+    // Tanpa Session terkait: tidak bisa menyimpan draf.
+    const anon = await signIn(null);
+    const res = await fetch(`${base}/__kcg/preview/api/draft`, {
+      method: "POST",
+      headers: { cookie: anon, origin: base },
+      body: JSON.stringify({ draft, origin: "o1" }),
+    });
+    expect(res.status).toBe(409);
+  });
+
+  test("attachment: session images inline; other types and unknown ids refused", async () => {
+    const cookie = await signIn("s1");
+    const get = (id: string) =>
+      fetch(`${base}/__kcg/preview/api/attachment/${id}`, { headers: { cookie } });
+    const img = await get(IMG_ID);
+    expect(img.status).toBe(200);
+    expect(img.headers.get("content-type")).toBe("image/jpeg");
+    expect((await img.arrayBuffer()).byteLength).toBe(2);
+    expect((await get(PDF_ID)).status).toBe(415);
+    expect((await get("33333333-3333-3333-3333-333333333333")).status).toBe(404);
   });
 
   test("prompt without a linked session -> 409", async () => {

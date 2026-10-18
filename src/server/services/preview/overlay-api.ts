@@ -11,6 +11,10 @@
  *                       `{ path, width, height, dpr }`) untuk dianotasi
  * - `api/upload`        simpan gambar (hasil anotasi/foto) sebagai lampiran
  *                       Session -> `{ id }` untuk `images` di prompt
+ * - `api/draft`         simpan draf composer bersama (POST `{ draft, origin }`);
+ *                       draf ikut di `api/state` & disiarkan lewat `api/events`
+ * - `api/attachment/:id` gambar lampiran Session (mis. diunggah dari app) agar
+ *                       bisa tampil di draf overlay
  *
  * Overlay menjadi subscriber gateway WebSocket yang sama dengan chat, jadi
  * status & pengiriman pesan memakai jalur yang persis sama.
@@ -18,9 +22,17 @@
 
 import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
-import type { DevServerStatus, SessionStatus } from "../../../types";
+import { isPreviewableImage } from "../../../lib/attachments";
+import {
+  type ComposerDraft,
+  type DevServerStatus,
+  DRAFT_LIMITS,
+  EMPTY_DRAFT,
+  type SessionStatus,
+} from "../../../types";
 import type { ServerMessage } from "../../../ws-protocol";
 import type { Result } from "../../result";
+import { isValidOrigin, parseDraft } from "../drafts";
 import type { Subscriber } from "../gateway/types";
 import type { Screenshotter, Viewport } from "./screenshot";
 
@@ -31,7 +43,6 @@ const API_PREFIX = `${OVERLAY_PREFIX}api/`;
 const MAX_PROMPT_LENGTH = 20_000;
 const REPLY_SNIPPET = 600;
 const KEEPALIVE_MS = 20_000;
-const MAX_IMAGES = 4;
 const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 
@@ -55,6 +66,11 @@ export interface PreviewBridge {
   saveImage(sessionId: string, bytes: Uint8Array, mime: string): Result<{ id: string }>;
   /** Daftarkan subscriber gateway; kembalikan fungsi lepas. */
   subscribe(sessionId: string, sub: Subscriber): () => void;
+  /** Draf composer bersama Session (tersinkron dengan app). */
+  getDraft(sessionId: string): ComposerDraft;
+  setDraft(sessionId: string, draft: ComposerDraft, origin: string): void;
+  /** Bytes lampiran Session (untuk pratinjau di overlay), atau null. */
+  readAttachment(sessionId: string, id: string): { bytes: Uint8Array; mime: string } | null;
 }
 
 /** Konteks satu sesi preview (dari tiket). */
@@ -71,7 +87,8 @@ export type OverlayEvent =
   | { type: "reply"; text: string }
   | { type: "attention"; pending: boolean }
   | { type: "agent_error"; message: string }
-  | { type: "server"; server: DevServerStatus | null };
+  | { type: "server"; server: DevServerStatus | null }
+  | { type: "draft"; draft: ComposerDraft; origin: string };
 
 /** Halaman dokumen (navigasi) yang layak diberi overlay. */
 export function wantsDocument(req: Request): boolean {
@@ -221,6 +238,8 @@ export function toOverlayEvent(msg: ServerMessage): OverlayEvent | null {
       return { type: "attention", pending: false };
     case "error":
       return { type: "agent_error", message: msg.message };
+    case "draft":
+      return { type: "draft", draft: msg.draft, origin: msg.origin };
     default:
       return null;
   }
@@ -320,7 +339,9 @@ export function createOverlayApi(deps: {
     if (typeof text !== "string" || text.trim() === "") return json({ error: "INVALID_TEXT" }, 400);
     if (text.length > MAX_PROMPT_LENGTH) return json({ error: "TEXT_TOO_LONG" }, 400);
     const images = Array.isArray(body.images)
-      ? body.images.filter((i): i is string => typeof i === "string").slice(0, MAX_IMAGES)
+      ? body.images
+          .filter((i): i is string => typeof i === "string")
+          .slice(0, DRAFT_LIMITS.attachments)
       : [];
     const res = await deps.bridge.sendPrompt(info.id, text, images);
     return res.ok ? json({ ok: true }) : json({ error: res.error ?? "ERROR" }, 409);
@@ -355,6 +376,38 @@ export function createOverlayApi(deps: {
     if (bytes.length > MAX_UPLOAD_BYTES) return json({ error: "FILE_TOO_LARGE" }, 413);
     const saved = deps.bridge.saveImage(info.id, bytes, mime);
     return saved.ok ? json({ id: saved.data.id }) : json({ error: saved.error }, 400);
+  }
+
+  async function draft(req: Request, ctx: OverlayContext): Promise<Response> {
+    const info = sessionInfo(ctx);
+    if (!deps.bridge || !info) return json({ error: "PREVIEW_NO_SESSION" }, 409);
+    let body: { draft?: unknown; origin?: unknown };
+    try {
+      body = (await req.json()) as typeof body;
+    } catch {
+      return json({ error: "INVALID_JSON" }, 400);
+    }
+    const next = parseDraft(body.draft);
+    if (!next || !isValidOrigin(body.origin)) return json({ error: "INVALID_DRAFT" }, 400);
+    deps.bridge.setDraft(info.id, next, body.origin);
+    return json({ ok: true });
+  }
+
+  /** Gambar lampiran Session — hanya gambar yang aman ditampilkan inline. */
+  function attachment(id: string, ctx: OverlayContext): Response {
+    const info = sessionInfo(ctx);
+    if (!deps.bridge || !info) return json({ error: "PREVIEW_NO_SESSION" }, 409);
+    const file = deps.bridge.readAttachment(info.id, id);
+    if (!file) return json({ error: "NOT_FOUND" }, 404);
+    if (!isPreviewableImage(file.mime)) return json({ error: "UNSUPPORTED_TYPE" }, 415);
+    // Salin ke Uint8Array ber-buffer ArrayBuffer agar lolos tipe BodyInit.
+    return new Response(new Uint8Array(file.bytes), {
+      headers: {
+        "content-type": file.mime,
+        "cache-control": "private, max-age=3600",
+        "x-content-type-options": "nosniff",
+      },
+    });
   }
 
   return {
@@ -392,6 +445,10 @@ export function createOverlayApi(deps: {
           chatUrl: chatUrl(ctx),
           server: deps.serverStatus(ctx.projectId),
           screenshots: deps.screenshotter?.available() ?? false,
+          draft: (() => {
+            const info = sessionInfo(ctx);
+            return deps.bridge && info ? deps.bridge.getDraft(info.id) : EMPTY_DRAFT;
+          })(),
         });
       }
       if (pathname === `${API_PREFIX}screenshot` && req.method === "POST") {
@@ -400,6 +457,10 @@ export function createOverlayApi(deps: {
       if (pathname === `${API_PREFIX}upload` && req.method === "POST") return upload(req, ctx);
       if (pathname === `${API_PREFIX}events` && req.method === "GET") return events(req, ctx);
       if (pathname === `${API_PREFIX}prompt` && req.method === "POST") return prompt(req, ctx);
+      if (pathname === `${API_PREFIX}draft` && req.method === "POST") return draft(req, ctx);
+      if (pathname.startsWith(`${API_PREFIX}attachment/`) && req.method === "GET") {
+        return attachment(pathname.slice(`${API_PREFIX}attachment/`.length), ctx);
+      }
       return json({ error: "NOT_FOUND" }, 404);
     },
     serverChanged(projectId, server) {

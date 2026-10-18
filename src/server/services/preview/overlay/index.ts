@@ -5,10 +5,10 @@
  *
  * - Tombol melayang kecil (`osd.ts`) dengan titik status agent & jumlah
  *   error console.
- * - Tap -> sheet (`sheet.ts`): toolbar (reload, screenshot, tampilan
- *   desktop/HP, kembali ke chat, sembunyikan); status agent di header +
- *   balasan terakhir; error console (tambahkan ke pesan); composer untuk
- *   mengirim pesan + gambar ke Session tanpa meninggalkan preview.
+ * - Tap -> sheet (`sheet.ts`): toolbar (pilih elemen, screenshot, tampilan
+ *   desktop/HP, kembali ke chat); status agent di header + balasan terakhir;
+ *   error console (tambahkan ke pesan); composer untuk mengirim pesan +
+ *   gambar + elemen terpilih ke Session tanpa meninggalkan preview.
  * - Screenshot (Chrome headless di mesin kcgcode) atau foto dari perangkat
  *   bisa dicoret-coret dulu sebelum dilampirkan (`annotator.ts`).
  *
@@ -25,8 +25,10 @@
 import { listen, loadState } from "./api";
 import { captureConsoleErrors } from "./console-capture";
 import { h } from "./dom";
+import { restoreDraft, syncDraft } from "./draft-sync";
 import { createOsd } from "./osd";
-import { createSheet } from "./sheet";
+import { registerUi, restorePageScroll, takeSnapshot } from "./persist";
+import { createSheet, type Sheet } from "./sheet";
 import { notify, onChange, state } from "./state";
 import { CSS } from "./styles";
 import { applyViewport } from "./viewport";
@@ -51,10 +53,34 @@ function createRoot(): HTMLElement {
   return root;
 }
 
+/**
+ * Kembali dari reload otomatis: pulihkan keadaan overlay TANPA animasi
+ * buka, supaya overlay terasa tidak ikut ter-reload (lihat persist.ts).
+ */
+function restoreAfterReload(root: HTMLElement, sheet: Sheet): void {
+  const snap = takeSnapshot();
+  if (!snap) return;
+  state.reply = snap.reply;
+  state.agentError = snap.agentError;
+  state.open = snap.open;
+  restoreDraft(snap.draft, snap.thumbs);
+
+  sheet.skipEnterAnimation();
+  root.classList.add("instant");
+  notify();
+  sheet.setScroll(snap.sheetScroll);
+  // Fokus dikembalikan hanya di desktop — di HP akan memunculkan keyboard.
+  if (snap.open && snap.inputFocused && matchMedia("(pointer:fine)").matches) sheet.focusInput();
+  // Tombol OSD: lepas mode tanpa-transisi setelah frame pertama tergambar
+  // (melepas `transition:none` tidak memicu transisi apa pun).
+  requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove("instant")));
+  restorePageScroll(snap.page);
+}
+
 function mount(): void {
   applyViewport();
   const root = createRoot();
-  const sheet = createSheet(root);
+  const sheet = createSheet(root, () => osd.el);
   const osd = createOsd(() => {
     state.open = true;
     notify();
@@ -63,10 +89,15 @@ function mount(): void {
   });
   root.append(osd.el);
 
+  registerUi({ inputFocused: sheet.inputFocused, sheetScroll: sheet.scroll });
+
   onChange(() => {
     osd.update();
     sheet.update();
+    // Lampiran / elemen berubah (ditambah, dihapus, terkirim) -> sinkronkan.
+    syncDraft();
   });
+  restoreAfterReload(root, sheet);
   notify();
   void loadState();
   listen();

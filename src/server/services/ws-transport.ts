@@ -10,6 +10,7 @@
  */
 import type { ServerWebSocket } from "bun";
 import type { PromptResponse } from "../../types";
+import { isValidOrigin, parseDraft } from "./drafts";
 import type { Subscriber, WebSocketGateway } from "./websocket-gateway";
 
 /** Adaptor ServerWebSocket Bun ke `Subscriber` (untuk wiring di `app.ts`). */
@@ -112,6 +113,15 @@ export function dispatchClientMessage(
         invalidMessage(sub, "interrupt membutuhkan sessionId string");
       }
       break;
+    case "draft": {
+      const next = parseDraft(msg.draft);
+      if (typeof msg.sessionId === "string" && next && isValidOrigin(msg.origin)) {
+        gateway.draft(sub, msg.sessionId, next, msg.origin);
+      } else {
+        invalidMessage(sub, "draft membutuhkan sessionId, draft valid, dan origin");
+      }
+      break;
+    }
     case "notify_ack":
       if (
         typeof msg.id === "string" &&

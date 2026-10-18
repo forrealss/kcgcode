@@ -19,10 +19,12 @@
  * subscriber + primitif broadcast (`subscriber-registry`), handler pesan
  * Client (`client-actions`), dan broadcast `notify*` (`notifications`).
  */
+import type { ComposerDraft } from "../../types";
+import { createDraftStore } from "./drafts";
 import { createClientActions } from "./gateway/client-actions";
 import { createGatewayNotifications } from "./gateway/notifications";
 import { createSubscriberRegistry } from "./gateway/subscriber-registry";
-import type { WebSocketGateway, WebSocketGatewayOptions } from "./gateway/types";
+import type { Subscriber, WebSocketGateway, WebSocketGatewayOptions } from "./gateway/types";
 
 export type {
   AttachedInfo,
@@ -35,12 +37,29 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
   const { store, sessionManager } = opts;
   const registry = createSubscriberRegistry();
   const notifications = createGatewayNotifications(registry);
+  const drafts = createDraftStore();
   const actions = createClientActions({
     store,
     sessionManager,
     registry,
     notifyPromptResolved: notifications.notifyPromptResolved,
+    getDraft: drafts.get,
   });
+
+  function setDraft(sessionId: string, draft: ComposerDraft, origin: string): void {
+    if (!drafts.set(sessionId, draft)) return;
+    registry.broadcast(sessionId, () => ({ type: "draft", sessionId, draft, origin }));
+  }
+
+  /** Pesan `draft` dari Client: hanya untuk Session yang ada. */
+  function draft(_sub: Subscriber, sessionId: string, next: ComposerDraft, origin: string): void {
+    if (store.getSession(sessionId).ok) setDraft(sessionId, next, origin);
+  }
+
+  function notifySessionDeleted(sessionId: string): void {
+    drafts.delete(sessionId);
+    notifications.notifySessionDeleted(sessionId);
+  }
 
   function notifyAck(id: string, endpoint: string): void {
     opts.onNotifyAck?.(id, endpoint);
@@ -61,7 +80,7 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifySessionPermissionMode: notifications.notifySessionPermissionMode,
     notifySessionCompaction: notifications.notifySessionCompaction,
     notifyTurnActive: notifications.notifyTurnActive,
-    notifySessionDeleted: notifications.notifySessionDeleted,
+    notifySessionDeleted,
     notifyDataChanged: notifications.notifyDataChanged,
     notifyPromptResolved: notifications.notifyPromptResolved,
     notifyError: notifications.notifyError,
@@ -70,6 +89,9 @@ export function createWebSocketGateway(opts: WebSocketGatewayOptions): WebSocket
     notifyPreviewSnapshot: notifications.notifyPreviewSnapshot,
     notifyTurnDiff: notifications.notifyTurnDiff,
     notifyAck,
+    draft,
+    getDraft: drafts.get,
+    setDraft,
     detach: registry.detach,
     subscriberCount: registry.subscriberCount,
   };

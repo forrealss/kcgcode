@@ -19,6 +19,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { emitTurnDiff } from "@/lib/changes-events";
 import { type CollapsibleState, extendCollapsed, toggleCollapsible } from "@/lib/collapsible";
+import { emitDraft } from "@/lib/draft-events";
 import { emitPreviewSnapshot } from "@/lib/preview-events";
 import { groupPrompts } from "@/lib/prompts";
 import {
@@ -136,6 +137,10 @@ export function useSessionChat({ session, onBack, onDeleted }: UseSessionChatOpt
           break;
         case "turn_diff":
           emitTurnDiff(msg.diff);
+          break;
+        case "draft":
+          if (msg.sessionId !== session.id) break;
+          emitDraft(msg.sessionId, { draft: msg.draft, origin: msg.origin });
           break;
         case "session_deleted":
           // Kini dikirim ke semua koneksi — hanya Session ini yang ditinggalkan.

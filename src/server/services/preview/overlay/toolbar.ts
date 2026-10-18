@@ -1,23 +1,27 @@
 /**
- * Toolbar sheet: tombol datar ikon + label (Reload, Screenshot, Desktop,
- * Chat, Hide). Desktop adalah toggle (GTK toggle button); Chat diberi titik
- * merah saat agent menunggu jawaban.
+ * Toolbar sheet: tombol datar ikon + label (Select, Screenshot, Desktop,
+ * Chat). Desktop adalah toggle (GTK toggle button); Chat diberi titik merah
+ * saat agent menunggu jawaban. Reload sengaja tidak ada (cukup refresh
+ * browser); tombol melayang yang menghalangi cukup digeser ke tepi lain.
  */
+
+import { MAX_ELEMENTS } from "./config";
 import { h, show, tool } from "./dom";
 import { ICON } from "./icons";
 import { notify, state } from "./state";
 import { isDesktop, setDesktop } from "./viewport";
 
-export function createToolbar(onScreenshot: () => void): {
+export function createToolbar(actions: { onSelect: () => void; onScreenshot: () => void }): {
   el: HTMLElement;
   update: () => void;
 } {
-  const reload = tool(ICON.reload, "Reload");
-  reload.el.addEventListener("click", () => location.reload());
+  const select = tool(ICON.select, "Select");
+  select.el.title = "Pick an element on the page and attach it";
+  select.el.addEventListener("click", actions.onSelect);
 
   const shot = tool(ICON.camera, "Screenshot");
   shot.el.title = "Mark up a screenshot and attach it";
-  shot.el.addEventListener("click", onScreenshot);
+  shot.el.addEventListener("click", actions.onScreenshot);
 
   const view = tool(ICON.desktop, "Desktop");
   view.el.title = "Render the page at desktop width";
@@ -32,17 +36,11 @@ export function createToolbar(onScreenshot: () => void): {
   const chatPip = h("span", { class: "pip" });
   chat.icon.append(chatPip);
 
-  const hide = tool(ICON.hide, "Hide");
-  hide.el.title = "Hide the button until the page reloads";
-  hide.el.addEventListener("click", () => {
-    state.hidden = true;
-    state.open = false;
-    notify();
-  });
-
-  const el = h("div", { class: "tools" }, reload.el, shot.el, view.el, chat.el, hide.el);
+  const el = h("div", { class: "tools" }, select.el, shot.el, view.el, chat.el);
 
   function update(): void {
+    show(select.el, state.session !== null);
+    (select.el as HTMLButtonElement).disabled = state.elements.length >= MAX_ELEMENTS;
     show(shot.el, state.session !== null);
     (shot.el as HTMLButtonElement).disabled = state.shooting;
     shot.icon.innerHTML = state.shooting ? '<span class="spin"></span>' : ICON.camera;

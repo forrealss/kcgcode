@@ -3,8 +3,9 @@
  * Tanpa framework: modul lain mengubah `state` lalu memanggil `notify()`.
  */
 import { MAX_ERRORS, RELOAD_KEY } from "./config";
+import type { ElementContext } from "./element-context";
 import { local, store } from "./storage";
-import type { CapturedError, ServerInfo, SessionInfo } from "./types";
+import type { CapturedError, OverlayAttachment, ServerInfo, SessionInfo } from "./types";
 
 export const state = {
   session: null as SessionInfo | null,
@@ -15,7 +16,6 @@ export const state = {
   reply: null as string | null,
   agentError: null as string | null,
   open: false,
-  hidden: false,
   sending: false,
   sendError: null as string | null,
   autoReload: store.get(local, RELOAD_KEY) === "1",
@@ -23,8 +23,14 @@ export const state = {
   screenshots: false,
   shooting: false,
   annotating: false,
-  /** Gambar terunggah yang ikut pesan berikutnya. */
-  images: [] as Array<{ id: string; url: string }>,
+  /** Chip elemen yang sedang disorot (baru digabung / dipilih ulang). */
+  flashKey: null as string | null,
+  /** Mode pilih elemen aktif. */
+  picking: false,
+  /** Lampiran terunggah yang ikut pesan berikutnya (tersinkron dengan draf Session). */
+  attachments: [] as OverlayAttachment[],
+  /** Elemen terpilih yang ikut pesan berikutnya sebagai konteks. */
+  elements: [] as ElementContext[],
 };
 
 export type OverlayState = typeof state;

@@ -125,11 +125,13 @@ export class FrpcSupervisor {
     const onLine = (l: string) => {
       log(l);
       if (this.proc !== p) return;
-      switch (classifyFrpcLine(l)) {
+      const kind = classifyFrpcLine(l);
+      switch (kind) {
         case "online":
           state.phase = "online";
           this.attempt = 0;
           state.lastError = null;
+          fatal = null;
           break;
         case "logged_in":
           if (state.phase !== "online") state.phase = "connecting";
@@ -140,8 +142,13 @@ export class FrpcSupervisor {
         case "auth_failed":
           fatal = "TUNNEL_AUTH_FAILED";
           break;
+        case "address_in_use":
         case "proxy_failed":
-          fatal = "TUNNEL_PROXY_FAILED";
+          // frpc tidak keluar saat proxy ditolak (ia mencoba lagi sendiri), jadi
+          // tampilkan error sekarang; "start proxy success" berikutnya memulihkan.
+          fatal = kind === "address_in_use" ? "TUNNEL_ADDRESS_IN_USE" : "TUNNEL_PROXY_FAILED";
+          state.phase = "error";
+          state.lastError = fatal;
           break;
       }
     };

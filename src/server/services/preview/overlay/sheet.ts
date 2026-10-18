@@ -7,9 +7,12 @@
 import { openAnnotator } from "./annotator";
 import { captureScreenshot } from "./api";
 import { createComposer } from "./composer";
+import { MAX_ELEMENTS } from "./config";
 import { group, h, iconButton, row, show, switchControl } from "./dom";
+import { addElement, describeElement } from "./element-context";
 import { createErrorsGroup } from "./errors-group";
 import { ICON } from "./icons";
+import { startPicker } from "./picker";
 import { notify, setAutoReload, state } from "./state";
 import { sessionStatus } from "./status";
 import { createToolbar } from "./toolbar";
@@ -17,9 +20,23 @@ import { createToolbar } from "./toolbar";
 export interface Sheet {
   update: () => void;
   focusInput: () => void;
+  inputFocused: () => boolean;
+  /** Posisi scroll isi sheet. */
+  scroll: () => number;
+  setScroll: (top: number) => void;
+  /** Pembukaan berikutnya tanpa animasi (pulih dari reload otomatis). */
+  skipEnterAnimation: () => void;
 }
 
-export function createSheet(root: HTMLElement): Sheet {
+/** Lama sorotan chip elemen yang dipilih ulang / digabung (ms). */
+const FLASH_MS = 1600;
+/** Durasi animasi tutup terpanjang (ms) — sesuai `sheet-out` di styles.ts. */
+const CLOSE_MS = 220;
+
+/**
+ * @param anchor tombol OSD — di layar lebar sheet "tumbuh" dari posisinya.
+ */
+export function createSheet(root: HTMLElement, anchor: () => Element | null): Sheet {
   const close = () => {
     state.open = false;
     notify();
@@ -46,7 +63,10 @@ export function createSheet(root: HTMLElement): Sheet {
 
   const annotate = (src: Blob) => openAnnotator(root, src, () => setTimeout(composer.focus, 50));
   const composer = createComposer(annotate);
-  const toolbar = createToolbar(() => void markUpScreenshot());
+  const toolbar = createToolbar({
+    onSelect: pickElement,
+    onScreenshot: () => void markUpScreenshot(),
+  });
   const errorsGroup = createErrorsGroup(composer.addError);
 
   // Balasan terakhir & error agent (ketuk balasan untuk membuka penuh).
@@ -82,6 +102,46 @@ export function createSheet(root: HTMLElement): Sheet {
     noSession,
   );
   sheet.append(h("div", { class: "grab" }), headerbar, body);
+
+  /** Sorot chip elemen sebentar (sudah terlampir / halaman baru digabung). */
+  function flashChip(key: string): void {
+    state.flashKey = key;
+    setTimeout(() => {
+      if (state.flashKey !== key) return;
+      state.flashKey = null;
+      notify();
+    }, FLASH_MS);
+  }
+
+  /** Tutup sheet, pilih elemen (satu / banyak) di halaman, lalu lampirkan ke pesan. */
+  function pickElement(): void {
+    state.open = false;
+    state.picking = true;
+    notify();
+    const back = () => {
+      state.picking = false;
+      state.open = true;
+      notify();
+    };
+    startPicker(root, {
+      max: MAX_ELEMENTS - state.elements.length,
+      onPick: (els) => {
+        // Elemen yang sudah terlampir: halaman sama -> diabaikan; halaman
+        // lain -> digabung. Chip-nya disorot agar pengguna tahu ke mana perginya.
+        let flash: string | null = null;
+        for (const el of els) {
+          const item = describeElement(el);
+          const added = addElement(state.elements, item, MAX_ELEMENTS);
+          state.elements = added.list;
+          if (added.result === "duplicate" || added.result === "merged") flash = item.key;
+        }
+        if (flash) flashChip(flash);
+        back();
+        setTimeout(composer.focus, 50);
+      },
+      onCancel: back,
+    });
+  }
 
   async function markUpScreenshot(): Promise<void> {
     if (state.shooting) return;
@@ -129,13 +189,59 @@ export function createSheet(root: HTMLElement): Sheet {
     );
   }
 
-  function update(): void {
-    if (!state.open) {
+  // ---- Buka / tutup beranimasi ----
+  let closeTimer = 0;
+  const reducedMotion = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let instantEnter = false;
+
+  function enter(): void {
+    // Dibuka lagi saat animasi tutup belum selesai: batalkan tutupnya.
+    clearTimeout(closeTimer);
+    scrim.classList.remove("closing");
+    sheet.classList.remove("closing");
+    if (sheet.isConnected) return;
+    // `no-anim` dibiarkan sampai sheet ditutup: melepasnya lebih awal justru
+    // memulai animasi buka dari awal.
+    scrim.classList.toggle("no-anim", instantEnter);
+    sheet.classList.toggle("no-anim", instantEnter);
+    instantEnter = false;
+    root.append(scrim, sheet);
+    // Titik asal animasi = pusat tombol OSD (hanya terlihat di layar lebar).
+    const from = anchor()?.getBoundingClientRect();
+    if (from) {
+      const box = sheet.getBoundingClientRect();
+      const x = from.left + from.width / 2 - box.left;
+      const y = from.top + from.height / 2 - box.top;
+      sheet.style.transformOrigin = `${Math.round(x)}px ${Math.round(y)}px`;
+    }
+  }
+
+  function leave(): void {
+    if (!sheet.isConnected || sheet.classList.contains("closing")) return;
+    scrim.classList.remove("no-anim");
+    sheet.classList.remove("no-anim");
+    const done = () => {
       scrim.remove();
       sheet.remove();
+      scrim.classList.remove("closing");
+      sheet.classList.remove("closing");
+    };
+    if (reducedMotion()) {
+      done();
       return;
     }
-    if (!sheet.isConnected) root.append(scrim, sheet);
+    scrim.classList.add("closing");
+    sheet.classList.add("closing");
+    closeTimer = window.setTimeout(done, CLOSE_MS);
+  }
+
+  function update(): void {
+    if (!state.open) {
+      leave();
+      return;
+    }
+    enter();
     const hasSession = state.session !== null;
     updateHeader();
     toolbar.update();
@@ -146,5 +252,16 @@ export function createSheet(root: HTMLElement): Sheet {
     show(noSession, !hasSession);
   }
 
-  return { update, focusInput: composer.focus };
+  return {
+    update,
+    focusInput: composer.focus,
+    inputFocused: composer.focused,
+    scroll: () => body.scrollTop,
+    setScroll: (top) => {
+      body.scrollTop = top;
+    },
+    skipEnterAnimation: () => {
+      instantEnter = true;
+    },
+  };
 }

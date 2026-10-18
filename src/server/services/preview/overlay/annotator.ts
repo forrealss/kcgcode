@@ -1,7 +1,7 @@
 /**
  * Layar penuh untuk mencoret-coret gambar (screenshot / foto) sebelum
  * dilampirkan ke pesan. Hasilnya diunggah sebagai JPEG dan masuk
- * `state.images`.
+ * `state.attachments` (dan draf Session yang tersinkron).
  */
 import { uploadImage } from "./api";
 import { h, iconButton } from "./dom";
@@ -110,7 +110,13 @@ function mountAnnotator(
         if (!blob) return done();
         try {
           const id = await uploadImage(blob);
-          state.images.push({ id, url: URL.createObjectURL(blob) });
+          state.attachments.push({
+            id,
+            name: "screenshot.jpg",
+            mime: "image/jpeg",
+            size: blob.size,
+            url: URL.createObjectURL(blob),
+          });
           state.sendError = null;
         } catch {
           state.sendError = "Couldn't attach the image.";

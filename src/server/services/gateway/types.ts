@@ -5,6 +5,7 @@
 import type { SessionStore } from "../../../db";
 import type {
   AgentNotification,
+  ComposerDraft,
   DevServerStatus,
   InteractivePrompt,
   MessagePart,
@@ -90,6 +91,12 @@ export interface WebSocketGateway {
   notifyTurnDiff(sessionId: string, diff: TurnDiff): void;
   /** Teruskan `notify_ack` dari Client ke layanan notifikasi. */
   notifyAck(id: string, endpoint: string): void;
+  /** Pesan `draft` dari Client (WebSocket). */
+  draft(sub: Subscriber, sessionId: string, draft: ComposerDraft, origin: string): void;
+  /** Draf composer Session saat ini (kosong bila tidak ada). */
+  getDraft(sessionId: string): ComposerDraft;
+  /** Simpan draf & siarkan ke koneksi Session (juga dipakai overlay Preview). */
+  setDraft(sessionId: string, draft: ComposerDraft, origin: string): void;
   detach(sub: Subscriber): void;
   subscriberCount(sessionId: string): number;
 }

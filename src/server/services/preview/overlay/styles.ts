@@ -8,8 +8,8 @@
 export const CSS = `
 :host{all:initial}
 *{box-sizing:border-box;font-family:"Noto Sans",Cantarell,"Inter",system-ui,-apple-system,"Segoe UI",sans-serif}
-.root{--window:#fafafa;--card:#ffffff;--fg:#1f1f1f;--dim:rgba(0,0,6,.55);--line:rgba(0,0,6,.08);--border:rgba(0,0,6,.22);--hover:rgba(0,0,6,.04);--active:rgba(0,0,6,.08);--tint:rgba(0,0,6,.06);--sugg:#1f1f1f;--sugg-fg:#fafafa;--danger:#c01c28;--danger-bg:rgba(224,27,36,.1);--ok:#1a7f37;--warn:#c88800;--shadow:0 0 0 1px rgba(0,0,6,.03),0 1px 3px 1px rgba(0,0,6,.07),0 2px 6px 2px rgba(0,0,6,.03);color:var(--fg);font-size:14px;line-height:1.4}
-@media (prefers-color-scheme:dark){.root{--window:#171717;--card:#222222;--fg:#fafafa;--dim:rgba(255,255,255,.6);--line:rgba(255,255,255,.09);--border:rgba(255,255,255,.28);--hover:rgba(255,255,255,.06);--active:rgba(255,255,255,.1);--tint:rgba(255,255,255,.08);--sugg:#fafafa;--sugg-fg:#141414;--danger:#ff7b72;--danger-bg:rgba(255,123,114,.12);--ok:#57d37a;--warn:#f6c343;--shadow:0 0 0 1px rgba(0,0,0,.25),0 2px 8px rgba(0,0,0,.35)}}
+.root{--window:#fafafa;--card:#ffffff;--fg:#1f1f1f;--dim:rgba(0,0,6,.55);--line:rgba(0,0,6,.08);--border:rgba(0,0,6,.22);--hover:rgba(0,0,6,.04);--active:rgba(0,0,6,.08);--tint:rgba(0,0,6,.06);--sugg:#1f1f1f;--sugg-fg:#fafafa;--danger:#c01c28;--danger-bg:rgba(224,27,36,.1);--ok:#1a7f37;--accent:#3584e4;--warn:#c88800;--shadow:0 0 0 1px rgba(0,0,6,.03),0 1px 3px 1px rgba(0,0,6,.07),0 2px 6px 2px rgba(0,0,6,.03);color:var(--fg);font-size:14px;line-height:1.4}
+@media (prefers-color-scheme:dark){.root{--window:#171717;--card:#222222;--fg:#fafafa;--dim:rgba(255,255,255,.6);--line:rgba(255,255,255,.09);--border:rgba(255,255,255,.28);--hover:rgba(255,255,255,.06);--active:rgba(255,255,255,.1);--tint:rgba(255,255,255,.08);--sugg:#fafafa;--sugg-fg:#141414;--danger:#ff7b72;--danger-bg:rgba(255,123,114,.12);--ok:#57d37a;--accent:#78aeed;--warn:#f6c343;--shadow:0 0 0 1px rgba(0,0,0,.25),0 2px 8px rgba(0,0,0,.35)}}
 svg{width:18px;height:18px;stroke:currentColor;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round;flex:none}
 button,a{font:inherit;color:inherit;-webkit-tap-highlight-color:transparent}
 button{cursor:pointer}
@@ -17,7 +17,9 @@ button:disabled{opacity:.45;cursor:default}
 :focus-visible{outline:2px solid color-mix(in srgb,var(--fg) 45%,transparent);outline-offset:2px}
 
 /* Tombol OSD melayang */
-.osd{position:fixed;z-index:2147483647;width:48px;height:48px;border-radius:24px;border:0;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.78);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);touch-action:none;user-select:none;transition:transform .15s,opacity .2s}
+.osd{position:fixed;z-index:2147483647;width:48px;height:48px;border-radius:24px;border:0;padding:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.78);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.3);touch-action:none;user-select:none;transition:transform .22s cubic-bezier(.16,1,.3,1),opacity .18s ease-out}
+/* Menyingkir saat sheet / mode pilih / anotasi terbuka */
+.osd.away{opacity:0;transform:scale(.6);pointer-events:none}
 .osd:active{transform:scale(.94)}
 .osd.dragging{transition:none;opacity:.85}
 .osd .logo{display:flex}
@@ -28,11 +30,23 @@ button:disabled{opacity:.45;cursor:default}
 @keyframes pulse{50%{opacity:.35}}
 
 /* Dialog (bottom sheet ala AdwDialog; mengambang di layar lebar) */
-.scrim{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.4)}
-.sheet{position:fixed;z-index:2147483647;left:0;right:0;bottom:0;margin:0 auto;max-width:440px;max-height:86vh;display:flex;flex-direction:column;background:var(--window);border-radius:18px 18px 0 0;box-shadow:0 -6px 32px rgba(0,0,0,.28);overflow:hidden;animation:rise .22s cubic-bezier(.2,.9,.3,1)}
-@media (min-width:640px){.sheet{bottom:24px;border-radius:18px;max-height:min(86vh,640px);animation-name:pop}}
+.scrim{position:fixed;inset:0;z-index:2147483646;background:rgba(0,0,0,.4);animation:fade-in .22s ease-out}
+.scrim.closing{animation:fade-out .2s ease-in forwards}
+.sheet{position:fixed;z-index:2147483647;left:0;right:0;bottom:0;margin:0 auto;max-width:440px;max-height:86vh;display:flex;flex-direction:column;background:var(--window);border-radius:18px 18px 0 0;box-shadow:0 -6px 32px rgba(0,0,0,.28);overflow:hidden;animation:sheet-in .34s cubic-bezier(.16,1,.3,1)}
+.sheet.closing{animation:sheet-out .22s cubic-bezier(.4,0,1,1) forwards}
+@media (min-width:640px){.sheet{bottom:24px;border-radius:18px;max-height:min(86vh,640px);animation-name:pop-in;animation-duration:.28s}.sheet.closing{animation-name:pop-out;animation-duration:.16s}}
 @keyframes rise{from{transform:translateY(24px);opacity:0}}
-@keyframes pop{from{transform:scale(.96);opacity:0}}
+/* Pulih dari reload otomatis: tampil langsung tanpa animasi (persist.ts) */
+.sheet.no-anim,.scrim.no-anim{animation:none}
+.root.instant .osd{transition:none}
+@keyframes fade-in{from{opacity:0}}
+@keyframes fade-out{to{opacity:0}}
+/* HP: meluncur dari bawah layar (kurva melambat ala GTK) */
+@keyframes sheet-in{from{transform:translateY(100%)}}
+@keyframes sheet-out{to{transform:translateY(100%)}}
+/* Layar lebar: tumbuh dari tombol OSD (transform-origin diatur saat dibuka) */
+@keyframes pop-in{from{transform:scale(.85);opacity:0}}
+@keyframes pop-out{to{transform:scale(.9);opacity:0}}
 .grab{width:36px;height:4px;border-radius:2px;background:var(--border);opacity:.6;margin:8px auto 0;flex:none}
 @media (min-width:640px){.grab{display:none}}
 .headerbar{display:grid;grid-template-columns:32px 1fr 32px;align-items:center;gap:8px;padding:6px 10px 2px;flex:none}
@@ -89,7 +103,7 @@ button:disabled{opacity:.45;cursor:default}
 .ok{color:var(--ok)}
 .spin{width:16px;height:16px;border:2px solid var(--line);border-top-color:var(--fg);border-radius:50%;animation:spin .8s linear infinite;flex:none}
 @keyframes spin{to{transform:rotate(360deg)}}
-@media (prefers-reduced-motion:reduce){.osd .dot,.spin,.title i.sd{animation:none}.sheet{animation:none}}
+@media (prefers-reduced-motion:reduce){.osd .dot,.spin,.title i.sd,.sheet,.sheet.closing,.scrim,.scrim.closing{animation:none}.osd{transition:none}}
 
 /* Entry pesan: satu baris membulat (lampir | teks | kirim) */
 .entry{background:var(--card);border-radius:20px;box-shadow:var(--shadow);padding:4px}
@@ -103,6 +117,17 @@ textarea:focus-visible{outline:none}
 .thumb img{width:100%;height:100%;object-fit:cover;object-position:top;display:block}
 .thumb button{position:absolute;top:3px;right:3px;width:20px;height:20px;border-radius:10px;border:0;background:rgba(0,0,0,.65);color:#fff;display:flex;align-items:center;justify-content:center;padding:0}
 .thumb button svg{width:12px;height:12px;stroke-width:2.5}
+.thumb.loading{display:flex;align-items:center;justify-content:center;background:var(--tint)}
+/* Chip elemen terpilih (ikut pesan sebagai konteks) */
+.chip{display:inline-flex;align-items:center;gap:6px;max-width:100%;height:30px;padding:0 4px 0 10px;border-radius:15px;background:var(--tint);font-size:12.5px;color:var(--fg)}
+.chip .pre{display:flex;color:var(--accent)}
+.chip .pre svg{width:14px;height:14px}
+.chip span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:"Source Code Pro",ui-monospace,Menlo,monospace;font-size:12px}
+.chip small{flex:none;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11.5px;color:var(--dim)}
+.chip.flash{box-shadow:0 0 0 2px var(--accent)}
+.chip button{width:22px;height:22px;border-radius:11px;border:0;padding:0;background:transparent;color:var(--dim);display:flex;align-items:center;justify-content:center;flex:none}
+.chip button:hover{background:var(--hover);color:var(--fg)}
+.chip button svg{width:12px;height:12px;stroke-width:2.5;color:currentColor}
 textarea{flex:1;min-width:0;display:block;border:0;outline:0;resize:none;background:transparent;color:var(--fg);font-size:16px;line-height:1.4;max-height:120px;padding:6px 2px}
 textarea::placeholder{color:var(--dim)}
 .send{width:34px;height:34px;border-radius:17px;border:0;padding:0;background:var(--sugg);color:var(--sugg-fg);display:flex;align-items:center;justify-content:center;flex:none}
@@ -121,6 +146,38 @@ label.boxed:hover .row{background:var(--hover)}
 @media (prefers-reduced-motion:reduce){.switch span,.switch span::after{transition:none}}
 .note{font-size:12.5px;color:var(--danger);margin:0 6px}
 .hint{font-size:13px;color:var(--dim);text-align:center;margin:2px 8px}
+
+/* Mode pilih elemen (ala inspector) */
+.pick-marks{position:fixed;inset:0;z-index:2147483646;pointer-events:none}
+.pick-box{position:fixed;z-index:2147483646;pointer-events:none;border:2px solid var(--accent);border-radius:4px;box-sizing:border-box}
+.pick-box.hover{background:color-mix(in srgb,var(--accent) 12%,transparent);transition:all .06s linear}
+.pick-box.sel{background:color-mix(in srgb,var(--accent) 20%,transparent);box-shadow:0 0 0 1px rgba(255,255,255,.6)}
+.pick-box.pre{border-style:dashed;border-width:1.5px;background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.pick-num{position:fixed;z-index:2147483646;pointer-events:none;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--accent);color:#fff;font:700 11px/20px "Noto Sans",system-ui,sans-serif;text-align:center;box-shadow:0 0 0 2px #fff,0 1px 4px rgba(0,0,0,.3)}
+.pick-tag{position:fixed;z-index:2147483646;pointer-events:none;max-width:216px;height:20px;padding:0 7px;border-radius:5px;background:var(--accent);color:#fff;font:600 11px/20px "Source Code Pro",ui-monospace,Menlo,monospace;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.pick-area{position:fixed;z-index:2147483646;pointer-events:none;border:1.5px dashed var(--accent);border-radius:4px;background:color-mix(in srgb,var(--accent) 10%,transparent)}
+.pick-layer{position:fixed;inset:0;z-index:2147483645;display:none;touch-action:none;cursor:crosshair}
+.pick-layer.on{display:block}
+.pick-bar{position:fixed;z-index:2147483647;left:50%;bottom:calc(20px + env(safe-area-inset-bottom));transform:translateX(-50%);display:flex;align-items:center;gap:8px;max-width:calc(100vw - 24px);padding:6px 6px 6px 16px;border-radius:24px;background:rgba(24,24,24,.92);-webkit-backdrop-filter:blur(12px);backdrop-filter:blur(12px);color:#fff;font-size:13.5px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.35);white-space:nowrap;animation:pickrise .22s cubic-bezier(.2,.9,.3,1)}
+@keyframes pickrise{from{transform:translate(-50%,16px);opacity:0}}
+.pick-hint{min-width:0;overflow:hidden;text-overflow:ellipsis;padding-right:4px}
+.pick-hint.warn{color:#ffb3ad}
+.pick-bar .pill{display:flex;align-items:center;gap:6px;height:32px;padding:0 14px;border-radius:16px;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:13px;font-weight:700;flex:none}
+.pick-bar .pill.sugg{background:#fff;color:#141414}
+.pick-bar .pill:disabled{opacity:.4}
+.pick-count{min-width:20px;height:20px;padding:0 6px;border-radius:10px;background:var(--accent);color:#fff;font-size:11.5px;line-height:20px;text-align:center}
+.seg{display:flex;padding:2px;border-radius:18px;background:rgba(255,255,255,.12);flex:none}
+.seg button{height:30px;padding:0 14px;border-radius:15px;border:0;background:transparent;color:rgba(255,255,255,.7);font-size:13px;font-weight:700}
+.seg button[aria-pressed="true"]{background:#fff;color:#141414}
+/* HP: bar selebar layar di bawah, dua baris (petunjuk | mode + aksi), target sentuh 40px */
+@media (max-width:639px){
+.pick-bar{left:0;right:0;bottom:0;transform:none;max-width:none;animation-name:rise;flex-wrap:wrap;gap:10px;padding:12px 12px calc(12px + env(safe-area-inset-bottom));border-radius:18px 18px 0 0;white-space:normal}
+.pick-hint{flex:1 0 100%;text-align:center;padding:0;font-size:14px}
+.seg{margin-right:auto}
+.seg button{height:36px;padding:0 16px;border-radius:18px}
+.pick-bar .pill{height:40px;padding:0 18px;border-radius:20px;font-size:14px}
+}
+@media (prefers-reduced-motion:reduce){.pick-box.hover{transition:none}.pick-bar{animation:none}}
 
 /* Anotasi (layar penuh) */
 .annot{position:fixed;inset:0;z-index:2147483647;background:#0d0d0d;display:flex;flex-direction:column;color:#fafafa}

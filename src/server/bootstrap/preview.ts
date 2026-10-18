@@ -88,6 +88,12 @@ function createPreviewBridge(store: SessionStore, core: SessionCore): PreviewBri
       core.gateway.attach(sub, sessionId);
       return () => core.gateway.detach(sub);
     },
+    getDraft: (sessionId) => core.gateway.getDraft(sessionId),
+    setDraft: (sessionId, draft, origin) => core.gateway.setDraft(sessionId, draft, origin),
+    readAttachment(sessionId, id) {
+      const file = core.attachments.read(sessionId, id);
+      return file.ok ? { bytes: file.data.bytes, mime: file.data.mime } : null;
+    },
   };
 }
 

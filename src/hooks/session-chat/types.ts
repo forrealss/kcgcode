@@ -24,7 +24,8 @@ export interface SessionChat {
   // Koneksi & status
   wsStatus: WsConnectionStatus;
   /** Kirim pesan Client -> Server (dipakai composer untuk `input`/`interrupt`). */
-  send: (msg: ClientMessage) => void;
+  /** `false` = koneksi belum siap (pesan tidak terkirim). */
+  send: (msg: ClientMessage) => boolean;
   status: SessionStatus;
   /** Permission mode Session (null = default agent) — tersinkron dari WS. */
   permissionMode: string | null;

@@ -288,6 +288,8 @@ export function apiErrorMessage(code: string): string {
       return "Couldn't reach the remote access service. Check your connection.";
     case "TUNNEL_AUTH_FAILED":
       return "The tunnel server rejected this device. Try rotating the secret.";
+    case "TUNNEL_ADDRESS_IN_USE":
+      return "Your address is already used by another KCG Code on this account. Turn remote access off there first.";
     case "TUNNEL_PROXY_FAILED":
       return "The tunnel server couldn't publish your address. See the log for details.";
     case "FRPC_UNSUPPORTED_PLATFORM":

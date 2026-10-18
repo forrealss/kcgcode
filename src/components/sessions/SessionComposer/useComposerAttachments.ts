@@ -1,6 +1,8 @@
 /**
  * Antrean lampiran composer: validasi & penambahan file (file picker, paste,
- * drag & drop), penghapusan (object URL thumbnail ikut dilepas), serta
+ * drag & drop), upload seketika (agar lampiran langsung punya id dan ikut
+ * tersinkron ke draf Session / overlay Preview), penghapusan (object URL
+ * thumbnail ikut dilepas), serta
  * animasi plate drop (`DropPlate`) dari kartu overlay "Add anything" ke
  * deretan lampiran.
  *
@@ -19,6 +21,7 @@ import {
   useState,
 } from "react";
 import type { PendingAttachment } from "@/components/sessions/PendingAttachments";
+import { apiErrorMessage, apiUploadFile, errorText } from "@/lib/api";
 import { isPreviewableImage, MAX_ATTACHMENT_BYTES } from "@/lib/attachments";
 
 /**
@@ -35,6 +38,8 @@ export interface DropPlateState {
 }
 
 export interface UseComposerAttachmentsOptions {
+  /** Session tujuan upload lampiran. */
+  sessionId: string;
   /** Antrean lampiran (state milik composer). */
   pendingImages: PendingAttachment[];
   setPendingImages: Dispatch<SetStateAction<PendingAttachment[]>>;
@@ -51,6 +56,12 @@ export interface ComposerAttachments {
   addFiles: (files: Iterable<File>, from?: DOMRect | null) => void;
   /** Hapus satu lampiran (object URL thumbnail ikut dilepas). */
   removeAttachment: (key: string) => void;
+  /**
+   * Tunggu semua upload yang sedang berjalan selesai (sebelum kirim);
+   * hasilnya peta key lampiran -> id yang baru didapat (state React belum
+   * tentu sudah dirender ulang saat itu).
+   */
+  waitForUploads: () => Promise<Map<string, string>>;
   /** Daftarkan elemen tiap lampiran (tujuan animasi plate). */
   registerAttachmentEl: (key: string, el: HTMLElement | null) => void;
   /** Plate selesai mendarat. */
@@ -58,6 +69,7 @@ export interface ComposerAttachments {
 }
 
 export function useComposerAttachments({
+  sessionId,
   pendingImages,
   setPendingImages,
   reportError,
@@ -66,6 +78,40 @@ export function useComposerAttachments({
   const [plate, setPlate] = useState<DropPlateState | null>(null);
   /** Elemen tiap lampiran (untuk mengukur tujuan animasi plate). */
   const attachmentEls = useRef(new Map<string, HTMLElement>());
+  /** Upload yang sedang berjalan per key lampiran (hasil: id, atau null bila gagal). */
+  const uploads = useRef(new Map<string, Promise<string | null>>());
+
+  /** Unggah satu lampiran; gagal -> pesan error & lampiran dibuang. */
+  const upload = useCallback(
+    (item: PendingAttachment & { file: File }) => {
+      const done = apiUploadFile(`/api/sessions/${sessionId}/uploads`, item.file)
+        .then((up): string => {
+          setPendingImages((prev) =>
+            prev.map((p) => (p.key === item.key ? { ...p, id: up.id, uploading: false } : p)),
+          );
+          return up.id;
+        })
+        .catch((e: unknown): null => {
+          reportError(errorText(e, apiErrorMessage("ERROR")));
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+          setPendingImages((prev) => prev.filter((p) => p.key !== item.key));
+          return null;
+        })
+        .finally(() => uploads.current.delete(item.key));
+      uploads.current.set(item.key, done);
+    },
+    [sessionId, setPendingImages, reportError],
+  );
+
+  const waitForUploads = useCallback(async () => {
+    const entries = [...uploads.current.entries()];
+    const ids = new Map<string, string>();
+    for (const [key, done] of entries) {
+      const id = await done;
+      if (id) ids.set(key, id);
+    }
+    return ids;
+  }, []);
 
   /**
    * Terima file dari file picker / paste / drag & drop, validasi, lalu
@@ -74,7 +120,7 @@ export function useComposerAttachments({
    */
   const addFiles = useCallback(
     (files: Iterable<File>, from?: DOMRect | null) => {
-      const picked: PendingAttachment[] = [];
+      const picked: Array<PendingAttachment & { file: File }> = [];
       for (const file of files) {
         // Folder yang di-drop muncul sebagai File 0 byte tanpa tipe.
         if (file.size === 0) {
@@ -87,15 +133,20 @@ export function useComposerAttachments({
         }
         picked.push({
           key: crypto.randomUUID(),
+          name: file.name,
+          mime: file.type,
+          size: file.size,
           file,
           previewUrl: isPreviewableImage(file.type) ? URL.createObjectURL(file) : null,
+          uploading: true,
         });
       }
       if (picked.length === 0) return;
       setPendingImages((prev) => [...prev, ...picked]);
+      for (const item of picked) upload(item);
       if (from) setPlate({ from, keys: picked.map((p) => p.key), targets: null, box: null });
     },
-    [reportError, setPendingImages],
+    [reportError, setPendingImages, upload],
   );
 
   // Item plate sudah dirender (tak terlihat) -> ukur posisi akhirnya. Deretan
@@ -123,12 +174,13 @@ export function useComposerAttachments({
     (key: string) => {
       setPendingImages((prev) => {
         const target = prev.find((p) => p.key === key);
-        if (target?.previewUrl) URL.revokeObjectURL(target.previewUrl);
+        // Hanya object URL lokal yang dilepas (bukan URL lampiran server).
+        if (target?.file && target.previewUrl) URL.revokeObjectURL(target.previewUrl);
         return prev.filter((p) => p.key !== key);
       });
     },
     [setPendingImages],
   );
 
-  return { plate, addFiles, removeAttachment, registerAttachmentEl, endPlate };
+  return { plate, addFiles, removeAttachment, waitForUploads, registerAttachmentEl, endPlate };
 }

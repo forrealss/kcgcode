@@ -23,8 +23,14 @@
  * - Mobile: satu tombol aksi (attach image + agent mode) lewat `Sheet`;
  *   saat input lebih dari satu baris, textarea pindah ke baris sendiri.
  *
- * Bagian-bagiannya: `useComposerAttachments` (antrean lampiran + animasi
- * plate), `useStackedLayout` (inline vs stacked + tinggi textarea),
+ * Draf (teks, lampiran, elemen Preview terpilih) tersinkron dengan perangkat
+ * lain & overlay Preview lewat `useDraftSync`: mengetik / melampirkan di
+ * salah satu sisi langsung muncul di sisi lain; mengirim mengosongkan
+ * keduanya.
+ *
+ * Bagian-bagiannya: `useComposerAttachments` (antrean lampiran + upload +
+ * animasi plate), `useDraftSync`, `useStackedLayout` (inline vs stacked +
+ * tinggi textarea),
  * `ComposerTextarea` (textarea + sorot mention), `ComposerControls`
  * (kirim/stop, slot Mode, susunan baris mobile & desktop).
  */
@@ -32,6 +38,7 @@ import { type Ref, useCallback, useEffect, useImperativeHandle, useRef, useState
 import { AgentModeSlot } from "@/components/sessions/AgentModeSlot";
 import { ComposerActionSheet } from "@/components/sessions/ComposerActionSheet";
 import { ComposerSuggestions } from "@/components/sessions/ComposerSuggestions";
+import { DraftElementChips } from "@/components/sessions/DraftElementChips";
 import { DropPlate } from "@/components/sessions/DropPlate";
 import { FileMentionDropdown } from "@/components/sessions/FileMentionDropdown";
 import {
@@ -48,16 +55,20 @@ import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { useSpeechToText } from "@/hooks/useSpeechToText";
 import type { WsConnectionStatus } from "@/hooks/useWebSocket";
 import { agentQuery } from "@/lib/agent-types";
-import { apiErrorMessage, apiUploadFile, errorText } from "@/lib/api";
+import { apiErrorMessage, errorText } from "@/lib/api";
 import { composerPlaceholder, extractMentionedFiles } from "@/lib/composer";
 import { CONVERSATION_MAX_W } from "@/lib/layout";
 import { cn } from "@/lib/utils";
-import type { Session } from "@/types";
+import type { DraftElement, Session } from "@/types";
 import type { ClientMessage } from "@/ws-protocol";
 import { DesktopComposerRow, MobileComposerRow, SendOrStopButton } from "./ComposerControls";
 import { ComposerTextarea } from "./ComposerTextarea";
 import { useComposerAttachments } from "./useComposerAttachments";
+import { useDraftSync } from "./useDraftSync";
 import { useStackedLayout } from "./useStackedLayout";
+
+/** Teks pesan bila hanya elemen Preview yang dilampirkan (sama dengan overlay). */
+const ELEMENT_ONLY_TEXT = "Take a look at this element in the preview.";
 
 /** Handle imperatif composer (dipakai overlay drag & drop). */
 export interface SessionComposerHandle {
@@ -75,8 +86,8 @@ export interface SessionComposerProps {
   /** Model merespon DAN Session berjalan — kirim berubah jadi Stop. */
   generating: boolean;
   wsStatus: WsConnectionStatus;
-  /** Kirim pesan Client -> Server (engine). */
-  send: (msg: ClientMessage) => void;
+  /** Kirim pesan Client -> Server (engine); `false` = koneksi tidak siap. */
+  send: (msg: ClientMessage) => boolean;
   /** Set error banner global (upload/kirim gagal). */
   reportError: (message: string | null) => void;
   /** Hentikan balasan model (interrupt) — Session tetap aktif. */
@@ -104,10 +115,13 @@ export function SessionComposer({
   const isMobile = useIsMobile();
   const [text, setText] = useState("");
   /**
-   * File yang akan dilampirkan ke pesan berikutnya (belum di-upload).
-   * Thumbnail gambar memakai object URL lokal; upload terjadi saat kirim.
+   * Lampiran pesan berikutnya. File lokal langsung di-upload (thumbnail
+   * memakai object URL lokal); lampiran dari perangkat lain/overlay datang
+   * lewat draf tersinkron.
    */
   const [pendingImages, setPendingImages] = useState<PendingAttachment[]>([]);
+  /** Elemen halaman Preview yang dipilih dari overlay (draf tersinkron). */
+  const [elements, setElements] = useState<DraftElement[]>([]);
   /**
    * Kotak composer — jangkar saran autocomplete (`ComposerSuggestions`) dan
    * tujuan akhir latar plate drop (`useComposerAttachments`).
@@ -189,17 +203,33 @@ export function SessionComposer({
 
   // Dipanggil SETELAH `useStackedLayout`: pengukuran tujuan plate (layout
   // effect di hook ini) berjalan setelah tinggi textarea disesuaikan.
-  const { plate, addFiles, removeAttachment, registerAttachmentEl, endPlate } =
-    useComposerAttachments({ pendingImages, setPendingImages, reportError, boxRef });
+  const { plate, addFiles, removeAttachment, waitForUploads, registerAttachmentEl, endPlate } =
+    useComposerAttachments({
+      sessionId: session.id,
+      pendingImages,
+      setPendingImages,
+      reportError,
+      boxRef,
+    });
   useImperativeHandle(ref, () => ({ addFiles }), [addFiles]);
+  useDraftSync({
+    sessionId: session.id,
+    send,
+    text,
+    setText,
+    attachments: pendingImages,
+    setAttachments: setPendingImages,
+    elements,
+    setElements,
+  });
 
   /**
    * Input dapat dipakai = izin engine (koneksi + running + tidak busy) DAN
    * tidak sedang upload lampiran.
    */
   const canInput = inputAllowed && !sending;
-  /** Ada prompt atau lampiran — tombol kirim muncul. */
-  const hasContent = text.trim() !== "" || pendingImages.length > 0;
+  /** Ada prompt, lampiran, atau elemen terpilih — tombol kirim muncul. */
+  const hasContent = text.trim() !== "" || pendingImages.length > 0 || elements.length > 0;
   const canSubmit = canInput && hasContent;
 
   /**
@@ -209,22 +239,29 @@ export function SessionComposer({
    */
   const submitMessage = async (message: string) => {
     if (!canInput || sending) return;
-    if (message.trim() === "" && pendingImages.length === 0) return;
+    if (message.trim() === "" && pendingImages.length === 0 && elements.length === 0) return;
     setSending(true);
     try {
       // Referensi @path dikenal dijadikan part `file` — teks asli tidak
       // diubah (tetap tampil di bubble); part `file` hanya penanda tambahan
       // agar isi file benar-benar dibaca opencode.
       const files = extractMentionedFiles(message, suggestedCacheRef.current);
-      // Upload gambar dulu; id lampiran dipakai pesan WS berikutnya.
-      const images: string[] = [];
+      // Lampiran sudah di-upload saat ditambahkan; tunggu yang masih jalan.
+      const uploaded = await waitForUploads();
+      const images = pendingImages.flatMap((p) => {
+        const id = p.id ?? uploaded.get(p.key);
+        return id ? [id] : [];
+      });
+      // Konteks elemen Preview terpilih ditambahkan ke akhir pesan.
+      const typed = message.trim() || (elements.length > 0 ? ELEMENT_ONLY_TEXT : "");
+      const fullText = [typed, ...elements.map((e) => e.context)].filter(Boolean).join("\n\n");
+      if (fullText === "" && images.length === 0) return;
+      send({ type: "input", sessionId: session.id, text: fullText, files, images });
       for (const img of pendingImages) {
-        const up = await apiUploadFile(`/api/sessions/${session.id}/uploads`, img.file);
-        images.push(up.id);
+        if (img.file && img.previewUrl) URL.revokeObjectURL(img.previewUrl);
       }
-      send({ type: "input", sessionId: session.id, text: message.trim(), files, images });
-      for (const img of pendingImages) if (img.previewUrl) URL.revokeObjectURL(img.previewUrl);
       setPendingImages([]);
+      setElements([]);
       setText("");
       mention.close();
       slash.close();
@@ -280,7 +317,7 @@ export function SessionComposer({
         busy,
         canInput,
         compact: isMobile,
-        hasAttachments: pendingImages.length > 0,
+        hasAttachments: pendingImages.length > 0 || elements.length > 0,
         listening: dictation.listening,
       })}
       disabled={!canInput}
@@ -375,6 +412,12 @@ export function SessionComposer({
         >
           {/* Lampiran gambar: di dalam kotak composer, di atas input —
               terbaca sebagai bagian dari pesan yang akan dikirim. */}
+          {elements.length > 0 && (
+            <DraftElementChips
+              elements={elements}
+              onRemove={(i) => setElements(elements.filter((_, j) => j !== i))}
+            />
+          )}
           {pendingImages.length > 0 && (
             <PendingAttachments
               items={pendingImages}

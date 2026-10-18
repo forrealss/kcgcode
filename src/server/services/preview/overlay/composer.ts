@@ -1,14 +1,20 @@
 /**
- * Entry pesan satu baris membulat (lampirkan | teks | kirim) + thumbnail
- * gambar terlampir dan catatan error di bawahnya. Pesan hanya bisa dikirim
- * saat Session berjalan.
+ * Entry pesan satu baris membulat (lampirkan | teks | kirim) + lampiran
+ * (thumbnail gambar, chip file & elemen terpilih) dan catatan error di
+ * bawahnya. Konteks elemen ditambahkan ke akhir pesan saat dikirim. Pesan
+ * hanya bisa dikirim saat Session berjalan.
+ *
+ * Isi composer = draf Session yang tersinkron dengan app (`draft-sync.ts`):
+ * tiap ketikan / perubahan lampiran dikirim, perubahan dari app diterapkan.
  */
 import { send } from "./api";
-import { DEFAULT_IMAGE_TEXT, MAX_IMAGES } from "./config";
-import { h, iconButton, show } from "./dom";
+import { DEFAULT_ELEMENT_TEXT, DEFAULT_IMAGE_TEXT, MAX_ATTACHMENTS } from "./config";
+import { h, iconButton, show, svg } from "./dom";
+import { registerText, syncDraft } from "./draft-sync";
+import { type ElementContext, pagesLabel } from "./element-context";
 import { ICON } from "./icons";
 import { canSend, notify, state } from "./state";
-import type { CapturedError } from "./types";
+import type { CapturedError, OverlayAttachment } from "./types";
 
 /** Tinggi maksimum textarea sebelum men-scroll (px). */
 const MAX_INPUT_HEIGHT = 120;
@@ -20,6 +26,8 @@ export interface Composer {
   focus: () => void;
   /** Tambahkan error console sebagai blok kode ke pesan. */
   addError: (err: CapturedError) => void;
+  /** Kolom pesan sedang fokus (dibawa melewati reload otomatis). */
+  focused: () => boolean;
   update: () => void;
 }
 
@@ -53,16 +61,39 @@ export function createComposer(onPhoto: (file: File) => void): Composer {
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, MAX_INPUT_HEIGHT)}px`;
     sendBtn.disabled =
-      !canSend() || state.sending || (textarea.value.trim() === "" && state.images.length === 0);
+      !canSend() || state.sending || (textarea.value.trim() === "" && !hasAttachments());
   }
-  textarea.addEventListener("input", grow);
+  textarea.addEventListener("input", () => {
+    grow();
+    syncDraft();
+  });
+  registerText(
+    () => textarea.value,
+    (text) => {
+      textarea.value = text;
+      grow();
+    },
+  );
+
+  const hasAttachments = () => state.attachments.length > 0 || state.elements.length > 0;
+
+  /** Teks pesan + blok konteks elemen terpilih. */
+  function message(): string {
+    const typed = textarea.value.trim();
+    const text =
+      typed ||
+      (state.elements.length > 0 ? DEFAULT_ELEMENT_TEXT : "") ||
+      (state.attachments.length > 0 ? DEFAULT_IMAGE_TEXT : "");
+    return [text, ...state.elements.map((e) => e.context)].filter(Boolean).join("\n\n");
+  }
 
   async function submit(): Promise<void> {
-    const text = textarea.value.trim() || (state.images.length > 0 ? DEFAULT_IMAGE_TEXT : "");
+    const text = message();
     if (!text || state.sending) return;
     if (await send(text)) {
       textarea.value = "";
       grow();
+      syncDraft();
     }
   }
   sendBtn.addEventListener("click", () => void submit());
@@ -88,18 +119,54 @@ export function createComposer(onPhoto: (file: File) => void): Composer {
     const current = textarea.value.trim();
     textarea.value = current ? `${current}\n\n${block}` : block;
     grow();
+    syncDraft();
     focus();
   }
 
-  function thumb(img: { id: string; url: string }): HTMLElement {
-    const remove = h("button", { type: "button", "aria-label": "Remove image" });
+  /** Gambar -> thumbnail; file lain (mis. dari app) -> chip nama file. */
+  function attachment(item: OverlayAttachment): HTMLElement {
+    const remove = h("button", { type: "button", "aria-label": `Remove ${item.name}` });
     remove.innerHTML = ICON.close;
     remove.addEventListener("click", () => {
-      URL.revokeObjectURL(img.url);
-      state.images = state.images.filter((i) => i !== img);
+      if (item.url) URL.revokeObjectURL(item.url);
+      state.attachments = state.attachments.filter((a) => a !== item);
       notify();
     });
-    return h("div", { class: "thumb" }, h("img", { src: img.url, alt: "" }), remove);
+    if (!item.mime.startsWith("image/")) {
+      return h(
+        "div",
+        { class: "chip", title: item.name },
+        svg(ICON.file),
+        h("span", {}, item.name),
+        remove,
+      );
+    }
+    const visual = item.url
+      ? h("img", { src: item.url, alt: item.name })
+      : h("span", { class: "spin", "aria-label": "Loading preview" });
+    return h("div", { class: `thumb${item.url ? "" : " loading"}` }, visual, remove);
+  }
+
+  function chip(item: ElementContext): HTMLElement {
+    const remove = h("button", { type: "button", "aria-label": "Remove element" });
+    remove.innerHTML = ICON.close;
+    remove.addEventListener("click", () => {
+      state.elements = state.elements.filter((e) => e !== item);
+      notify();
+    });
+    // Halaman ikut tampil agar elemen kembar dari halaman berbeda bisa dibedakan.
+    const where = pagesLabel(item.pages);
+    return h(
+      "div",
+      {
+        class: `chip${state.flashKey === item.key ? " flash" : ""}`,
+        title: item.pages.length > 1 ? `${item.pages.join("\n")}\n\n${item.context}` : item.context,
+      },
+      svg(ICON.code),
+      h("span", {}, item.label),
+      ...(where ? [h("small", {}, where)] : []),
+      remove,
+    );
   }
 
   function update(): void {
@@ -111,13 +178,15 @@ export function createComposer(onPhoto: (file: File) => void): Composer {
     textarea.placeholder = running
       ? "Tell the agent what to change…"
       : "Start the session from the chat to send";
-    show(thumbs, state.images.length > 0);
-    attachBtn.style.visibility = state.images.length >= MAX_IMAGES ? "hidden" : "";
-    thumbs.replaceChildren(...state.images.map(thumb));
+    show(thumbs, hasAttachments());
+    attachBtn.style.visibility = state.attachments.length >= MAX_ATTACHMENTS ? "hidden" : "";
+    thumbs.replaceChildren(...state.elements.map(chip), ...state.attachments.map(attachment));
     show(note, state.sendError !== null);
     note.textContent = state.sendError ?? "";
     grow();
   }
 
-  return { el, note, focus, addError, update };
+  const focused = () => textarea.matches(":focus");
+
+  return { el, note, focus, addError, focused, update };
 }
