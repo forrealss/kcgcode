@@ -6,6 +6,10 @@
  * React milik paket lain → "Cannot read properties of null (reading
  * 'useState')"), dan plugin Tailwind dari bunfig.toml hanya terbaca bila cwd
  * = root repo. Build dilakukan sekali di repo (prepack) dengan satu React.
+ *
+ * Seluruh file dibaca ke memori saat start: update paket (`bun add -g`,
+ * juga dari Settings -> About) mengganti `dist/web` di disk sebelum kcgcode
+ * di-restart — index.html lama harus tetap mendapat chunk lamanya.
  */
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -35,8 +39,9 @@ export function loadPrebuiltWeb(dir: string): PrebuiltWeb | null {
   for (const rel of new Bun.Glob("**/*").scanSync({ cwd: dir })) {
     if (rel === "index.html" || rel.endsWith(".map")) continue;
     const file = path.join(dir, rel);
-    const headers = { "cache-control": cacheControl(rel) };
-    assets[`/${rel.split(path.sep).join("/")}`] = () => new Response(Bun.file(file), { headers });
+    const bytes = readFileSync(file);
+    const headers = { "cache-control": cacheControl(rel), "content-type": Bun.file(file).type };
+    assets[`/${rel.split(path.sep).join("/")}`] = () => new Response(bytes, { headers });
   }
 
   const spa = new Response(readFileSync(indexPath), {

@@ -9,6 +9,7 @@ import type { SessionStore } from "../../db";
 import type { DevServerManager } from "../services/preview/dev-servers";
 import type { PreviewServer } from "../services/preview/preview-server";
 import type { Screenshotter } from "../services/preview/screenshot";
+import type { SessionShutdownOptions } from "../services/sessions/types";
 import type { UpdateChecker } from "../services/update-check";
 import type { Access } from "./access";
 import type { SessionCore } from "./session-core";
@@ -26,10 +27,12 @@ export interface ShutdownDeps {
   screenshotter: Screenshotter;
 }
 
-export function createShutdown(deps: ShutdownDeps): () => Promise<void> {
+export function createShutdown(
+  deps: ShutdownDeps,
+): (opts?: SessionShutdownOptions) => Promise<void> {
   const { sweepTimer, core, access, updates, server, store, devServers, preview, screenshotter } =
     deps;
-  return async function close(): Promise<void> {
+  return async function close(opts?: SessionShutdownOptions): Promise<void> {
     clearInterval(sweepTimer);
     core.notifications.close();
     updates.close();
@@ -40,7 +43,7 @@ export function createShutdown(deps: ShutdownDeps): () => Promise<void> {
     // Hentikan instalasi skill yang berjalan agar proses CLI tidak yatim.
     await core.skillInstalls.cancelAll();
     // shutdown() menyimpan status running (budget 5s) lalu menghentikan server headless.
-    await core.sessionManager.shutdown();
+    await core.sessionManager.shutdown(opts);
     // Bun (Windows): setelah server menutup sebuah WebSocket (mis. 4401 saat
     // logout), promise `stop()` tak pernah resolve walau listener sudah
     // tertutup — batasi waktu tunggu agar shutdown tidak menggantung.

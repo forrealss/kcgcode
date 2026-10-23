@@ -12,7 +12,9 @@ import type { ApiRouteContext } from "../routes/types";
 import type { AuthService } from "../services/auth";
 import type { NotificationService } from "../services/notifications";
 import type { ProjectManager } from "../services/project-manager";
+import type { SelfUpdater } from "../services/self-update";
 import type { SessionManager } from "../services/session-manager";
+import type { SessionShutdownOptions } from "../services/sessions/types";
 import type { SkillsRegistry } from "../services/skills-registry";
 import type { TunnelManager } from "../services/tunnel";
 import type { LhrManager } from "../services/tunnel-lhr";
@@ -54,6 +56,13 @@ export interface KcgServerOptions {
   pushFetch?: typeof fetch;
   /** Pengecek versi baru di npm (default: aktif hanya di mode `cli`). */
   updates?: UpdateChecker;
+  /**
+   * Restart ke binary baru setelah update dipasang dari app — hanya diisi
+   * entry CLI mode background. Tanpa ini pengguna me-restart kcgcode sendiri.
+   */
+  selfRestart?: () => void;
+  /** Injeksi updater (test). Default: `createSelfUpdater`. */
+  selfUpdate?: SelfUpdater;
   /** Shell SPA untuk rute halaman terdaftar (`spaPaths`; default: 404). */
   spa?: Response | HTMLBundle;
   /**
@@ -93,5 +102,5 @@ export interface KcgServer {
   /** Pola rute `/api/*` yang terdaftar (untuk test cakupan penjaga). */
   apiRoutePatterns: string[];
   /** Shutdown: simpan status running (budget 5s) -> stop server -> tutup store. */
-  close(): Promise<void>;
+  close(opts?: SessionShutdownOptions): Promise<void>;
 }

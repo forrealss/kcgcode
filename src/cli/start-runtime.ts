@@ -18,6 +18,7 @@ import {
   clearDaemonState,
   daemonLogPath,
   printStarted,
+  spawnDaemonRestart,
   startDetached,
   writeDaemonState,
 } from "./daemon";
@@ -56,6 +57,9 @@ export async function runServer(opts: RunServerOptions): Promise<void> {
       port: p,
       hostname,
       uploadsRoot: resolveEffectiveUploadsDir(),
+      // Update dari app: daemon bisa me-restart dirinya ke binary baru;
+      // dashboard terminal tidak (pengguna me-restart kcgcode sendiri).
+      selfRestart: daemonChild ? restartAfterUpdate : undefined,
     });
   const localUrl = (p: number) =>
     `http://${hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname}:${p}`;
@@ -77,7 +81,8 @@ export async function runServer(opts: RunServerOptions): Promise<void> {
   let dash: { stop(): void } | null = null;
   let stateTimer: ReturnType<typeof setInterval> | null = null;
 
-  async function shutdown(reason: string): Promise<void> {
+  /** `stopSessions`: restart disengaja (update) — Session `stopped`, bukan `crashed`. */
+  async function shutdown(reason: string, opts: { stopSessions?: boolean } = {}): Promise<void> {
     if (shuttingDown) return;
     shuttingDown = true;
     dash?.stop();
@@ -89,13 +94,24 @@ export async function runServer(opts: RunServerOptions): Promise<void> {
     say(`\n${c.dim(`(${reason})`)} ${c.yellow("Saving session state and stopping…")}`);
     const update = app.updates.available();
     try {
-      await app.close();
+      await app.close({ stopRunning: opts.stopSessions });
     } catch (err) {
       console.error(c.red("Shutdown error:"), err);
     }
     say(c.greenBright(`${symbols.check} KCG Code stopped.`));
     if (update && !daemonChild) say(updateNotice(update));
     process.exit(0);
+  }
+
+  /** Daemon: jalankan ulang dari paket yang baru dipasang, lalu matikan proses ini. */
+  function restartAfterUpdate(): void {
+    try {
+      spawnDaemonRestart();
+    } catch (err) {
+      console.error(c.red("Restart after update failed:"), err);
+      return;
+    }
+    void shutdown("update installed", { stopSessions: true });
   }
 
   /** Simpan port ke config lalu restart server di port tersebut. Null = sukses. */

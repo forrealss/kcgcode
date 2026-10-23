@@ -36,6 +36,7 @@ import type { KcgServer, KcgServerOptions } from "./bootstrap/types";
 import { createWsConnections, startAuthSweep, type WsData } from "./bootstrap/ws-connections";
 import { resolveHostname } from "./host";
 import { AGENT_MCP_PATH } from "./services/preview/agent-mcp";
+import { createSelfUpdater } from "./services/self-update";
 import { createUpdateChecker } from "./services/update-check";
 
 export type { KcgServer, KcgServerOptions } from "./bootstrap/types";
@@ -104,6 +105,17 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   // Cek versi baru di npm di background — tidak menahan server mulai.
   const updates = opts.updates ?? createUpdateChecker();
   void updates.start();
+  const selfUpdate =
+    opts.selfUpdate ??
+    createSelfUpdater({
+      updates,
+      restart: opts.selfRestart,
+      runningSessions: () =>
+        core.sessionManager
+          .listSessions()
+          .filter((s) => s.status === "running")
+          .map((s) => ({ id: s.id, title: s.title })),
+    });
 
   const apiRoutes = createApiRoutes({
     config,
@@ -112,6 +124,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
     core,
     access,
     updates,
+    selfUpdate,
     devServers,
     preview,
     screenshotter,

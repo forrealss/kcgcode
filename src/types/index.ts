@@ -15,5 +15,6 @@ export * from "./notification";
 export * from "./preview";
 export * from "./project";
 export * from "./prompt";
+export * from "./self-update";
 export * from "./session";
 export * from "./turns";

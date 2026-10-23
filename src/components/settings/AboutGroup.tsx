@@ -2,13 +2,13 @@
  * Settings -> About: logo + versi KCG Code, lalu kredit tim.
  *
  * Versi dari `GET /api/meta` — `"dev"` saat dijalankan lewat `bun dev`.
- * Bila npm punya versi lebih baru, kartu update menampilkan perintah
- * install-nya (dijalankan di komputer yang menjalankan kcgcode).
+ * Bila npm punya versi lebih baru, kartu update (`SelfUpdatePanel`)
+ * memasangnya dari app — atau menampilkan perintah install bila binary ini
+ * tidak bisa memperbarui dirinya sendiri.
  * Tiap anggota tim adalah baris tautan ke profil GitHub-nya (tab baru).
  */
-import { CircleArrowUpIcon } from "lucide-react";
 import type * as React from "react";
-import { CopyIconButton } from "@/components/common/CopyIconButton";
+import { ManualUpdateCard, SelfUpdatePanel } from "@/components/settings/SelfUpdatePanel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { cn } from "@/lib/utils";
@@ -37,7 +37,15 @@ export function formatVersion(version: string): string {
 
 export function AboutGroup() {
   const { info, failed } = useAppInfo();
-  return <AboutView version={info?.version ?? null} failed={failed} update={info?.update} />;
+  const update = info?.update;
+  return (
+    <AboutView
+      version={info?.version ?? null}
+      failed={failed}
+      update={update}
+      updateSlot={update ? <SelfUpdatePanel update={update} /> : null}
+    />
+  );
 }
 
 /** Tampilan murni (tanpa fetch) — dipakai komponen di atas & diuji SSR. */
@@ -45,10 +53,13 @@ export function AboutView({
   version,
   failed,
   update,
+  updateSlot,
 }: {
   version: string | null;
   failed: boolean;
   update?: UpdateInfo | null;
+  /** Kartu update interaktif; tanpa ini kartu perintah manual. */
+  updateSlot?: React.ReactNode;
 }) {
   return (
     <>
@@ -103,7 +114,7 @@ export function AboutView({
             )}
           </div>
 
-          {update && <UpdateCard update={update} />}
+          {update && (updateSlot ?? <ManualUpdateCard update={update} />)}
         </div>
       </section>
 
@@ -148,34 +159,6 @@ export function AboutView({
         Built with Bun &amp; OpenCode.
       </p>
     </>
-  );
-}
-
-/** Versi baru tersedia: perintah install + tombol salin. */
-function UpdateCard({ update }: { update: UpdateInfo }) {
-  return (
-    <section
-      aria-labelledby="about-update"
-      className="mt-6 w-full max-w-sm rounded-2xl border bg-background p-4 text-left"
-    >
-      <h3 id="about-update" className="flex items-center gap-2 text-[14px] font-medium">
-        <CircleArrowUpIcon className="size-4 shrink-0 text-[#6D5CFB]" aria-hidden />
-        Update available: v{update.latest}
-      </h3>
-      <p className="mt-1 text-[13px] leading-snug text-muted-foreground">
-        Run this on the computer running KCG Code, then restart{" "}
-        <code className="font-mono">kcgcode</code>.
-      </p>
-      <div className="mt-3 flex items-center gap-1 rounded-lg bg-muted/70 pl-3">
-        <code className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{update.command}</code>
-        <CopyIconButton
-          value={update.command}
-          label="Copy command"
-          className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-          iconClassName="size-4"
-        />
-      </div>
-    </section>
   );
 }
 

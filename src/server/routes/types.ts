@@ -16,6 +16,7 @@ import type { PreviewServer } from "../services/preview/preview-server";
 import type { Screenshotter } from "../services/preview/screenshot";
 import type { PreviewSnapshots } from "../services/preview/snapshots";
 import type { ProjectManager } from "../services/project-manager";
+import type { SelfUpdater } from "../services/self-update";
 import type { SessionManager } from "../services/session-manager";
 import type { SkillInstallJobs } from "../services/skill-install-jobs";
 import type { SkillsRegistry } from "../services/skills-registry";
@@ -46,6 +47,8 @@ export interface ApiRouteContext {
   notifications: NotificationService;
   /** Cek versi baru di npm (Settings -> About). */
   updates?: UpdateChecker;
+  /** Pasang versi baru dari app (Settings -> About). */
+  selfUpdate: SelfUpdater;
   /** File config aktif (ditulis saat workspace diganti). */
   configPath: string;
   protectedPaths: ProtectedPaths;

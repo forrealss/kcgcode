@@ -87,3 +87,31 @@ test("shutdown: simpan status running lalu stop seluruh server", async () => {
     h.close();
   }
 });
+
+test("shutdown biasa: session tetap running -> startup berikutnya crashed", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    await h.sm.shutdown();
+    expect(statusOf(h.store, sid)).toBe("running");
+    h.sm.reconcileOnStartup();
+    expect(statusOf(h.store, sid)).toBe("crashed");
+  } finally {
+    h.close();
+  }
+});
+
+test("shutdown stopRunning (restart karena update): session stopped, bukan crashed", async () => {
+  const h = freshHarness();
+  try {
+    const sid = await createSession(h);
+    await h.sm.shutdown({ stopRunning: true });
+    expect(statusOf(h.store, sid)).toBe("stopped");
+    expect(h.fake.released).toContain("p1");
+    // Startup berikutnya tidak mengubahnya jadi crashed.
+    h.sm.reconcileOnStartup();
+    expect(statusOf(h.store, sid)).toBe("stopped");
+  } finally {
+    h.close();
+  }
+});

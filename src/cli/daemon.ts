@@ -180,6 +180,52 @@ export async function startDetached(args: CliArgs): Promise<DaemonState> {
   throw new Error(`server not ready after ${READY_TIMEOUT_MS / 1000}s — check ${logFile}`);
 }
 
+/**
+ * Skrip helper restart (dijalankan `bun -e`, lepas dari daemon): tunggu
+ * daemon lama keluar, lalu `kcgcode start -d` dari file paket di disk —
+ * yaitu versi yang baru dipasang. Sengaja mandiri (tanpa import) agar tidak
+ * bergantung pada kode versi mana pun.
+ */
+const RESTART_HELPER = `
+const pid = Number(process.env.KCG_RESTART_PID);
+const argv = JSON.parse(process.env.KCG_RESTART_ARGV ?? "[]");
+const alive = () => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === "EPERM"; } };
+const deadline = Date.now() + ${STOP_TIMEOUT_MS * 3};
+while (alive() && Date.now() < deadline) await Bun.sleep(${POLL_MS});
+const env = { ...process.env };
+delete env.KCG_RESTART_PID;
+delete env.KCG_RESTART_ARGV;
+console.log("=== restarting kcgcode after update ===");
+const child = Bun.spawn([process.execPath, ...argv], { env, stdio: ["ignore", "inherit", "inherit"] });
+process.exit(await child.exited);
+`;
+
+/**
+ * Restart daemon ini ke binary yang baru dipasang: spawn helper terlepas
+ * yang menunggu proses ini keluar lalu menjalankan `kcgcode start -d`
+ * dengan argumen yang sama. Pemanggil kemudian mematikan proses ini.
+ */
+export function spawnDaemonRestart(): void {
+  const logFile = daemonLogPath();
+  const fd = openSync(logFile, "a");
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    KCG_RESTART_PID: String(process.pid),
+    // argv daemon: [bun, kcgcode.ts, "start", ...opsi] (tanpa -d).
+    KCG_RESTART_ARGV: JSON.stringify([process.argv[1], ...process.argv.slice(2), "--detach"]),
+  };
+  delete env[DAEMON_CHILD_ENV];
+  const child = spawn(process.execPath, ["-e", RESTART_HELPER], {
+    detached: true,
+    stdio: ["ignore", fd, fd],
+    env,
+    cwd: process.cwd(),
+    windowsHide: true,
+  });
+  child.unref();
+  closeSync(fd);
+}
+
 /** `installed`: versi paket di disk (untuk mendeteksi update yang menunggu restart). */
 function statePanel(state: DaemonState, title: string, installed?: string): string {
   const update = state.snapshot?.update;

@@ -21,12 +21,14 @@ import { sessionsRoutes } from "../routes/sessions.routes";
 import { skillsRoutes } from "../routes/skills.routes";
 import { tunnelRoutes } from "../routes/tunnel.routes";
 import type { ApiRouteContext, ProtectedPaths } from "../routes/types";
+import { updateRoutes } from "../routes/update.routes";
 import { uploadsRoutes } from "../routes/uploads.routes";
 import { workspaceRoutes } from "../routes/workspace.routes";
 import type { DevServerManager } from "../services/preview/dev-servers";
 import type { PreviewServer } from "../services/preview/preview-server";
 import type { Screenshotter } from "../services/preview/screenshot";
 import type { PreviewSnapshots } from "../services/preview/snapshots";
+import type { SelfUpdater } from "../services/self-update";
 import type { UpdateChecker } from "../services/update-check";
 import type { Access } from "./access";
 import type { SessionCore } from "./session-core";
@@ -38,6 +40,7 @@ export interface ApiRoutesDeps {
   core: SessionCore;
   access: Access;
   updates: UpdateChecker;
+  selfUpdate: SelfUpdater;
   devServers: DevServerManager;
   preview: PreviewServer;
   screenshotter: Screenshotter;
@@ -75,6 +78,7 @@ export function createApiRoutes(deps: ApiRoutesDeps) {
     passkeys,
     notifications: core.notifications,
     updates: deps.updates,
+    selfUpdate: deps.selfUpdate,
     configPath: config.configPath,
     protectedPaths: protectedPaths(config.configPath, uploadsRoot),
     projectManager: core.projectManager,
@@ -98,6 +102,7 @@ export function createApiRoutes(deps: ApiRoutesDeps) {
     ...authRoutes(ctx),
     ...passkeyRoutes(ctx),
     ...metaRoutes(ctx),
+    ...updateRoutes(ctx),
     ...projectsRoutes(ctx),
     ...sessionsRoutes(ctx),
     ...uploadsRoutes(ctx),

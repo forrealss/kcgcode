@@ -31,5 +31,22 @@ describe("loadPrebuiltWeb", () => {
     expect(await chunk.text()).toBe("console.log(1)");
     expect(chunk.headers.get("cache-control")).toContain("immutable");
     expect(web.assets["/icons/a.png"]?.().headers.get("cache-control")).toBe("no-cache");
+    expect(chunk.headers.get("content-type")).toContain("javascript");
+  });
+
+  test("chunk dibaca saat start: tetap tersaji setelah paket di disk diganti", async () => {
+    dir = mkdtempSync(path.join(tmpdir(), "kcg-web-"));
+    writeFileSync(path.join(dir, "index.html"), "<!doctype html>");
+    writeFileSync(path.join(dir, "chunk-old111.js"), "old");
+    const web = loadPrebuiltWeb(dir);
+    // Update paket: chunk lama dihapus, chunk baru ditulis.
+    rmSync(path.join(dir, "chunk-old111.js"));
+    writeFileSync(path.join(dir, "chunk-new222.js"), "new");
+
+    const serve = web?.assets["/chunk-old111.js"];
+    if (!serve) throw new Error("chunk route missing");
+    expect(await serve().text()).toBe("old");
+    // Response bisa dibuat berulang (body tidak terpakai habis).
+    expect(await serve().text()).toBe("old");
   });
 });

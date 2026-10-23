@@ -183,6 +183,29 @@ export const ERRORS = {
     message: "The server restarted before the installation finished.",
   },
   INSTALL_JOB_NOT_RUNNING: { status: 409, message: "That installation has already finished." },
+
+  // ---- Update KCG Code dari app (Settings -> About) ----
+  UPDATE_UNSUPPORTED: {
+    status: 409,
+    message:
+      "This copy of KCG Code can't update itself. Run the update command on the computer running it.",
+  },
+  UPDATE_IN_PROGRESS: { status: 409, message: "An update is already being installed." },
+  UPDATE_NOT_AVAILABLE: {
+    status: 409,
+    message: "That version isn't available anymore. Reload the page and try again.",
+  },
+  // Status akhir job (bukan balasan HTTP).
+  UPDATE_INSTALL_FAILED: {
+    status: 500,
+    message: "Couldn't install the update. See the output for details.",
+  },
+  UPDATE_TIMEOUT: { status: 500, message: "The update took too long and was stopped." },
+  UPDATE_VERIFY_FAILED: {
+    status: 500,
+    message:
+      "The update was installed in a different place, so this copy didn't change. Run the update command manually.",
+  },
   INSTALL_JOB_NOT_FOUND: { status: 404, message: "That installation is no longer available." },
 
   // ---- Kunci aplikasi & profil ----

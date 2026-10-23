@@ -1,8 +1,10 @@
 /**
  * Dialog "versi baru tersedia" — muncul sekali per versi saat app dibuka,
- * karena tidak semua orang membuka Settings -> About. Setelah ditutup
- * ("Later", ×, Esc, atau "Copy command"), versi itu tidak memunculkan dialog
- * lagi di perangkat ini; banner sidebar tetap jadi pengingat.
+ * karena tidak semua orang membuka Settings -> About. "Update now" membuka
+ * About dan memulai update di sana (progres, peringatan Session berjalan,
+ * restart). Setelah ditutup ("Later", ×, Esc, atau "Update now"), versi itu
+ * tidak memunculkan dialog lagi di perangkat ini; banner sidebar tetap jadi
+ * pengingat.
  *
  * - Ditunda sebentar (`OPEN_DELAY_MS`) agar tidak menyerbu tepat saat app
  *   muncul (mis. setelah lock screen / welcome screen pergi).
@@ -11,9 +13,8 @@
  * - Berbagi giliran dengan dialog install app (`claimAnnouncement`): bila
  *   dialog lain sudah tampil, kabar update menunggu pemuatan berikutnya.
  */
-import { CircleArrowUpIcon, CopyIcon } from "lucide-react";
+import { CircleArrowUpIcon } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,7 +25,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAppInfo } from "@/hooks/useAppInfo";
+import { navigate } from "@/hooks/useRouter";
 import { claimAnnouncement } from "@/lib/announcements";
+import { settingsPath } from "@/lib/routes";
+import { requestUpdateStart } from "@/lib/self-update";
 import { dismissUpdate, readDismissedUpdate, shouldOfferUpdateDialog } from "@/lib/update-prefs";
 
 const OPEN_DELAY_MS = 1200;
@@ -52,16 +56,10 @@ export function UpdateDialog({ suppressed }: { suppressed: boolean }) {
     dismissUpdate("dialog", update.latest);
   };
 
-  const copy = async () => {
-    try {
-      // Tanpa konteks aman (http://<ip-lan>) `clipboard` tidak ada -> dilempar.
-      await navigator.clipboard.writeText(update.command);
-    } catch {
-      toast.error("Couldn't copy. Select the command and copy it manually.");
-      return;
-    }
-    toast.success("Command copied");
+  const updateNow = () => {
     close();
+    requestUpdateStart();
+    navigate(settingsPath("about"));
   };
 
   return (
@@ -76,20 +74,16 @@ export function UpdateDialog({ suppressed }: { suppressed: boolean }) {
           </span>
           <DialogTitle>KCG Code v{update.latest} is available</DialogTitle>
           <DialogDescription>
-            You're on v{update.current}. Run this on the computer running KCG Code, then restart{" "}
-            <code className="font-mono">kcgcode</code>.
+            You're on v{update.current}. Update now and follow the progress in Settings → About.
           </DialogDescription>
         </DialogHeader>
-        <code className="block truncate rounded-lg bg-muted/70 px-3 py-2.5 font-mono text-[12.5px] select-all">
-          {update.command}
-        </code>
         <DialogFooter>
           <Button type="button" variant="outline" onClick={close}>
             Later
           </Button>
-          <Button type="button" onClick={() => void copy()}>
-            <CopyIcon data-icon="inline-start" />
-            Copy command
+          <Button type="button" onClick={updateNow}>
+            <CircleArrowUpIcon data-icon="inline-start" />
+            Update now
           </Button>
         </DialogFooter>
       </DialogContent>

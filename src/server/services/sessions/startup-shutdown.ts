@@ -3,6 +3,7 @@
  * agent yang hilang tak terduga (Session Project-nya ditandai `crashed`).
  */
 import type { SessionRuntime } from "./runtime";
+import type { SessionShutdownOptions } from "./types";
 
 export function createStartupShutdown(rt: SessionRuntime) {
   const { store, now, clients, turns, agentSessions, skills } = rt;
@@ -30,11 +31,25 @@ export function createStartupShutdown(rt: SessionRuntime) {
   /**
    * Requirement 2.3: simpan status terakhir Session `running` dalam budget
    * waktu, lalu lepas seluruh backend agent.
+   *
+   * `stopRunning`: restart disengaja (update) — Session `running` dihentikan
+   * seperti tombol Stop (turn berjalan disimpan, status `stopped`), jadi
+   * tidak ditandai `crashed` saat startup berikutnya.
    */
-  async function shutdown(): Promise<void> {
+  async function shutdown(opts: SessionShutdownOptions = {}): Promise<void> {
     // Refresh skill tertunda tidak relevan lagi: client dilepas, skill
     // terbaca saat client dibuat berikutnya.
     skills.clear();
+    if (opts.stopRunning) {
+      const stoppedAt = now();
+      for (const s of store.listSessions()) {
+        if (s.status !== "running") continue;
+        rt.interruptRemote(s);
+        turns.finish(s.id);
+        agentSessions.unmap(s.id);
+        rt.updateStatus(s.id, "stopped", stoppedAt);
+      }
+    }
     const running = store.listSessions().filter((s) => s.status === "running");
     const results = running.map((s) => store.insertStatusHistory(s.id, "running", now()));
     await raceWithTimeout(Promise.resolve(results), rt.shutdownBudgetMs);

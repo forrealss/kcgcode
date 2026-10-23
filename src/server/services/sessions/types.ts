@@ -301,5 +301,14 @@ export interface SessionManager {
     response: PromptResponse,
   ): Promise<SimpleResult>;
   reconcileOnStartup(): void;
-  shutdown(): Promise<void>;
+  shutdown(opts?: SessionShutdownOptions): Promise<void>;
+}
+
+export interface SessionShutdownOptions {
+  /**
+   * Hentikan Session `running` (status `stopped`, turn berjalan disimpan)
+   * alih-alih membiarkannya ditandai `crashed` saat startup berikutnya —
+   * untuk restart yang disengaja, mis. setelah update dari app.
+   */
+  stopRunning?: boolean;
 }
