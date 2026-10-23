@@ -30,10 +30,7 @@ import { OpencodeUsage } from "./usage";
 import { directoryKey } from "./util";
 import type { VersionProbe } from "./version";
 
-export { defaultConnector, type OpencodeApi, type OpencodeConnector } from "./api";
-export { COMPACT_COMMAND } from "./catalog";
-export { INSTRUCTIONS_KEY } from "./session";
-export { stepContextTokens } from "./usage";
+export type { OpencodeApi } from "./api";
 export { directoryKey, parseSlashCommand } from "./util";
 
 export interface OpencodeBackendOptions {

@@ -5,7 +5,8 @@
  */
 import type { BunRequest } from "bun";
 import type { AgentType } from "../../types";
-import { errorStatus, json, parseModelBody, readJson, serverError } from "./helpers";
+import type { SimpleResult } from "../result";
+import { errorResponse, json, parseModelBody, readObject, respond } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 /** String non-kosong (ter-trim), selain itu null — body `permissionMode` / `effort`. */
@@ -13,44 +14,39 @@ function optionalString(raw: unknown): string | null {
   return typeof raw === "string" && raw.trim() !== "" ? raw.trim() : null;
 }
 
+/** Balasan error SimpleResult yang gagal; `null` bila sukses. */
+function failed(res: SimpleResult): Response | null {
+  return res.ok ? null : errorResponse(res.error ?? "ERROR");
+}
+
 export function sessionsRoutes(ctx: ApiRouteContext) {
   const { sessionManager, attachments, notifyDataChanged } = ctx;
+
+  /** Balasan `{ session, ok: true }` dengan Session terbaru. */
+  const currentSession = (id: string) => {
+    const cur = sessionManager.getSession(id);
+    return json({ session: cur.ok ? cur.data : undefined, ok: true });
+  };
+
   return {
     // ---- Session (Requirement 1, 4) ----
     "/api/sessions": {
-      GET: () => {
-        try {
-          return json({ sessions: sessionManager.listSessions() });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: () => json({ sessions: sessionManager.listSessions() }),
       POST: async (req: Request) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { agentType, projectId, model, effort, agent, permissionMode } = body.data as {
-            agentType?: unknown;
-            projectId?: unknown;
-            model?: unknown;
-            effort?: unknown;
-            agent?: unknown;
-            permissionMode?: unknown;
-          };
-          const res = await sessionManager.createSession({
-            agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
-            projectId: typeof projectId === "string" ? projectId : "",
-            model: parseModelBody(model),
-            effort: optionalString(effort),
-            agent: typeof agent === "string" && agent.trim() !== "" ? agent.trim() : null,
-            permissionMode: optionalString(permissionMode),
-          });
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          notifyDataChanged();
-          return json({ session: res.session }, 201);
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { agentType, projectId, model, effort, agent, permissionMode } = b;
+        const res = await sessionManager.createSession({
+          agentType: (typeof agentType === "string" ? agentType : "") as AgentType,
+          projectId: typeof projectId === "string" ? projectId : "",
+          model: parseModelBody(model),
+          effort: optionalString(effort),
+          agent: optionalString(agent),
+          permissionMode: optionalString(permissionMode),
+        });
+        if (!res.ok) return errorResponse(res.error);
+        notifyDataChanged();
+        return json({ session: res.session }, 201);
       },
     },
 
@@ -62,34 +58,18 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
        * menolak hapus -> 5xx, data lokal utuh.
        */
       DELETE: async (req: BunRequest<"/api/sessions/:id">) => {
-        try {
-          const res = await sessionManager.deleteSession(req.params.id);
-          if (!res.ok) {
-            return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-          }
-          notifyDataChanged();
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
+        const res = await sessionManager.deleteSession(req.params.id);
+        if (!res.ok) return errorResponse(res.error ?? "ERROR");
+        notifyDataChanged();
+        return json({ ok: true });
       },
       /**
        * Resume Session yang stopped/crashed (tombol "Start" di UI).
        * Memakai ocSessionId lama bila masih dikenal server headless;
        * bila tidak, sesi remote baru dibuat & disimpan ke Session.
        */
-      POST: async (req: BunRequest<"/api/sessions/:id">) => {
-        try {
-          const res = await sessionManager.resumeSession(req.params.id);
-          if (!res.ok) {
-            return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-          }
-          const cur = sessionManager.getSession(req.params.id);
-          return json({ session: cur.ok ? cur.data : undefined, ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      POST: async (req: BunRequest<"/api/sessions/:id">) =>
+        failed(await sessionManager.resumeSession(req.params.id)) ?? currentSession(req.params.id),
       /**
        * Ganti model, thinking effort, dan/atau agent (mode) pilihan Session —
        * body `{ model: {providerID, modelID} | null, effort: string | null,
@@ -97,88 +77,47 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
        * Berlaku pada prompt berikutnya tanpa perlu restart Session.
        */
       PUT: async (req: BunRequest<"/api/sessions/:id">) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const {
-            model: rawModel,
-            effort: rawEffort,
-            agent: rawAgent,
-            permissionMode: rawMode,
-          } = body.data as {
-            model?: unknown;
-            effort?: unknown;
-            agent?: unknown;
-            permissionMode?: unknown;
-          };
-          if (rawModel !== undefined) {
-            const model = rawModel === null ? null : parseModelBody(rawModel);
-            const res = sessionManager.setSessionModel(req.params.id, model);
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-          }
-          if (rawEffort !== undefined) {
-            const res = sessionManager.setSessionEffort(req.params.id, optionalString(rawEffort));
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-          }
-          if (rawAgent !== undefined) {
-            const agent =
-              typeof rawAgent === "string" && rawAgent.trim() !== "" ? rawAgent.trim() : null;
-            const res = sessionManager.setSessionAgent(req.params.id, agent);
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-          }
-          if (rawMode !== undefined) {
-            // Berlaku segera bila agent sedang berjalan (juga di tengah turn).
-            const res = await sessionManager.setSessionPermissionMode(
-              req.params.id,
-              optionalString(rawMode),
-            );
-            if (!res.ok) {
-              return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-            }
-          }
-          const cur = sessionManager.getSession(req.params.id);
-          return json({ session: cur.ok ? cur.data : undefined, ok: true });
-        } catch (e) {
-          return serverError(e);
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const id = req.params.id;
+        if (b.model !== undefined) {
+          const model = b.model === null ? null : parseModelBody(b.model);
+          const err = failed(sessionManager.setSessionModel(id, model));
+          if (err) return err;
         }
+        if (b.effort !== undefined) {
+          const err = failed(sessionManager.setSessionEffort(id, optionalString(b.effort)));
+          if (err) return err;
+        }
+        if (b.agent !== undefined) {
+          const err = failed(sessionManager.setSessionAgent(id, optionalString(b.agent)));
+          if (err) return err;
+        }
+        if (b.permissionMode !== undefined) {
+          // Berlaku segera bila agent sedang berjalan (juga di tengah turn).
+          const mode = optionalString(b.permissionMode);
+          const err = failed(await sessionManager.setSessionPermissionMode(id, mode));
+          if (err) return err;
+        }
+        return currentSession(id);
       },
     },
 
     // ---- Cari file Project (autocomplete referensi @file di composer) ----
     "/api/sessions/:id/files": {
       GET: async (req: BunRequest<"/api/sessions/:id/files">) => {
-        try {
-          const url = new URL(req.url);
-          const query = (url.searchParams.get("q") ?? "").slice(0, 200);
-          const cur = sessionManager.getSession(req.params.id);
-          if (!cur.ok)
-            return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
-          const res = await sessionManager.findFiles(cur.data.projectId, query, cur.data.agentType);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ files: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const query = (new URL(req.url).searchParams.get("q") ?? "").slice(0, 200);
+        const cur = sessionManager.getSession(req.params.id);
+        if (!cur.ok) return errorResponse("SESSION_NOT_FOUND");
+        const res = await sessionManager.findFiles(cur.data.projectId, query, cur.data.agentType);
+        return respond(res, (files) => ({ files }));
       },
     },
 
     // ---- Konteks kerja Session (panel kanan: Environment / Task list) ----
     "/api/sessions/:id/context": {
-      GET: async (req: BunRequest<"/api/sessions/:id/context">) => {
-        try {
-          const res = await sessionManager.sessionContext(req.params.id);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ context: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/sessions/:id/context">) =>
+        respond(await sessionManager.sessionContext(req.params.id), (context) => ({ context })),
     },
 
     // ---- Lampiran gambar upload dari perangkat ----
@@ -188,42 +127,26 @@ export function sessionsRoutes(ctx: ApiRouteContext) {
        * `file` (nama+mime+bytes). Ukuran & format divalidasi server.
        */
       POST: async (req: BunRequest<"/api/sessions/:id/uploads">) => {
+        const cur = sessionManager.getSession(req.params.id);
+        if (!cur.ok) return errorResponse("SESSION_NOT_FOUND");
+        let form: FormData;
         try {
-          const cur = sessionManager.getSession(req.params.id);
-          if (!cur.ok) return json({ error: "SESSION_NOT_FOUND" }, 404);
-          let form: FormData;
-          try {
-            form = await req.formData();
-          } catch {
-            return json({ error: "INVALID_UPLOAD" }, 400);
-          }
-          const file = form.get("file");
-          if (!(file instanceof File)) {
-            return json({ error: "INVALID_UPLOAD" }, 400);
-          }
-          const bytes = new Uint8Array(await file.arrayBuffer());
-          const res = attachments.save(req.params.id, file.name, file.type, bytes);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ upload: res.data }, 201);
-        } catch (e) {
-          return serverError(e);
+          form = await req.formData();
+        } catch {
+          return errorResponse("INVALID_UPLOAD");
         }
+        const file = form.get("file");
+        if (!(file instanceof File)) return errorResponse("INVALID_UPLOAD");
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const res = attachments.save(req.params.id, file.name, file.type, bytes);
+        return respond(res, (upload) => ({ upload }), 201);
       },
     },
 
     // ---- Stop Session (abort turn + status stopped, data tetap ada) ----
     "/api/sessions/:id/stop": {
-      POST: (req: BunRequest<"/api/sessions/:id/stop">) => {
-        try {
-          const res = sessionManager.stopSession(req.params.id);
-          if (!res.ok) {
-            return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-          }
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      POST: (req: BunRequest<"/api/sessions/:id/stop">) =>
+        respond(sessionManager.stopSession(req.params.id), () => ({ ok: true })),
     },
   };
 }

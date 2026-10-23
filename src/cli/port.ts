@@ -5,8 +5,8 @@
  * Port eksplisit (flag/env) yang terpakai → error; port dari config/default
  * yang terpakai → otomatis pindah ke port kosong berikutnya.
  */
+import { DEFAULT_PORT, parsePort } from "../config";
 
-export const DEFAULT_PORT = 3000;
 /** Jumlah port berurutan yang dicoba saat fallback. */
 const SCAN_ATTEMPTS = 50;
 
@@ -57,10 +57,8 @@ export function requestedPort(opts: { flag?: number; env?: string; config?: numb
   source: PortSource;
 } {
   if (opts.flag !== undefined) return { port: opts.flag, source: "flag" };
-  if (opts.env !== undefined && opts.env.trim() !== "") {
-    const n = Number(opts.env);
-    if (Number.isInteger(n) && n > 0 && n <= 65535) return { port: n, source: "env" };
-  }
+  const envPort = opts.env === undefined ? null : parsePort(opts.env);
+  if (envPort !== null) return { port: envPort, source: "env" };
   if (opts.config !== undefined) return { port: opts.config, source: "config" };
   return { port: DEFAULT_PORT, source: "default" };
 }

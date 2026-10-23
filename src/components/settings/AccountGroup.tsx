@@ -4,40 +4,22 @@
  * username, dan alamat; token & secret tidak pernah dikirim ke browser.
  */
 import { GlobeIcon, UserRoundIcon } from "lucide-react";
-import { useEffect, useState } from "react";
 import { ActionRow, PrefsGroup, RowBadge } from "@/components/settings/prefs";
 import { Spinner } from "@/components/ui/spinner";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { useRouter } from "@/hooks/useRouter";
-import { apiFetch } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
 import type { TunnelStatus } from "@/server/services/tunnel";
 
-type AccountState =
-  | { phase: "loading" }
-  | { phase: "error" }
-  | { phase: "ready"; configured: boolean; account: TunnelStatus["account"] };
+const selectTunnel = async (res: Response) =>
+  ((await res.json()) as { tunnel: TunnelStatus }).tunnel;
 
 export function AccountGroup() {
   const { navigate } = useRouter();
-  const [state, setState] = useState<AccountState>({ phase: "loading" });
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await apiFetch("/api/tunnel");
-        const { tunnel } = (await res.json()) as { tunnel: TunnelStatus };
-        if (!cancelled) {
-          setState({ phase: "ready", configured: tunnel.configured, account: tunnel.account });
-        }
-      } catch {
-        if (!cancelled) setState({ phase: "error" });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const [state] = useApiQuery("/api/tunnel", {
+    select: selectTunnel,
+    errorMessage: "Couldn't load account",
+  });
 
   const title = "Account";
 
@@ -60,7 +42,7 @@ export function AccountGroup() {
     );
   }
 
-  const { account, configured } = state;
+  const { account, configured } = state.data;
   const goRemote = () => navigate(settingsPath("remote"));
 
   if (!account) {

@@ -9,10 +9,11 @@
  *   daftar Project itu ditampilkan di dialog.
  * - Perubahan berlaku seketika (tanpa restart) dan disimpan ke config.json.
  */
-import { CheckIcon, CopyIcon, FolderIcon, FolderOpenIcon, TriangleAlertIcon } from "lucide-react";
+import { FolderIcon, FolderOpenIcon, TriangleAlertIcon } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { SecretInput } from "@/components/auth/SecretInput";
+import { CopyIconButton } from "@/components/common/CopyIconButton";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import {
@@ -113,7 +114,12 @@ export function WorkspaceView({ state, onChange }: { state: LoadState; onChange:
                     : `${state.workspace.projectCount} projects`}
                 </span>
               </div>
-              <CopyPathButton value={state.workspace.root} />
+              <CopyIconButton
+                value={state.workspace.root}
+                label="Copy full path"
+                className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+                iconClassName="size-4"
+              />
             </li>
             <ActionRow
               prefix={
@@ -134,29 +140,6 @@ export function WorkspaceView({ state, onChange }: { state: LoadState; onChange:
         </p>
       )}
     </>
-  );
-}
-
-function CopyPathButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(t);
-  }, [copied]);
-  return (
-    <Button
-      type="button"
-      size="icon"
-      variant="ghost"
-      className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-      aria-label={copied ? "Copied" : "Copy full path"}
-      onClick={() => {
-        void navigator.clipboard?.writeText(value).then(() => setCopied(true));
-      }}
-    >
-      {copied ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
-    </Button>
   );
 }
 

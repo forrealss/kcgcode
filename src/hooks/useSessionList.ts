@@ -9,10 +9,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useResyncOnReconnect } from "@/hooks/useResyncOnReconnect";
+import { useSessionLifecycle } from "@/hooks/useSessionLifecycle";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { apiFetch, errorText } from "@/lib/api";
 import { notifyDataChanged } from "@/lib/data-events";
-import { deleteSession, resumeSession, stopSession } from "@/lib/session-api";
+import { deleteSession } from "@/lib/session-api";
 import { pluralSessions, pruneSelection, toggleSelection } from "@/lib/session-selection";
 import { type SessionSummary, sortSessions, summarizeSessions } from "@/lib/session-summary";
 import type { Session } from "@/types";
@@ -72,9 +73,6 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [stopping, setStopping] = useState<string | null>(null);
-  const [starting, setStarting] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
   /** Session yang akan dihapus, dikonfirmasi lewat `AlertDialog`. */
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null);
   /** Konfirmasi hapus Project (beserta seluruh Session-nya). */
@@ -83,6 +81,8 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   const [selecting, setSelecting] = useState(false);
   const [rawSelected, setRawSelected] = useState<ReadonlySet<string>>(() => new Set());
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  /** Session yang sedang dihapus oleh hapus massal (spinner di baris). */
+  const [bulkDeleting, setBulkDeleting] = useState<string | null>(null);
   const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   /** `silent`: muat ulang di latar (tanpa skeleton) — sinkron dari server. */
@@ -151,41 +151,32 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
   // terpilih lagi.
   const selected = useMemo(() => pruneSelection(rawSelected, sessions), [rawSelected, sessions]);
 
+  /** Muat ulang daftar dulu, baru broadcast `notifyDataChanged` (lihat hook). */
+  const lifecycle = useSessionLifecycle({
+    onSuccess: async (action) => {
+      if (action === "delete") setPendingDelete(null);
+      await refresh();
+    },
+  });
+  const { run: runLifecycle } = lifecycle;
+  const { stop: stopping, start: starting } = lifecycle.busy;
+  const deleting = lifecycle.busy.delete ?? bulkDeleting;
+
   /** Stop ≠ hapus: POST /stop hanya mengubah status; data tetap ada dan
-      bisa dihidupkan kembali lewat aksi Hidupkan (resume). */
+      bisa dihidupkan kembali lewat aksi Start (resume). */
   const stop = useCallback(
     async (sessionId: string) => {
-      setStopping(sessionId);
-      try {
-        await stopSession(sessionId);
-        toast.success("Session stopped.");
-        await refresh();
-        notifyDataChanged();
-      } catch (e) {
-        toast.error(errorText(e, "Couldn't stop the session."));
-      } finally {
-        setStopping(null);
-      }
+      await runLifecycle("stop", sessionId);
     },
-    [refresh],
+    [runLifecycle],
   );
 
   /** Resume Session stopped/crashed: POST /api/sessions/:id. */
   const start = useCallback(
     async (sessionId: string) => {
-      setStarting(sessionId);
-      try {
-        await resumeSession(sessionId);
-        toast.success("Session resumed.");
-        await refresh();
-        notifyDataChanged();
-      } catch (e) {
-        toast.error(errorText(e, "Couldn't resume the session."));
-      } finally {
-        setStarting(null);
-      }
+      await runLifecycle("start", sessionId);
     },
-    [refresh],
+    [runLifecycle],
   );
 
   const requestDelete = useCallback((session: Session) => setPendingDelete(session), []);
@@ -197,21 +188,8 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
    * eksekusi karena tidak bisa dibatalkan.
    */
   const confirmRemove = useCallback(async () => {
-    const session = pendingDelete;
-    if (!session) return;
-    setDeleting(session.id);
-    try {
-      await deleteSession(session.id);
-      setPendingDelete(null);
-      toast.success("Session deleted.");
-      await refresh();
-      notifyDataChanged();
-    } catch (e) {
-      toast.error(errorText(e, "Couldn't delete the session."));
-    } finally {
-      setDeleting(null);
-    }
-  }, [pendingDelete, refresh]);
+    if (pendingDelete) await runLifecycle("delete", pendingDelete.id);
+  }, [pendingDelete, runLifecycle]);
 
   const startSelecting = useCallback(() => {
     setRawSelected(new Set());
@@ -246,7 +224,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
     const failed: string[] = [];
     setBulkProgress({ done: 0, total: ids.length });
     for (const [i, id] of ids.entries()) {
-      setDeleting(id);
+      setBulkDeleting(id);
       try {
         await deleteSession(id);
       } catch {
@@ -254,7 +232,7 @@ export function useSessionList({ projectId, onDeleted }: UseSessionListOptions):
       }
       setBulkProgress({ done: i + 1, total: ids.length });
     }
-    setDeleting(null);
+    setBulkDeleting(null);
     setBulkProgress(null);
     setBulkDeleteOpen(false);
     const removed = ids.length - failed.length;

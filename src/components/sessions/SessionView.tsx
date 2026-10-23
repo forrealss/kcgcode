@@ -42,7 +42,7 @@ import {
   SessionTimelineSkeleton,
 } from "@/components/sessions/SessionTimelineSkeleton";
 import { useMcpActions } from "@/hooks/useMcpActions";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMediaQuery, WIDE_QUERY } from "@/hooks/useMediaQuery";
 import { useSessionChat } from "@/hooks/useSessionChat";
 import { useSessionContext } from "@/hooks/useSessionContext";
 import { useTurnDiffs } from "@/hooks/useTurnDiffs";
@@ -52,9 +52,6 @@ import { collectReferences } from "@/lib/references";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
 import { PromptPanel } from "./PromptPanel";
-
-/** Lebar minimum untuk kartu konteks sebagai kolom samping (`lg`). */
-const SIDE_PANEL_QUERY = "(min-width: 1024px)";
 
 export interface SessionViewProps {
   session: Session;
@@ -86,7 +83,7 @@ export function SessionView({ session, onBack, onDeleted }: SessionViewProps) {
   const [contextOpen, setContextOpen] = useState(false);
   // Kolom konteks berdampingan butuh ruang: di bawah `lg` kolom chat jadi
   // terlalu sempit, jadi kartu tampil sebagai bottom sheet (seperti HP).
-  const sidePanel = useMediaQuery(SIDE_PANEL_QUERY);
+  const sidePanel = useMediaQuery(WIDE_QUERY);
   const sessionCtx = useSessionContext(session.id, contextOpen, chat.generating);
   // Turn / compact baru selesai -> pemakaian context berubah: muat ulang panel
   // sekarang, tidak menunggu interval poll idle.

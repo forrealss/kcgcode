@@ -3,7 +3,10 @@
  * dipisah dari composition root). Dulu menumpuk di `app.ts`; kini dipakai
  * semua tabel rute di `routes/*.routes.ts`.
  */
-import type { SessionModel } from "../../types";
+import type { Project, SessionModel } from "../../types";
+import { resolveError } from "../../types/errors";
+import type { Result, SimpleResult } from "../result";
+import type { ApiRouteContext } from "./types";
 
 export function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -18,186 +21,74 @@ export function serverError(err: unknown): Response {
 }
 
 /**
- * Pemetaan error domain ke status HTTP (design.md — Error Handling):
- * 400 validasi, 404 tidak ditemukan, 409 konflik, sisanya 500.
+ * Status HTTP kode error domain (design.md — Error Handling) — lookup ke
+ * registri `ERRORS` (`types/errors.ts`); kode berdetail (`KODE: …`)
+ * dicocokkan lewat kode dasarnya, kode tak dikenal -> 500.
  */
 export function errorStatus(code: string): number {
-  switch (code) {
-    case "NAME_REQUIRED":
-    case "PATH_OUTSIDE_SANDBOX":
-    case "INVALID_PATH_CHARS":
-    case "UNSUPPORTED_AGENT_TYPE":
-    case "INVALID_PERMISSION_MODE":
-    case "INVALID_EFFORT":
-    case "AGENT_PERMISSION_MODE_UNSUPPORTED":
-    case "INVALID_SIZE":
-    case "MODEL_NOT_FOUND":
-    case "INVALID_INSTRUCTIONS":
-    case "INSTRUCTIONS_TOO_LONG":
-    case "INVALID_SKILL_QUERY":
-    case "INVALID_SKILL_ID":
-    case "INVALID_MCP_SERVER":
-    case "PIN_DIGITS_ONLY":
-    case "PIN_LENGTH":
-    case "PIN_TOO_SIMPLE":
-    case "PASSWORD_TOO_SHORT":
-    case "PASSWORD_TOO_LONG":
-    case "LOCK_KIND_INVALID":
-    case "NICKNAME_TOO_LONG":
-    case "NICKNAME_INVALID":
-    case "AUTO_LOCK_INVALID":
-    case "AVATAR_PRESET_INVALID":
-    case "AUTH_NOT_CONFIGURED":
-    case "INVALID_PROVIDER":
-    case "WORKSPACE_PATH_REQUIRED":
-    case "WORKSPACE_PATH_INVALID":
-    case "WORKSPACE_PATH_NOT_ABSOLUTE":
-    case "WORKSPACE_NOT_DIRECTORY":
-    case "WORKSPACE_TOO_BROAD":
-    case "WORKSPACE_CONTAINS_APP_DATA":
-    case "WORKSPACE_NOT_WRITABLE":
-      return 400;
-    case "WORKSPACE_NOT_FOUND":
-    case "WORKSPACE_PARENT_NOT_FOUND":
-      return 404;
-    case "PASSKEY_NAME_INVALID":
-    case "PASSKEY_UNSUPPORTED_ORIGIN":
-    case "PASSKEY_CHALLENGE_INVALID":
-    case "PASSKEY_VERIFY_FAILED":
-      return 400;
-    case "EXTERNAL_SESSIONS_UNSUPPORTED":
-      return 400;
-    case "EXTERNAL_SESSION_OPEN":
-      return 409;
-    case "PASSKEY_LOCK_REQUIRED":
-    case "PASSKEY_ALREADY_REGISTERED":
-    case "PASSKEY_LIMIT":
-    case "PASSKEY_NONE":
-      return 409;
-    case "PASSKEY_INVALID":
-      return 401;
-    case "PUSH_ENDPOINT_INVALID":
-    case "PUSH_KEYS_INVALID":
-      return 400;
-    case "PUSH_LIMIT":
-      return 409;
-    case "PUSH_DEVICE_NOT_FOUND":
-      return 404;
-    // Layanan push (FCM/Apple/Mozilla) menolak atau tak terjangkau.
-    case "PUSH_DEVICE_GONE":
-    case "PUSH_SEND_FAILED":
-      return 502;
-    case "PASSKEY_NOT_FOUND":
-      return 404;
-    // Preview: dev server Project.
-    case "PREVIEW_NO_CONFIG":
-      return 404;
-    case "PREVIEW_TUNNEL_UNSUPPORTED":
-      return 400;
-    case "PREVIEW_NOT_RUNNING":
-      return 409;
-    case "DIFF_NOT_FOUND":
-    case "FILE_NOT_FOUND":
-      return 404;
-    case "PATH_OUTSIDE_PROJECT":
-      return 403;
-    case "UNSUPPORTED_TYPE":
-      return 415;
-    case "DIFF_UNAVAILABLE":
-      return 410;
-    case "PREVIEW_NO_BROWSER":
-      return 501;
-    case "PREVIEW_SCREENSHOT_FAILED":
-      return 502;
-    // Tunnel: prasyarat belum terpenuhi.
-    case "TUNNEL_LOCK_REQUIRED":
-    case "TUNNEL_SIGNED_OUT":
-      return 409;
-    case "TUNNEL_DEVICE_REVOKED":
-      // Bukan 401: itu sinyal lock screen kcgcode di klien.
-      return 403;
-    case "TUNNEL_RATE_LIMITED":
-      return 429;
-    case "FRPC_UNSUPPORTED_PLATFORM":
-    case "TUNNEL_NOT_CONFIGURED":
-    case "LHR_SSH_MISSING":
-      return 501;
-    case "TUNNEL_API_UNREACHABLE":
-    case "FRPC_DOWNLOAD_FAILED":
-    case "FRPC_CHECKSUM_MISMATCH":
-    case "FRPC_NOT_FOUND":
-    case "FRPC_START_FAILED":
-    case "LHR_START_FAILED":
-    case "LHR_DENIED":
-      return 502;
-    case "AUTH_INVALID":
-    case "CURRENT_SECRET_INVALID":
-    case "AUTH_REQUIRED":
-      return 401;
-    case "ORIGIN_FORBIDDEN":
-      return 403;
-    case "AVATAR_NOT_FOUND":
-      return 404;
-    case "AVATAR_TOO_LARGE":
-      return 413;
-    case "PROJECT_NOT_FOUND":
-    case "PROJECT_DIR_NOT_FOUND":
-    case "SESSION_NOT_FOUND":
-    case "PATH_NOT_FOUND":
-      return 404;
-    case "NAME_TAKEN":
-    case "PATH_TAKEN":
-    case "SESSION_NOT_RUNNING":
-    case "SESSION_NOT_ACTIVE":
-    case "SESSION_ALREADY_RUNNING":
-    case "PROJECT_HAS_SESSIONS":
-    case "SKILL_INSTALL_IN_PROGRESS":
-    case "INSTALL_JOB_NOT_RUNNING":
-      return 409;
-    case "SKILLS_RATE_LIMITED":
-      return 429;
-    case "SKILL_INSTALL_FAILED":
-      return 502;
-    // CLI agent tidak terpasang / versinya tidak didukung.
-    case "OPENCODE_NOT_FOUND":
-      return 503;
-    case "UNSUPPORTED_IMAGE_MIME":
-    case "EMPTY_UPLOAD":
-      return 400;
-    case "IMAGE_TOO_LARGE":
-    case "FILE_TOO_LARGE":
-      return 413;
-    case "ATTACHMENT_NOT_FOUND":
-    case "INSTALL_JOB_NOT_FOUND":
-      return 404;
-    default:
-      // Kegagalan layanan skills.sh (hulu) -> 502.
-      if (code.startsWith("SKILLS_SEARCH_FAILED") || code.startsWith("SKILLS_AUDIT_FAILED")) {
-        return 502;
-      }
-      if (code.startsWith("OPENCODE_UPGRADE_REQUIRED")) return 503;
-      // Agent menolak / gagal menjalankan operasi (mis. hapus session remote).
-      if (
-        code.startsWith("AGENT_") ||
-        code.startsWith("CC_") ||
-        code.startsWith("SERVER_START_FAILED")
-      ) {
-        return 502;
-      }
-      return 500;
-  }
+  return resolveError(code).status;
 }
 
 /**
- * Membaca body JSON; body tidak valid -> `{ ok: false }` sehingga handler
- * dapat membalas 400 (bukan 500 dari `serverError`).
+ * Balasan error `{ error: code, ...extra }` dengan status dari registri.
+ * `AUTH_RATE_LIMITED:<detik>` -> 429 `{ error, retryAfterSec }` + header
+ * `retry-after`.
  */
-export async function readJson(req: Request): Promise<{ ok: true; data: unknown } | { ok: false }> {
-  try {
-    return { ok: true, data: await req.json() };
-  } catch {
-    return { ok: false };
+export function errorResponse(code: string, extra?: Record<string, unknown>): Response {
+  const err = resolveError(code);
+  if (err.code === "AUTH_RATE_LIMITED" && err.detail !== null) {
+    const wait = Number(err.detail);
+    if (Number.isFinite(wait)) {
+      const res = json({ error: err.code, retryAfterSec: wait, ...extra }, err.status);
+      res.headers.set("retry-after", String(wait));
+      return res;
+    }
   }
+  return json({ error: code, ...extra }, err.status);
+}
+
+/**
+ * Balas hasil service: sukses -> `json(map(data), status)`, gagal ->
+ * `errorResponse(error)` (SimpleResult tanpa kode -> `ERROR`, 500).
+ */
+export function respond<T>(res: Result<T>, map: (data: T) => unknown, status?: number): Response;
+export function respond(res: SimpleResult, map: () => unknown, status?: number): Response;
+export function respond<T>(
+  res: Result<T> | SimpleResult,
+  map: (data: T) => unknown,
+  status = 200,
+): Response {
+  if (!res.ok) return errorResponse(res.error ?? "ERROR");
+  return json(map((res as { data: T }).data), status);
+}
+
+/**
+ * Body JSON berupa objek; body tidak valid / bukan objek -> `null` sehingga
+ * handler membalas 400 `INVALID_JSON` (bukan 500 dari `serverError`).
+ */
+export async function readObject(req: Request): Promise<Record<string, unknown> | null> {
+  try {
+    const data: unknown = await req.json();
+    return typeof data === "object" && data !== null ? (data as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Query param bilangan bulat >= 0 (mis. `?from=` log bertahap); selain itu 0. */
+export function queryInt(req: Request, name: string): number {
+  const n = Number(new URL(req.url).searchParams.get(name) ?? "0");
+  return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+}
+
+/** Jalankan `fn` dengan Project `id`; tidak ada -> balasan error-nya. */
+export function withProject(
+  ctx: Pick<ApiRouteContext, "projectManager">,
+  id: string,
+  fn: (project: Project) => Response | Promise<Response>,
+): Response | Promise<Response> {
+  const p = ctx.projectManager.getProject(id);
+  return p.ok ? fn(p.data) : errorResponse(p.error);
 }
 
 /**

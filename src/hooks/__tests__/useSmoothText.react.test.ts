@@ -1,18 +1,18 @@
 /**
  * Test perilaku `useSmoothText` di React SUNGGUHAN (StrictMode), tanpa DOM.
  *
- * Renderer minimal dibangun dari `react-reconciler` (sudah terpasang sebagai
- * dependensi transitif) — cukup untuk menjalankan hook, effect, dan
- * StrictMode (effect dipasang -> dibongkar -> dipasang ulang). rAF diganti
- * antrean manual agar frame bisa "dijalankan" deterministik.
+ * Renderer minimal `renderHook` (./render-hook.ts, `react-reconciler`) —
+ * cukup untuk menjalankan hook, effect, dan StrictMode (effect dipasang ->
+ * dibongkar -> dipasang ulang). rAF diganti antrean manual agar frame bisa
+ * "dijalankan" deterministik.
  *
  * Regresi yang dijaga: di StrictMode loop rAF pernah mati setelah remount
  * simulasi, sehingga teks baru muncul sekaligus saat streaming selesai.
  */
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { act, createElement, StrictMode } from "react";
-import Reconciler from "react-reconciler";
+import { act } from "react";
 import { useSmoothText } from "../useSmoothText";
+import { renderHook } from "./render-hook";
 
 // ---- rAF palsu ----------------------------------------------------------
 let rafQueue = new Map<number, FrameRequestCallback>();
@@ -62,89 +62,13 @@ afterEach(() => {
 });
 
 // ---- renderer tanpa DOM ---------------------------------------------------
-/** Renderer "null": tidak membuat node apa pun, cukup menjalankan komponen. */
-const reconciler = Reconciler({
-  supportsMutation: true,
-  isPrimaryRenderer: false,
-  createInstance: () => ({}),
-  createTextInstance: () => ({}),
-  appendInitialChild: () => {},
-  appendChild: () => {},
-  appendChildToContainer: () => {},
-  insertBefore: () => {},
-  insertInContainerBefore: () => {},
-  removeChild: () => {},
-  removeChildFromContainer: () => {},
-  commitTextUpdate: () => {},
-  commitUpdate: () => {},
-  finalizeInitialChildren: () => false,
-  shouldSetTextContent: () => false,
-  getRootHostContext: () => ({}),
-  getChildHostContext: () => ({}),
-  getPublicInstance: (i: unknown) => i,
-  prepareForCommit: () => null,
-  resetAfterCommit: () => {},
-  preparePortalMount: () => {},
-  clearContainer: () => {},
-  scheduleTimeout: setTimeout,
-  cancelTimeout: clearTimeout,
-  noTimeout: -1,
-  getCurrentUpdatePriority: () => 32,
-  setCurrentUpdatePriority: () => {},
-  resolveUpdatePriority: () => 32,
-  getInstanceFromNode: () => null,
-  beforeActiveInstanceBlur: () => {},
-  afterActiveInstanceBlur: () => {},
-  prepareScopeUpdate: () => {},
-  getInstanceFromScope: () => null,
-  detachDeletedInstance: () => {},
-  maySuspendCommit: () => false,
-  preloadInstance: () => true,
-  startSuspendingCommit: () => {},
-  suspendInstance: () => {},
-  waitForCommitToBeReady: () => null,
-  NotPendingTransition: null,
-  HostTransitionContext: { $$typeof: Symbol.for("react.context"), _currentValue: null },
-  resetFormInstance: () => {},
-  requestPostPaintCallback: () => {},
-  shouldAttemptEagerTransition: () => false,
-  trackSchedulerEvent: () => {},
-  resolveEventType: () => null,
-  resolveEventTimeStamp: () => -1.1,
-} as never);
-
 function mount() {
-  let latest = "";
-  function Probe({ text, on }: { text: string; on: boolean }) {
-    latest = useSmoothText(text, on);
-    return null;
-  }
-  const root = (
-    reconciler as never as {
-      createContainer: (...a: unknown[]) => unknown;
-    }
-  ).createContainer(
-    {},
-    1,
-    null,
-    false,
-    null,
-    "",
-    () => {},
-    () => {},
-    () => {},
-    null,
-  );
-  const render = (text: string, on: boolean) =>
-    act(() => {
-      reconciler.updateContainer(
-        createElement(StrictMode, null, createElement(Probe, { text, on })),
-        root as never,
-        null,
-        null,
-      );
-    });
-  return { render, shown: () => latest };
+  let h: ReturnType<typeof renderHook<{ text: string; on: boolean }, string>> | null = null;
+  const render = (text: string, on: boolean) => {
+    if (h) h.rerender({ text, on });
+    else h = renderHook(({ text, on }) => useSmoothText(text, on), { text, on });
+  };
+  return { render, shown: () => h?.result() ?? "" };
 }
 
 describe("useSmoothText (StrictMode)", () => {

@@ -14,119 +14,88 @@
  * Seluruhnya dijaga `guardRoutes` (sesi + Origin). Tanpa app lock, tunnel
  * ditolak (`TUNNEL_LOCK_REQUIRED`).
  */
-import { errorStatus, json, readJson, serverError } from "./helpers";
+import { errorResponse, json, queryInt, readObject, respond } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 export function tunnelRoutes(ctx: ApiRouteContext) {
   const { tunnel, lhr } = ctx;
-  const wrap =
-    <A extends unknown[]>(fn: (...a: A) => Promise<Response> | Response) =>
-    async (...a: A) => {
-      try {
-        return await fn(...a);
-      } catch (e) {
-        return serverError(e);
-      }
-    };
-
   return {
     "/api/tunnel": {
-      GET: wrap(() =>
+      GET: () =>
         json({ tunnel: tunnel.status(), provider: ctx.tunnelProvider(), lhr: lhr.status() }),
-      ),
     },
 
     "/api/tunnel/logs": {
-      GET: wrap((req: Request) => {
-        const from = Number(new URL(req.url).searchParams.get("from") ?? "0");
-        return json(tunnel.logs(Number.isFinite(from) && from >= 0 ? from : 0));
-      }),
+      GET: (req: Request) => json(tunnel.logs(queryInt(req, "from"))),
     },
 
     "/api/tunnel/connect": {
-      POST: wrap(async () => {
-        const res = await tunnel.connect();
-        if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-        return json({ tunnel: res.data });
-      }),
+      POST: async () => respond(await tunnel.connect(), (t) => ({ tunnel: t })),
     },
 
     "/api/tunnel/connect/cancel": {
-      POST: wrap(() => {
+      POST: () => {
         tunnel.cancelConnect();
         return json({ tunnel: tunnel.status() });
-      }),
+      },
     },
 
     "/api/tunnel/start": {
-      POST: wrap(async () => {
+      POST: async () => {
         await lhr.stop();
         ctx.setTunnelProvider("kcg");
-        const res = await tunnel.start();
-        if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-        return json({ tunnel: res.data });
-      }),
+        return respond(await tunnel.start(), (t) => ({ tunnel: t }));
+      },
     },
 
     "/api/tunnel/stop": {
-      POST: wrap(async () => json({ tunnel: await tunnel.stop() })),
+      POST: async () => json({ tunnel: await tunnel.stop() }),
     },
 
     "/api/tunnel/rotate-secret": {
-      POST: wrap(async () => {
-        const res = await tunnel.rotateSecret();
-        if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-        return json({ tunnel: res.data });
-      }),
+      POST: async () => respond(await tunnel.rotateSecret(), (t) => ({ tunnel: t })),
     },
 
     "/api/tunnel/signout": {
-      POST: wrap(async () => json({ tunnel: await tunnel.signOut() })),
+      POST: async () => json({ tunnel: await tunnel.signOut() }),
     },
 
     // ---- Pilihan penyedia (satu tunnel aktif) ----
     "/api/tunnel/provider": {
-      PUT: wrap(async (req: Request) => {
-        const body = await readJson(req);
-        if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-        const provider = (body.data as { provider?: unknown }).provider;
-        if (provider !== "kcg" && provider !== "lhr") {
-          return json({ error: "INVALID_PROVIDER" }, 400);
-        }
+      PUT: async (req: Request) => {
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const provider = b.provider;
+        if (provider !== "kcg" && provider !== "lhr") return errorResponse("INVALID_PROVIDER");
         // Matikan penyedia lain dulu: dua alamat publik sekaligus membingungkan
         // dan memperluas permukaan akses.
         if (provider === "lhr") await tunnel.stop();
         else await lhr.stop();
         ctx.setTunnelProvider(provider);
         return json({ provider, tunnel: tunnel.status(), lhr: lhr.status() });
-      }),
+      },
     },
 
     // ---- localhost.run ----
     "/api/tunnel/lhr": {
-      GET: wrap(() => json({ lhr: lhr.status() })),
+      GET: () => json({ lhr: lhr.status() }),
     },
 
     "/api/tunnel/lhr/logs": {
-      GET: wrap((req: Request) => {
-        const from = Number(new URL(req.url).searchParams.get("from") ?? "0");
-        return json(lhr.logs(Number.isFinite(from) && from >= 0 ? from : 0));
-      }),
+      GET: (req: Request) => json(lhr.logs(queryInt(req, "from"))),
     },
 
     "/api/tunnel/lhr/start": {
-      POST: wrap(async () => {
+      POST: async () => {
         // Pastikan hanya satu tunnel publik aktif.
         await tunnel.stop();
         ctx.setTunnelProvider("lhr");
-        const res = await lhr.start();
-        if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-        return json({ lhr: res.data });
-      }),
+        return respond(await lhr.start(), (status) => ({ lhr: status }));
+      },
     },
 
     "/api/tunnel/lhr/stop": {
-      POST: wrap(async () => json({ lhr: await lhr.stop() })),
+      POST: async () => json({ lhr: await lhr.stop() }),
     },
   };
 }

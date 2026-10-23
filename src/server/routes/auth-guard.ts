@@ -9,7 +9,7 @@
 import type { Server } from "bun";
 import type { AuthService } from "../services/auth";
 import { SESSION_COOKIE, SESSION_TTL_MS } from "../services/auth";
-import { json } from "./helpers";
+import { errorResponse, serverError } from "./helpers";
 
 /**
  * Rute + method yang boleh diakses tanpa login (dibutuhkan lock screen).
@@ -115,19 +115,24 @@ type AnyHandler = (req: Request, server: Server<unknown>) => unknown;
 
 /**
  * Bungkus satu handler: cek Origin untuk method yang mengubah state, lalu
- * wajibkan sesi valid (kecuali rute publik / kunci belum diatur).
+ * wajibkan sesi valid (kecuali rute publik / kunci belum diatur). Error tak
+ * terduga dari handler (sync maupun async) ditangkap di sini sekali ->
+ * 500 `INTERNAL_ERROR` — handler tidak perlu try/catch sendiri.
  */
 export function guardHandler(auth: AuthService, route: string, handler: AnyHandler): AnyHandler {
   return (req, server) => {
-    if (MUTATING.has(req.method) && !originAllowed(req)) {
-      return json({ error: "ORIGIN_FORBIDDEN" }, 403);
-    }
-    if (!isPublicApi(route, req.method) && auth.isProtected()) {
-      if (!auth.authenticate(readSessionToken(req))) {
-        return json({ error: "AUTH_REQUIRED" }, 401);
+    try {
+      if (MUTATING.has(req.method) && !originAllowed(req)) {
+        return errorResponse("ORIGIN_FORBIDDEN");
       }
+      if (!isPublicApi(route, req.method) && auth.isProtected()) {
+        if (!auth.authenticate(readSessionToken(req))) return errorResponse("AUTH_REQUIRED");
+      }
+      const out = handler(req, server);
+      return out instanceof Promise ? out.catch(serverError) : out;
+    } catch (e) {
+      return serverError(e);
     }
-    return handler(req, server);
   };
 }
 

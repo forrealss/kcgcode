@@ -6,10 +6,9 @@
  * install-nya (dijalankan di komputer yang menjalankan kcgcode).
  * Tiap anggota tim adalah baris tautan ke profil GitHub-nya (tab baru).
  */
-import { CheckIcon, CircleArrowUpIcon, CopyIcon } from "lucide-react";
+import { CircleArrowUpIcon } from "lucide-react";
 import type * as React from "react";
-import { useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
+import { CopyIconButton } from "@/components/common/CopyIconButton";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { cn } from "@/lib/utils";
@@ -169,32 +168,14 @@ function UpdateCard({ update }: { update: UpdateInfo }) {
       </p>
       <div className="mt-3 flex items-center gap-1 rounded-lg bg-muted/70 pl-3">
         <code className="min-w-0 flex-1 truncate font-mono text-[12.5px]">{update.command}</code>
-        <CopyCommandButton value={update.command} />
+        <CopyIconButton
+          value={update.command}
+          label="Copy command"
+          className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+          iconClassName="size-4"
+        />
       </div>
     </section>
-  );
-}
-
-function CopyCommandButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(t);
-  }, [copied]);
-  return (
-    <Button
-      type="button"
-      size="icon"
-      variant="ghost"
-      className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
-      aria-label={copied ? "Copied" : "Copy command"}
-      onClick={() => {
-        void navigator.clipboard?.writeText(value).then(() => setCopied(true));
-      }}
-    >
-      {copied ? <CheckIcon className="size-4" /> : <CopyIcon className="size-4" />}
-    </Button>
   );
 }
 

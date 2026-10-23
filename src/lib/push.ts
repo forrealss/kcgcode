@@ -187,10 +187,3 @@ export async function syncPush(): Promise<void> {
     // Gagal sinkron tidak menghalangi app; dicoba lagi saat dibuka berikutnya.
   }
 }
-
-/** Status langganan perangkat ini untuk Settings (tanpa mendaftar ulang). */
-export async function hasLocalSubscription(): Promise<boolean> {
-  if (pushSupport() !== "supported") return false;
-  const reg = await navigator.serviceWorker.getRegistration("/");
-  return Boolean(await reg?.pushManager.getSubscription());
-}

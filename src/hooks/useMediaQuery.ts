@@ -48,6 +48,12 @@ export function useIsMobile(): boolean {
   return useMediaQuery(MOBILE_QUERY);
 }
 
+/**
+ * Media query viewport selebar breakpoint `lg` (1024px) ke atas — tata letak
+ * berdampingan (panel samping inline, navigasi Settings di kiri).
+ */
+export const WIDE_QUERY = "(min-width: 1024px)";
+
 /** Media query viewport di bawah breakpoint `md` (768px). */
 export const BELOW_MD_QUERY = "(max-width: 767px)";
 

@@ -8,7 +8,7 @@
 import path from "node:path";
 import type { AppConfig } from "../../config";
 import type { SessionStore } from "../../db";
-import { resolveEffectiveDbPath, resolveFrpcConfigPath } from "../../paths";
+import { resolveEffectiveDbPath, resolveFrpcConfigPath, resolveTurnDiffsDir } from "../../paths";
 import { authRoutes } from "../routes/auth.routes";
 import { guardRoutes } from "../routes/auth-guard";
 import { changesRoutes } from "../routes/changes.routes";
@@ -20,7 +20,7 @@ import { pushRoutes } from "../routes/push.routes";
 import { sessionsRoutes } from "../routes/sessions.routes";
 import { skillsRoutes } from "../routes/skills.routes";
 import { tunnelRoutes } from "../routes/tunnel.routes";
-import type { ApiRouteContext } from "../routes/types";
+import type { ApiRouteContext, ProtectedPaths } from "../routes/types";
 import { uploadsRoutes } from "../routes/uploads.routes";
 import { workspaceRoutes } from "../routes/workspace.routes";
 import type { DevServerManager } from "../services/preview/dev-servers";
@@ -44,23 +44,39 @@ export interface ApiRoutesDeps {
   snapshots: PreviewSnapshots;
 }
 
+/**
+ * Data (DB, uploads, turn-diffs, frpc.toml) & config KCG Code — dirakit
+ * sekali dari path yang sama untuk validasi workspace dan viewer file.
+ */
+export function protectedPaths(configPath: string, uploadsRoot: string): ProtectedPaths {
+  const dbPath = resolveEffectiveDbPath();
+  const turnDiffsDir = resolveTurnDiffsDir(uploadsRoot);
+  return {
+    dirs: [path.dirname(dbPath), uploadsRoot, turnDiffsDir, path.dirname(configPath)],
+    files: [
+      dbPath,
+      `${dbPath}-wal`,
+      `${dbPath}-shm`,
+      uploadsRoot,
+      turnDiffsDir,
+      resolveFrpcConfigPath(),
+      configPath,
+    ],
+  };
+}
+
 export function createApiRoutes(deps: ApiRoutesDeps) {
-  const {
-    config,
-    store,
-    uploadsRoot,
-    core,
-    access,
-    updates,
-    devServers,
-    preview,
-    screenshotter,
-    snapshots,
-  } = deps;
+  const { config, store, uploadsRoot, core, access } = deps;
   const { auth, passkeys, tunnel, lhr } = access;
 
-  // Konteks bersama untuk tabel rute API.
-  const routeCtx: ApiRouteContext = {
+  // Konteks bersama untuk semua tabel rute API.
+  const ctx: ApiRouteContext = {
+    auth,
+    passkeys,
+    notifications: core.notifications,
+    updates: deps.updates,
+    configPath: config.configPath,
+    protectedPaths: protectedPaths(config.configPath, uploadsRoot),
     projectManager: core.projectManager,
     sessionManager: core.sessionManager,
     attachments: core.attachments,
@@ -71,50 +87,25 @@ export function createApiRoutes(deps: ApiRoutesDeps) {
     tunnelProvider: () => store.getTunnelSettings(Date.now()).provider,
     setTunnelProvider: (provider) => store.setTunnelProvider(provider, Date.now()),
     notifyDataChanged: () => core.gateway.notifyDataChanged(),
-    devServers,
-    preview,
-    screenshotter,
-    snapshots,
+    devServers: deps.devServers,
+    preview: deps.preview,
+    screenshotter: deps.screenshotter,
+    snapshots: deps.snapshots,
     turnDiffs: core.turnDiffs,
   };
 
-  // Data (DB, uploads, frpc.toml) & config KCG Code tak boleh berada di
-  // dalam workspace — agent bisa membaca hash sandi / token tunnel.
-  const dbPath = resolveEffectiveDbPath();
-  const protectedDirs = [
-    path.dirname(resolveEffectiveDbPath()),
-    uploadsRoot,
-    path.dirname(config.configPath),
-  ];
-
   return guardRoutes(auth, {
-    ...authRoutes(auth),
-    ...passkeyRoutes(auth, passkeys),
-    ...metaRoutes(updates),
-    ...projectsRoutes(routeCtx),
-    ...sessionsRoutes(routeCtx),
-    ...uploadsRoutes(routeCtx),
-    ...skillsRoutes(routeCtx),
-    ...tunnelRoutes(routeCtx),
-    ...previewRoutes(routeCtx),
-    // Viewer file: path kcgcode yang spesifik (bukan foldernya — workspace
-    // default `~/.kcgcode/sandbox` berada di folder yang sama).
-    ...changesRoutes(routeCtx, {
-      protectedDirs: [
-        dbPath,
-        `${dbPath}-wal`,
-        `${dbPath}-shm`,
-        uploadsRoot,
-        path.join(path.dirname(uploadsRoot), "turn-diffs"),
-        resolveFrpcConfigPath(),
-        config.configPath,
-      ],
-    }),
-    ...pushRoutes(core.notifications),
-    ...workspaceRoutes(routeCtx, {
-      auth,
-      configPath: config.configPath,
-      protectedDirs,
-    }),
+    ...authRoutes(ctx),
+    ...passkeyRoutes(ctx),
+    ...metaRoutes(ctx),
+    ...projectsRoutes(ctx),
+    ...sessionsRoutes(ctx),
+    ...uploadsRoutes(ctx),
+    ...skillsRoutes(ctx),
+    ...tunnelRoutes(ctx),
+    ...previewRoutes(ctx),
+    ...changesRoutes(ctx),
+    ...pushRoutes(ctx),
+    ...workspaceRoutes(ctx),
   });
 }

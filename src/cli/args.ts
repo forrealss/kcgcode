@@ -2,6 +2,7 @@
  * Parser argumen CLI kcgcode (tanpa dependency eksternal).
  */
 
+import { parsePort } from "../config";
 import { c } from "./theme";
 
 export interface CliArgs {
@@ -156,11 +157,9 @@ export function parseArgs(argv: string[]): CliArgs {
       const raw = rest[++i];
       if (raw === undefined)
         return { ...args, command: "invalid", error: `Missing value for ${a}` };
-      const n = Number(raw);
-      if (!Number.isInteger(n) || n <= 0 || n > 65535) {
-        return { ...args, command: "invalid", error: `Invalid port "${raw}"` };
-      }
-      args.port = n;
+      const port = parsePort(raw);
+      if (port === null) return { ...args, command: "invalid", error: `Invalid port "${raw}"` };
+      args.port = port;
       continue;
     }
     if (a === "-H" || a === "--host") {

@@ -10,10 +10,8 @@
  * atau direktori yang ditunjuk tidak ditemukan (Requirement 10.1).
  */
 import { readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { DEFAULT_CONFIG_PATH, resolveEffectiveConfigPath } from "./paths";
+import { resolveEffectiveConfigPath } from "./paths";
 import type { Result } from "./server/result";
-
-export { DEFAULT_CONFIG_PATH };
 
 export interface AppConfig {
   /** Path absolut hasil `realpath` dari `sandboxRoot`. */
@@ -24,8 +22,18 @@ export interface AppConfig {
   port?: number;
 }
 
+/** Port HTTP bila tidak diatur `--port`, `KCG_PORT`, maupun config. */
+export const DEFAULT_PORT = 3000;
+
+/** Port TCP valid: integer 1-65535. */
 export function isValidPort(n: unknown): n is number {
   return typeof n === "number" && Number.isInteger(n) && n > 0 && n <= 65535;
+}
+
+/** Parse teks port (flag, env, input menu); null bila bukan port valid. */
+export function parsePort(raw: string): number | null {
+  const n = Number(raw);
+  return isValidPort(n) ? n : null;
 }
 
 /**

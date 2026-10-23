@@ -10,52 +10,42 @@
  */
 import type { BunRequest } from "bun";
 import { readProjectFile, readProjectImage } from "../services/project-files";
-import { errorStatus, json, serverError } from "./helpers";
+import { errorResponse, json, respond, withProject } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 /**
- * `protectedDirs`: folder/file kcgcode yang tak boleh dibaca walau berada di
- * dalam Project (folder data, lampiran, file config).
+ * File kcgcode yang tak boleh dibaca walau berada di dalam Project (DB,
+ * lampiran, file config) — `ctx.protectedPaths.files`.
  */
-export function changesRoutes(ctx: ApiRouteContext, opts: { protectedDirs: string[] }) {
-  const { sessionManager, projectManager, turnDiffs } = ctx;
+export function changesRoutes(ctx: ApiRouteContext) {
+  const { sessionManager, turnDiffs } = ctx;
+  const protectedFiles = ctx.protectedPaths.files;
 
   return {
     "/api/sessions/:id/changes": {
       GET: (req: BunRequest<"/api/sessions/:id/changes">) => {
-        try {
-          const s = sessionManager.getSession(req.params.id);
-          if (!s.ok) return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
-          return json({ diffs: turnDiffs.list(s.data.id) });
-        } catch (e) {
-          return serverError(e);
-        }
+        const s = sessionManager.getSession(req.params.id);
+        if (!s.ok) return errorResponse("SESSION_NOT_FOUND");
+        return json({ diffs: turnDiffs.list(s.data.id) });
       },
     },
 
     "/api/sessions/:id/changes/:diffId/diff": {
       GET: async (req: BunRequest<"/api/sessions/:id/changes/:diffId/diff">) => {
-        try {
-          const file = new URL(req.url).searchParams.get("path") ?? "";
-          const res = await turnDiffs.fileDiff(req.params.id, req.params.diffId, file);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ diff: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const file = new URL(req.url).searchParams.get("path") ?? "";
+        const res = await turnDiffs.fileDiff(req.params.id, req.params.diffId, file);
+        return respond(res, (diff) => ({ diff }));
       },
     },
 
     "/api/projects/:id/file": {
-      GET: (req: BunRequest<"/api/projects/:id/file">) => {
-        try {
-          const p = projectManager.getProject(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
+      GET: (req: BunRequest<"/api/projects/:id/file">) =>
+        withProject(ctx, req.params.id, (p) => {
           const url = new URL(req.url);
           const rel = url.searchParams.get("path") ?? "";
           if (url.searchParams.get("raw") === "1") {
-            const img = readProjectImage(p.data.path, rel, opts.protectedDirs);
-            if (!img.ok) return json({ error: img.error }, errorStatus(img.error));
+            const img = readProjectImage(p.path, rel, protectedFiles);
+            if (!img.ok) return errorResponse(img.error);
             return new Response(img.data.bytes, {
               headers: {
                 "content-type": img.data.mime,
@@ -66,13 +56,8 @@ export function changesRoutes(ctx: ApiRouteContext, opts: { protectedDirs: strin
               },
             });
           }
-          const res = readProjectFile(p.data.path, rel, opts.protectedDirs);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ file: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+          return respond(readProjectFile(p.path, rel, protectedFiles), (file) => ({ file }));
+        }),
     },
   };
 }

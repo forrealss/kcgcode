@@ -7,12 +7,13 @@ import {
   TerminalSquareIcon,
   UnplugIcon,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useRouter } from "@/hooks/useRouter";
+import { useTunnelStatus } from "@/hooks/useTunnelStatus";
 import { apiErrorMessage, apiFetch, errorText } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
 import { cn } from "@/lib/utils";
@@ -25,6 +26,9 @@ import { LoadingGroup, RowGlyph, StatusIcon, SwitchRow, type Tone } from "./rows
 import { sameOrigin } from "./utils";
 
 const BUSY_PHASES: TunnelPhase[] = ["starting", "connecting", "reconnecting"];
+
+const isActive = (t: TunnelStatus | null) =>
+  t !== null && (t.pairing !== null || BUSY_PHASES.includes(t.phase));
 
 async function readTunnel(res: Response): Promise<TunnelStatus> {
   return ((await res.json()) as { tunnel: TunnelStatus }).tunnel;
@@ -39,25 +43,18 @@ export function KcgRemoteAccess({
   methodPicker: ReactNode;
 }) {
   const { navigate } = useRouter();
-  const [t, setT] = useState<TunnelStatus | null>(null);
+  // Poll lebih rapat saat pairing / tunnel sedang berjalan. Gagal muat
+  // dilaporkan saat aksi; poll berikutnya mencoba lagi.
+  const {
+    data,
+    refresh: load,
+    setTunnel: setT,
+  } = useTunnelStatus({
+    fast: (o) => isActive(o?.tunnel ?? null),
+  });
+  const t = data?.tunnel ?? null;
   const [busy, setBusy] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<ConfirmKind | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      setT(await readTunnel(await apiFetch("/api/tunnel")));
-    } catch {
-      /* dilaporkan saat aksi; poll berikutnya mencoba lagi */
-    }
-  }, []);
-
-  // Poll lebih rapat saat pairing / tunnel sedang berjalan.
-  const active = t !== null && (t.pairing !== null || BUSY_PHASES.includes(t.phase));
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), active ? 1500 : 5000);
-    return () => clearInterval(id);
-  }, [load, active]);
 
   const act = async (key: string, path: string, okText?: string) => {
     setBusy(key);

@@ -62,7 +62,7 @@ export function createClaudeExternal(
         .sort((a, b) => b.updatedAt - a.updatedAt);
       return { ok: true, data };
     } catch (e) {
-      return { ok: false, error: `CC_EXTERNAL_LIST_FAILED: ${(e as Error).message}` };
+      return { ok: false, error: `AGENT_EXTERNAL_LIST_FAILED: ${(e as Error).message}` };
     }
   }
 
@@ -78,14 +78,14 @@ export function createClaudeExternal(
           data: historyFromTranscript(messages, info.createdAt ?? info.lastModified),
         };
       } catch (e) {
-        return { ok: false, error: `CC_EXTERNAL_HISTORY_FAILED: ${(e as Error).message}` };
+        return { ok: false, error: `AGENT_EXTERNAL_HISTORY_FAILED: ${(e as Error).message}` };
       }
     },
     async fork(sessionID, title) {
       try {
         return { ok: true, data: { id: await transcripts.fork(sessionID, cwd, title) } };
       } catch (e) {
-        return { ok: false, error: `CC_FORK_FAILED: ${(e as Error).message}` };
+        return { ok: false, error: `AGENT_FORK_FAILED: ${(e as Error).message}` };
       }
     },
   };

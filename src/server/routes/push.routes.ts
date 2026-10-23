@@ -15,81 +15,48 @@
  * dirujuk lewat id (hash endpoint).
  */
 import type { BunRequest } from "bun";
-import type { NotificationService } from "../services/notifications";
-import { errorStatus, json, readJson, serverError } from "./helpers";
+import { errorResponse, json, readObject, respond } from "./helpers";
+import type { ApiRouteContext } from "./types";
 
-export function pushRoutes(notifications: NotificationService) {
+export function pushRoutes(ctx: ApiRouteContext) {
+  const { notifications } = ctx;
   return {
     "/api/push/vapid-key": {
-      GET: async () => {
-        try {
-          return json({ publicKey: await notifications.publicKey() });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async () => json({ publicKey: await notifications.publicKey() }),
     },
 
     "/api/push/devices": {
-      GET: () => {
-        try {
-          return json({ devices: notifications.listDevices() });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: () => json({ devices: notifications.listDevices() }),
       POST: async (req: Request) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok || typeof body.data !== "object" || body.data === null) {
-            return json({ error: "INVALID_JSON" }, 400);
-          }
-          const { endpoint, keys, refreshOnly } = body.data as {
-            endpoint?: unknown;
-            keys?: unknown;
-            refreshOnly?: unknown;
-          };
-          const { p256dh, auth } = (typeof keys === "object" && keys !== null ? keys : {}) as {
-            p256dh?: unknown;
-            auth?: unknown;
-          };
-          if (typeof endpoint !== "string") return json({ error: "PUSH_ENDPOINT_INVALID" }, 400);
-          if (typeof p256dh !== "string" || typeof auth !== "string") {
-            return json({ error: "PUSH_KEYS_INVALID" }, 400);
-          }
-          const res = notifications.subscribe(
-            { endpoint, p256dh, auth, userAgent: req.headers.get("user-agent") },
-            { refreshOnly: refreshOnly === true },
-          );
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ device: res.data });
-        } catch (e) {
-          return serverError(e);
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { endpoint, keys, refreshOnly } = b;
+        const { p256dh, auth } = (typeof keys === "object" && keys !== null ? keys : {}) as {
+          p256dh?: unknown;
+          auth?: unknown;
+        };
+        if (typeof endpoint !== "string") return errorResponse("PUSH_ENDPOINT_INVALID");
+        if (typeof p256dh !== "string" || typeof auth !== "string") {
+          return errorResponse("PUSH_KEYS_INVALID");
         }
+        const res = notifications.subscribe(
+          { endpoint, p256dh, auth, userAgent: req.headers.get("user-agent") },
+          { refreshOnly: refreshOnly === true },
+        );
+        return respond(res, (device) => ({ device }));
       },
     },
 
     "/api/push/devices/:id": {
       DELETE: (req: BunRequest<"/api/push/devices/:id">) => {
-        try {
-          notifications.unsubscribe(req.params.id);
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
+        notifications.unsubscribe(req.params.id);
+        return json({ ok: true });
       },
     },
 
     "/api/push/devices/:id/test": {
-      POST: async (req: BunRequest<"/api/push/devices/:id/test">) => {
-        try {
-          const res = await notifications.sendTest(req.params.id);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      POST: async (req: BunRequest<"/api/push/devices/:id/test">) =>
+        respond(await notifications.sendTest(req.params.id), () => ({ ok: true })),
     },
   };
 }

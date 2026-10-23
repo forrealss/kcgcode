@@ -16,7 +16,7 @@
  */
 import type { BunRequest } from "bun";
 import type { AgentType } from "../../types";
-import { errorStatus, json, readJson, serverError } from "./helpers";
+import { errorResponse, json, queryInt, readObject, respond, withProject } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 const INSTALL_AGENTS: readonly AgentType[] = ["opencode", "claude-code"];
@@ -30,106 +30,68 @@ function parseInstallAgents(raw: unknown): AgentType[] | null {
 }
 
 export function skillsRoutes(ctx: ApiRouteContext) {
-  const { projectManager, skillsRegistry, skillInstalls } = ctx;
+  const { skillsRegistry, skillInstalls } = ctx;
   return {
     "/api/skills/search": {
       GET: async (req: Request) => {
-        try {
-          const q = new URL(req.url).searchParams.get("q") ?? "";
-          const res = await skillsRegistry.search(q);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ skills: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const q = new URL(req.url).searchParams.get("q") ?? "";
+        return respond(await skillsRegistry.search(q), (skills) => ({ skills }));
       },
     },
 
     "/api/skills/audit": {
       GET: async (req: Request) => {
-        try {
-          const params = new URL(req.url).searchParams;
-          const res = await skillsRegistry.audit(
-            params.get("source") ?? "",
-            params.get("skill") ?? "",
-          );
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ audit: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const params = new URL(req.url).searchParams;
+        const res = await skillsRegistry.audit(
+          params.get("source") ?? "",
+          params.get("skill") ?? "",
+        );
+        return respond(res, (audit) => ({ audit }));
       },
     },
 
     "/api/projects/:id/skills/install": {
       POST: async (req: BunRequest<"/api/projects/:id/skills/install">) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { source, skill, agents } = (body.data ?? {}) as {
-            source?: unknown;
-            skill?: unknown;
-            agents?: unknown;
-          };
-          if (typeof source !== "string" || typeof skill !== "string") {
-            return json({ error: "INVALID_SKILL_ID" }, 400);
-          }
-          const agentTypes = parseInstallAgents(agents);
-          if (agentTypes === null) return json({ error: "UNSUPPORTED_AGENT_TYPE" }, 400);
-          const project = projectManager.getProject(req.params.id);
-          if (!project.ok) return json({ error: project.error }, errorStatus(project.error));
-
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { source, skill, agents } = b;
+        if (typeof source !== "string" || typeof skill !== "string") {
+          return errorResponse("INVALID_SKILL_ID");
+        }
+        const agentTypes = parseInstallAgents(agents);
+        if (agentTypes === null) return errorResponse("UNSUPPORTED_AGENT_TYPE");
+        return withProject(ctx, req.params.id, (project) => {
           const job = skillInstalls.start({
-            projectId: project.data.id,
-            projectName: project.data.name,
-            projectPath: project.data.path,
+            projectId: project.id,
+            projectName: project.name,
+            projectPath: project.path,
             source,
             skillId: skill,
             agentTypes,
           });
-          if (!job.ok) return json({ error: job.error }, errorStatus(job.error));
-          return json({ job: job.data }, 202);
-        } catch (e) {
-          return serverError(e);
-        }
+          return respond(job, (j) => ({ job: j }), 202);
+        });
       },
     },
 
     "/api/skills/installs": {
-      GET: () => {
-        try {
-          return json({ jobs: skillInstalls.list() });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: () => json({ jobs: skillInstalls.list() }),
     },
 
     "/api/skills/installs/:jobId": {
       GET: (req: BunRequest<"/api/skills/installs/:jobId">) => {
-        try {
-          const from = Number(new URL(req.url).searchParams.get("from") ?? "0");
-          const log = skillInstalls.get(req.params.jobId, Number.isFinite(from) ? from : 0);
-          if (!log) return json({ error: "INSTALL_JOB_NOT_FOUND" }, 404);
-          return json(log);
-        } catch (e) {
-          return serverError(e);
-        }
+        const log = skillInstalls.get(req.params.jobId, queryInt(req, "from"));
+        if (!log) return errorResponse("INSTALL_JOB_NOT_FOUND");
+        return json(log);
       },
     },
 
     "/api/skills/installs/:jobId/cancel": {
       POST: (req: BunRequest<"/api/skills/installs/:jobId/cancel">) => {
-        try {
-          const log = skillInstalls.get(req.params.jobId);
-          if (!log) return json({ error: "INSTALL_JOB_NOT_FOUND" }, 404);
-          if (!skillInstalls.cancel(req.params.jobId)) {
-            return json({ error: "INSTALL_JOB_NOT_RUNNING" }, 409);
-          }
-          return json({ ok: true }, 202);
-        } catch (e) {
-          return serverError(e);
-        }
+        if (!skillInstalls.get(req.params.jobId)) return errorResponse("INSTALL_JOB_NOT_FOUND");
+        if (!skillInstalls.cancel(req.params.jobId))
+          return errorResponse("INSTALL_JOB_NOT_RUNNING");
+        return json({ ok: true }, 202);
       },
     },
   };

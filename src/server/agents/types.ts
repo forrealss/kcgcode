@@ -284,7 +284,7 @@ export interface AgentClient {
   session: {
     /** Buat Session. Tanpa `title`, agent meng-generate judul dari prompt pertama. */
     create(input?: { title?: string }): Promise<Result<AgentSessionInfo>>;
-    /** Session masih dikenal agent? */
+    /** Session masih dikenal agent? Tidak -> `AGENT_SESSION_NOT_FOUND[: detail]`. */
     get(sessionID: string): Promise<Result<AgentSessionInfo>>;
     /** Hapus Session beserta riwayatnya. Session yang sudah tidak ada = sukses. */
     remove(sessionID: string): Promise<SimpleResult>;

@@ -12,6 +12,7 @@
  *   langsung menyegarkan begitu tab aktif kembali.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePolling } from "@/hooks/usePolling";
 import { apiFetch } from "@/lib/api";
 import type { SessionContext } from "@/types";
 
@@ -71,36 +72,12 @@ export function useSessionContext(
     setContext(null);
   }, [sessionId]);
 
+  // Skeleton hanya bila belum ada data; tiap (re)start poll memuat segera.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `busy`/`load` memulai ulang poll (lihat usePolling)
   useEffect(() => {
-    if (!enabled) return;
-    setLoading(!hasData.current);
-    void load();
-
-    let timer: ReturnType<typeof setInterval> | null = null;
-    const start = () => {
-      if (timer !== null) return;
-      timer = setInterval(() => void load(), busy ? ACTIVE_MS : IDLE_MS);
-    };
-    const stop = () => {
-      if (timer !== null) clearInterval(timer);
-      timer = null;
-    };
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void load();
-        start();
-      } else {
-        stop();
-      }
-    };
-
-    if (document.visibilityState === "visible") start();
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      stop();
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
+    if (enabled) setLoading(!hasData.current);
   }, [enabled, busy, load]);
+  usePolling(load, busy ? ACTIVE_MS : IDLE_MS, { enabled, pauseWhenHidden: true });
 
   return { context, loading, refresh };
 }

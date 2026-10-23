@@ -2,36 +2,22 @@
  * Engine homepage (`ProjectsPage`): daftar Project + ringkasan per Project.
  *
  * `GET /api/projects` + `GET /api/sessions` dimuat bersamaan, lalu
- * ringkasan & pencarian dihitung `lib/project-overview.ts` (murni, teruji).
+ * ringkasan dihitung `lib/project-overview.ts` (murni, teruji).
  * Komponen halaman tinggal merender hasilnya.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch, errorText } from "@/lib/api";
-import {
-  buildProjectOverviews,
-  filterProjectOverviews,
-  type ProjectOverview,
-  totalRunningSessions,
-} from "@/lib/project-overview";
+import { buildProjectOverviews, type ProjectOverview } from "@/lib/project-overview";
 import type { Project, Session } from "@/types";
-
-/** Ambang jumlah Project sebelum kolom pencarian ditampilkan. */
-const SEARCH_THRESHOLD = 5;
 
 export interface UseProjectsResult {
   overviews: ProjectOverview[];
   loading: boolean;
   loadError: string | null;
   refresh: () => Promise<void>;
-  /** Hasil pencarian (nama/path) dari `overviews`. */
-  visible: ProjectOverview[];
-  running: number;
-  showSearch: boolean;
   /** Dialog pembuatan Project baru. */
   dialogOpen: boolean;
   setDialogOpen: (open: boolean) => void;
-  query: string;
-  setQuery: (query: string) => void;
 }
 
 export function useProjects(): UseProjectsResult {
@@ -39,7 +25,6 @@ export function useProjects(): UseProjectsResult {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [query, setQuery] = useState("");
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -68,21 +53,5 @@ export function useProjects(): UseProjectsResult {
     void refresh();
   }, [refresh]);
 
-  const visible = useMemo(() => filterProjectOverviews(overviews, query), [overviews, query]);
-  const running = totalRunningSessions(overviews);
-  const showSearch = overviews.length >= SEARCH_THRESHOLD;
-
-  return {
-    overviews,
-    loading,
-    loadError,
-    refresh,
-    visible,
-    running,
-    showSearch,
-    dialogOpen,
-    setDialogOpen,
-    query,
-    setQuery,
-  };
+  return { overviews, loading, loadError, refresh, dialogOpen, setDialogOpen };
 }

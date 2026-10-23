@@ -61,7 +61,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMediaQuery, WIDE_QUERY } from "@/hooks/useMediaQuery";
 import { useSessionList } from "@/hooks/useSessionList";
 import { notifyDataChanged } from "@/lib/data-events";
 import { describeExternalSummary } from "@/lib/external-sessions";
@@ -74,9 +74,6 @@ import { EmptySessions } from "./EmptySessions";
 import { ProjectHeader } from "./ProjectHeader";
 import { SelectionActionBar } from "./SelectionActionBar";
 import { useSelectionModeExit } from "./useSelectionModeExit";
-
-/** Breakpoint `lg` Tailwind — di atasnya panel samping tampil inline. */
-const WIDE_QUERY = "(min-width: 1024px)";
 
 type SessionTab = "kcg" | "other";
 

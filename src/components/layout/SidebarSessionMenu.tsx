@@ -12,7 +12,6 @@
  */
 import { MoreVerticalIcon, PlayIcon, RotateCcwIcon, SquareIcon, Trash2Icon } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { ConfirmSessionDeleteDialog } from "@/components/sessions/ConfirmSessionDeleteDialog";
 import {
   DropdownMenu,
@@ -22,13 +21,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
-import { errorText } from "@/lib/api";
-import { notifyDataChanged } from "@/lib/data-events";
-import { deleteSession, resumeSession, stopSession } from "@/lib/session-api";
+import { type SessionLifecycleAction, useSessionLifecycle } from "@/hooks/useSessionLifecycle";
 import { cn } from "@/lib/utils";
 import type { Session } from "@/types";
-
-type Busy = "stop" | "start" | "restart" | null;
 
 export interface SidebarSessionMenuProps {
   session: Session;
@@ -40,58 +35,21 @@ export interface SidebarSessionMenuProps {
 
 export function SidebarSessionMenu({ session, title, onDeleted }: SidebarSessionMenuProps) {
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState<Busy>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const lifecycle = useSessionLifecycle({
+    onSuccess: (action) => {
+      if (action === "delete") setConfirmDelete(false);
+    },
+  });
+  const { busy: busyIds } = lifecycle;
+  const busy = busyIds.stop !== null || busyIds.start !== null || busyIds.restart !== null;
+  const deleting = busyIds.delete !== null;
   const running = session.status === "running";
 
-  const stop = () => stopSession(session.id);
-  const start = () => resumeSession(session.id);
-
-  const run = async (kind: Exclude<Busy, null>) => {
-    setBusy(kind);
-    try {
-      if (kind === "stop") {
-        await stop();
-        toast.success("Session stopped.");
-      } else if (kind === "start") {
-        await start();
-        toast.success("Session started.");
-      } else {
-        await stop();
-        await start();
-        toast.success("Session restarted.");
-      }
-      notifyDataChanged();
-    } catch (e) {
-      toast.error(
-        errorText(
-          e,
-          kind === "stop"
-            ? "Couldn't stop the session."
-            : kind === "start"
-              ? "Couldn't start the session."
-              : "Couldn't restart the session.",
-        ),
-      );
-    } finally {
-      setBusy(null);
-    }
-  };
+  const run = (action: SessionLifecycleAction) => void lifecycle.run(action, session.id);
 
   const remove = async () => {
-    setDeleting(true);
-    try {
-      await deleteSession(session.id);
-      setConfirmDelete(false);
-      toast.success("Session deleted.");
-      notifyDataChanged();
-      onDeleted?.();
-    } catch (e) {
-      toast.error(errorText(e, "Couldn't delete the session."));
-    } finally {
-      setDeleting(false);
-    }
+    if (await lifecycle.run("delete", session.id)) onDeleted?.();
   };
 
   return (
@@ -101,7 +59,7 @@ export function SidebarSessionMenu({ session, title, onDeleted }: SidebarSession
           <button
             type="button"
             aria-label={`Session actions: ${title}`}
-            disabled={busy !== null}
+            disabled={busy}
             className={cn(
               // Diselipkan di celah kosong KANAN baris (margin kanan
               // `SidebarMenuSub` = 24px), bukan menimpa judul: lebar 24px
@@ -112,27 +70,27 @@ export function SidebarSessionMenu({ session, title, onDeleted }: SidebarSession
               // Tersembunyi sampai baris di-hover / difokus; tetap terlihat
               // selama menu terbuka atau aksi berjalan.
               "opacity-0 group-focus-within/menu-sub-item:opacity-100 group-hover/menu-sub-item:opacity-100 data-[state=open]:opacity-100",
-              busy !== null && "opacity-100",
+              busy && "opacity-100",
               "[&>svg]:size-4",
             )}
           >
-            {busy !== null ? <Spinner className="size-3.5" /> : <MoreVerticalIcon />}
+            {busy ? <Spinner className="size-3.5" /> : <MoreVerticalIcon />}
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent side="right" align="start" className="min-w-40">
           {running ? (
             <>
-              <DropdownMenuItem onSelect={() => void run("stop")}>
+              <DropdownMenuItem onSelect={() => run("stop")}>
                 <SquareIcon />
                 Stop
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => void run("restart")}>
+              <DropdownMenuItem onSelect={() => run("restart")}>
                 <RotateCcwIcon />
                 Restart
               </DropdownMenuItem>
             </>
           ) : (
-            <DropdownMenuItem onSelect={() => void run("start")}>
+            <DropdownMenuItem onSelect={() => run("start")}>
               <PlayIcon />
               {session.status === "crashed" ? "Restart" : "Start"}
             </DropdownMenuItem>

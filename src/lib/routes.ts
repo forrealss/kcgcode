@@ -3,10 +3,17 @@
  *
  * Dipisah dari `hooks/useRouter.ts` agar dapat diuji dengan `bun test`
  * (pola yang sama dengan `useTheme.ts`). Server (`src/server/app.ts`)
- * menyajikan shell SPA hanya untuk rute halaman yang terdaftar di
- * `src/index.ts` (lihat `spaPaths`), sehingga React tinggal memetakan
- * `location.pathname` -> view lewat `parseRoute()`.
+ * menyajikan shell SPA hanya untuk rute halaman di `SPA_PATHS`, sehingga
+ * React tinggal memetakan `location.pathname` -> view lewat `parseRoute()`.
  */
+
+/**
+ * Rute halaman yang menyajikan shell SPA (`index.html`) — dipakai entry dev
+ * (`src/index.ts`) dan CLI (`cli/start-runtime.ts`). Session view
+ * (`/projects/:projectId/sessions/:sessionId`) tercakup wildcard; path lain
+ * mengembalikan 404.
+ */
+export const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings", "/settings/*"];
 
 /** Route hasil parsing `location.pathname`. */
 export type AppRoute =

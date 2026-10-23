@@ -8,6 +8,9 @@
 
 import type { TunnelProvider } from "../db/tunnel";
 import type { AttachmentManager } from "../services/attachments";
+import type { AuthService } from "../services/auth";
+import type { PasskeyService } from "../services/auth-passkeys";
+import type { NotificationService } from "../services/notifications";
 import type { DevServerManager } from "../services/preview/dev-servers";
 import type { PreviewServer } from "../services/preview/preview-server";
 import type { Screenshotter } from "../services/preview/screenshot";
@@ -19,8 +22,35 @@ import type { SkillsRegistry } from "../services/skills-registry";
 import type { TunnelManager } from "../services/tunnel";
 import type { LhrManager } from "../services/tunnel-lhr";
 import type { TurnDiffs } from "../services/turn-diffs";
+import type { UpdateChecker } from "../services/update-check";
+
+/**
+ * Data & config milik KCG Code (DB, uploads, turn-diffs, frpc.toml, config)
+ * — agent bisa membaca hash sandi / token tunnel bila terekspos.
+ */
+export interface ProtectedPaths {
+  /** Folder yang tak boleh tumpang tindih dengan workspace (Sandbox_Root). */
+  dirs: string[];
+  /**
+   * File/folder spesifik yang tak boleh dibuka viewer file walau berada di
+   * dalam Project (bukan foldernya — workspace default `~/.kcgcode/sandbox`
+   * berada di folder yang sama).
+   */
+  files: string[];
+}
 
 export interface ApiRouteContext {
+  /** Kunci aplikasi (lock screen, sesi, profil). */
+  auth: AuthService;
+  passkeys: PasskeyService;
+  notifications: NotificationService;
+  /** Cek versi baru di npm (Settings -> About). */
+  updates?: UpdateChecker;
+  /** File config aktif (ditulis saat workspace diganti). */
+  configPath: string;
+  protectedPaths: ProtectedPaths;
+  /** Home pengguna (`~`) — diinjeksi agar test tidak menyentuh home asli. */
+  home?: string;
   projectManager: ProjectManager;
   sessionManager: SessionManager;
   attachments: AttachmentManager;

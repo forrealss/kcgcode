@@ -2,14 +2,25 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { resolveConfig, saveConfigPort } from "../../config";
+import { parsePort, resolveConfig, saveConfigPort } from "../../config";
 import { choosePort, portIsFree, requestedPort } from "../port";
+
+describe("parsePort", () => {
+  test("integer 1-65535 diterima, selain itu null", () => {
+    expect(parsePort("3000")).toBe(3000);
+    expect(parsePort("65535")).toBe(65535);
+    for (const raw of ["", "  ", "0", "65536", "-1", "3.5", "abc"]) {
+      expect(parsePort(raw)).toBeNull();
+    }
+  });
+});
 
 describe("requestedPort", () => {
   test("prioritas flag > env > config > default", () => {
     expect(requestedPort({ flag: 1, env: "2", config: 3 })).toEqual({ port: 1, source: "flag" });
     expect(requestedPort({ env: "2", config: 3 })).toEqual({ port: 2, source: "env" });
     expect(requestedPort({ env: "abc", config: 3 })).toEqual({ port: 3, source: "config" });
+    expect(requestedPort({ env: " ", config: 3 })).toEqual({ port: 3, source: "config" });
     expect(requestedPort({})).toEqual({ port: 3000, source: "default" });
   });
 });

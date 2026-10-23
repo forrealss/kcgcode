@@ -141,7 +141,7 @@ export function createClaudeSessionApi(deps: ClaudeSessionApiDeps): AgentClient[
       await withTimeout(live.query.interrupt(), CONTROL_TIMEOUT_MS, "interrupt");
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: `CC_ABORT_FAILED: ${(e as Error).message}` };
+      return { ok: false, error: `AGENT_ABORT_FAILED: ${(e as Error).message}` };
     }
   }
 
@@ -165,7 +165,7 @@ export function createClaudeSessionApi(deps: ClaudeSessionApiDeps): AgentClient[
       }
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: `CC_DELETE_FAILED: ${(e as Error).message}` };
+      return { ok: false, error: `AGENT_DELETE_SESSION_FAILED: ${(e as Error).message}` };
     }
   }
 
@@ -182,7 +182,7 @@ export function createClaudeSessionApi(deps: ClaudeSessionApiDeps): AgentClient[
         getOrCreate(sessionId, true);
         return { ok: true, data: { id: sessionId, directory: cwd } };
       }
-      return { ok: false, error: "SESSION_NOT_FOUND" };
+      return { ok: false, error: "AGENT_SESSION_NOT_FOUND" };
     },
     remove,
     async switchModel(sessionId, model, effort = null) {

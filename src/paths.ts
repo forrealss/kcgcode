@@ -47,11 +47,6 @@ export const LOCAL_DB_PATH = path.resolve("data", "kcg-code.sqlite");
 /** Uploads lokal di cwd (dev). */
 export const LOCAL_UPLOADS_DIR = path.resolve("data", "uploads");
 
-/** Default config sesuai mode runtime. */
-export function defaultConfigPath(): string {
-  return isCliMode() ? USER_CONFIG_PATH : path.resolve(LOCAL_CONFIG_NAME);
-}
-
 /** Default SQLite sesuai mode runtime. */
 export function defaultDbPath(): string {
   return isCliMode() ? USER_DB_PATH : LOCAL_DB_PATH;
@@ -66,12 +61,6 @@ export function defaultUploadsDir(): string {
 export function defaultSandboxDir(): string {
   return isCliMode() ? USER_SANDBOX_DIR : path.resolve("sandbox");
 }
-
-/** Back-compat alias (dipakai kode lama / dashboard). */
-export const DEFAULT_CONFIG_PATH = USER_CONFIG_PATH;
-export const DEFAULT_DB_PATH = USER_DB_PATH;
-export const DEFAULT_UPLOADS_DIR = USER_UPLOADS_DIR;
-export const DEFAULT_SANDBOX_DIR = USER_SANDBOX_DIR;
 
 /** Buat `~/.kcgcode` (dan subfolder data) bila belum ada. */
 export function ensureKcgHome(): string {
@@ -110,6 +99,11 @@ export function resolveEffectiveDbPath(): string {
 /** Path uploads efektif (belum ada env override). */
 export function resolveEffectiveUploadsDir(): string {
   return defaultUploadsDir();
+}
+
+/** File yang diubah agent per turn: `turn-diffs/` di samping folder uploads. */
+export function resolveTurnDiffsDir(uploadsRoot: string): string {
+  return path.join(path.dirname(uploadsRoot), "turn-diffs");
 }
 
 /** Binary pihak ketiga yang diunduh otomatis (mis. `frpc`): `~/.kcgcode/bin`. */

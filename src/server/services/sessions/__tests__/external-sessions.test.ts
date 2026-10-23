@@ -135,11 +135,11 @@ test("masih terbuka di aplikasi lain: ditolak tanpa fork; fork -> lanjut di sali
 test("gagal: riwayat tak terbaca, id tak dikenal, agent tanpa dukungan impor", async () => {
   const { h, state } = externalHarness();
   try {
-    state.history = { ok: false, error: "CC_EXTERNAL_HISTORY_FAILED: boom" };
+    state.history = { ok: false, error: "AGENT_EXTERNAL_HISTORY_FAILED: boom" };
     const req = { projectId: "p1", agentType: "claude-code" as const, externalId: "cc-1" };
     expect(await h.sm.importExternalSession(req)).toEqual({
       ok: false,
-      error: "CC_EXTERNAL_HISTORY_FAILED: boom",
+      error: "AGENT_EXTERNAL_HISTORY_FAILED: boom",
     });
     expect(h.store.listSessions()).toHaveLength(0);
 

@@ -36,8 +36,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
-import { AGENT_TYPE_LABELS, AGENT_TYPES, agentQuery } from "@/lib/agent-types";
-import { apiFetch, errorText } from "@/lib/api";
+import { useModelList } from "@/hooks/useModelList";
+import { useSessionSettingSaver } from "@/hooks/useSessionSettingSaver";
+import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
 import {
   activeModelLabel,
   carryEffort,
@@ -46,8 +47,7 @@ import {
   modelEfforts,
   shortModelName,
 } from "@/lib/model-picker";
-import { updateSessionSettings } from "@/lib/session-api";
-import type { AgentType, ModelOption, SessionModel } from "@/types";
+import type { AgentType, SessionModel } from "@/types";
 
 export interface ModelPickerProps {
   projectId: string;
@@ -95,10 +95,21 @@ export function ModelPicker({
   onAgentTypeChange,
 }: ModelPickerProps) {
   const [open, setOpen] = useState(false);
-  const [models, setModels] = useState<ModelOption[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Daftar model selalu di-fetch ulang saat dialog dibuka — list di server
+  // headless bisa berubah bila user mengedit config opencode (`opencode serve`
+  // tidak hot-reload). Lazy: tidak di-spawn saat halaman Session dibuka.
+  const {
+    models,
+    loading,
+    error: loadError,
+  } = useModelList(projectId, agentType, open, "Failed to load model list");
+  const {
+    saving,
+    error: saveError,
+    setError: setSaveError,
+    save,
+  } = useSessionSettingSaver(sessionId);
+  const error = saveError ?? loadError;
 
   const label = activeModelLabel(model, models ?? []);
   /** Judul header: buang prefiks vendor & potong bila panjang. */
@@ -116,70 +127,30 @@ export function ModelPicker({
   /** Tingkat effort model aktif — kosong sampai daftar model termuat. */
   const efforts = modelEfforts(model, models ?? []);
 
-  // Daftar model selalu di-fetch ulang saat dialog dibuka — list di server
-  // headless bisa berubah bila user mengedit config opencode (`opencode serve`
-  // tidak hot-reload). Lazy: tidak di-spawn saat halaman Session dibuka.
+  // Daftar model baru -> error simpan lama tidak relevan lagi.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset tiap dialog dibuka / agent berganti
   useEffect(() => {
-    if (!open) return;
-    // Agent bisa diganti saat dialog terbuka — abaikan respons fetch lama.
-    let stale = false;
-    setLoading(true);
-    setError(null);
-    apiFetch(`/api/projects/${projectId}/models${agentQuery(agentType)}`)
-      .then(async (res) => {
-        const body = (await res.json()) as { models: ModelOption[] };
-        if (!stale) setModels(body.models);
-      })
-      .catch((e: unknown) => {
-        if (stale) return;
-        setError(errorText(e, "Failed to load model list"));
-        setModels([]);
-      })
-      .finally(() => {
-        if (!stale) setLoading(false);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [open, projectId, agentType]);
+    if (open) setSaveError(null);
+  }, [open, projectId, agentType, setSaveError]);
 
   const choose = async (next: SessionModel | null) => {
     // Effort ikut model: tetap bila model baru mendukungnya, selain itu default.
     const nextEffort = onEffortChange ? carryEffort(effort, next, models ?? []) : effort;
-    setSaving(true);
-    setError(null);
-    try {
-      if (sessionId !== null) {
-        await updateSessionSettings(sessionId, {
-          model: next,
-          ...(nextEffort !== effort ? { effort: nextEffort } : {}),
-        });
-      }
-      onChanged(next);
-      if (nextEffort !== effort) onEffortChange?.(nextEffort);
-      setOpen(false);
-    } catch (e) {
-      setError(errorText(e, "Failed to change model"));
-    } finally {
-      setSaving(false);
-    }
+    await save(
+      { model: next, ...(nextEffort !== effort ? { effort: nextEffort } : {}) },
+      () => {
+        onChanged(next);
+        if (nextEffort !== effort) onEffortChange?.(nextEffort);
+        setOpen(false);
+      },
+      "Failed to change model",
+    );
   };
 
   /** Ganti effort tanpa menutup dialog (model masih bisa diganti). */
   const chooseEffort = async (next: string | null) => {
     if (next === effort) return;
-    setSaving(true);
-    setError(null);
-    try {
-      if (sessionId !== null) {
-        await updateSessionSettings(sessionId, { effort: next });
-      }
-      onEffortChange?.(next);
-    } catch (e) {
-      setError(errorText(e, "Failed to change thinking effort"));
-    } finally {
-      setSaving(false);
-    }
+    await save({ effort: next }, () => onEffortChange?.(next), "Failed to change thinking effort");
   };
 
   return (
@@ -254,7 +225,7 @@ export function ModelPicker({
         onOpenChange={(next) => {
           if (saving) return;
           setOpen(next);
-          if (!next) setError(null);
+          if (!next) setSaveError(null);
         }}
       >
         {/* AdwDialog: header bar (judul + subjudul di tengah, tombol tutup

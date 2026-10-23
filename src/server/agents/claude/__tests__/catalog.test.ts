@@ -92,7 +92,7 @@ describe("MCP & skill Claude Code", () => {
     for (const c of calls) expect(c.query.controls).toEqual(["toggle:fs:true", "reconnect:fs"]);
   });
 
-  test("gagal di satu proses -> CC_MCP_FAILED, proses lain tetap menerima request", async () => {
+  test("gagal di satu proses -> AGENT_MCP_FAILED, proses lain tetap menerima request", async () => {
     const { client, calls } = setup();
     await client.session.prompt({ sessionID: SID, text: "a" });
     await client.session.prompt({ sessionID: SID2, text: "b" });
@@ -101,7 +101,7 @@ describe("MCP & skill Claude Code", () => {
     if (first) first.mcpError = new Error('Executable not found in $PATH: "npx"');
     expect(await client.mcp.reconnect("fs")).toEqual({
       ok: false,
-      error: 'CC_MCP_FAILED: Executable not found in $PATH: "npx"',
+      error: 'AGENT_MCP_FAILED: Executable not found in $PATH: "npx"',
     });
     expect(calls[1]?.query.controls).toEqual(["reconnect:fs"]);
   });

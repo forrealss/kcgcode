@@ -14,7 +14,7 @@
 import type { BunRequest } from "bun";
 import type { AgentType, McpServerInfo } from "../../types";
 import type { Result, SimpleResult } from "../result";
-import { errorStatus, json, readJson, serverError } from "./helpers";
+import { errorResponse, json, readObject, respond } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 /**
@@ -32,10 +32,7 @@ function agentTypeParam(req: Request): AgentType {
  */
 function mcpActionResponse(res: SimpleResult, list: Result<McpServerInfo[]>): Response {
   const mcp = list.ok ? { mcp: list.data } : {};
-  if (!res.ok) {
-    const error = res.error ?? "ERROR";
-    return json({ error, ...mcp }, errorStatus(error));
-  }
+  if (!res.ok) return errorResponse(res.error ?? "ERROR", mcp);
   return json({ ok: true, ...mcp });
 }
 
@@ -44,28 +41,17 @@ export function projectsRoutes(ctx: ApiRouteContext) {
   return {
     // ---- Project & Folder_Browser (Requirement 10) ----
     "/api/projects": {
-      GET: () => {
-        try {
-          return json({ projects: projectManager.listProjects() });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: () => json({ projects: projectManager.listProjects() }),
       POST: async (req: Request) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { name, path } = body.data as { name?: unknown; path?: unknown };
-          const res = projectManager.createProject(
-            typeof name === "string" ? name : "",
-            typeof path === "string" ? path : "",
-          );
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          notifyDataChanged();
-          return json({ project: res.data }, 201);
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const res = projectManager.createProject(
+          typeof b.name === "string" ? b.name : "",
+          typeof b.path === "string" ? b.path : "",
+        );
+        if (!res.ok) return errorResponse(res.error);
+        notifyDataChanged();
+        return json({ project: res.data }, 201);
       },
     },
 
@@ -76,19 +62,14 @@ export function projectsRoutes(ctx: ApiRouteContext) {
        * hapus instruksi.
        */
       PATCH: async (req: BunRequest<"/api/projects/:id">) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { instructions } = (body.data ?? {}) as { instructions?: unknown };
-          if (instructions !== null && typeof instructions !== "string") {
-            return json({ error: "INVALID_INSTRUCTIONS" }, 400);
-          }
-          const res = projectManager.updateInstructions(req.params.id, instructions ?? "");
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ project: res.data });
-        } catch (e) {
-          return serverError(e);
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { instructions } = b;
+        if (instructions !== null && typeof instructions !== "string") {
+          return errorResponse("INVALID_INSTRUCTIONS");
         }
+        const res = projectManager.updateInstructions(req.params.id, instructions ?? "");
+        return respond(res, (project) => ({ project }));
       },
       /**
        * Hapus pendaftaran Project. Seluruh Session miliknya dihapus lebih dulu
@@ -100,60 +81,36 @@ export function projectsRoutes(ctx: ApiRouteContext) {
        * ada supaya operasi bisa dicoba ulang tanpa meninggalkan sesi yatim.
        */
       DELETE: async (req: BunRequest<"/api/projects/:id">) => {
-        try {
-          const released = await sessionManager.releaseProject(req.params.id);
-          if (!released.ok) {
-            return json({ error: released.error ?? "ERROR" }, errorStatus(released.error ?? ""));
-          }
-          const res = projectManager.deleteProject(req.params.id);
-          if (!res.ok) {
-            return json({ error: res.error ?? "ERROR" }, errorStatus(res.error ?? ""));
-          }
-          notifyDataChanged();
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
+        const released = await sessionManager.releaseProject(req.params.id);
+        if (!released.ok) return errorResponse(released.error ?? "ERROR");
+        const res = projectManager.deleteProject(req.params.id);
+        if (!res.ok) return errorResponse(res.error ?? "ERROR");
+        notifyDataChanged();
+        return json({ ok: true });
       },
     },
 
     "/api/fs": {
       GET: (req: Request) => {
-        try {
-          const url = new URL(req.url);
-          const res = projectManager.listDirectory(url.searchParams.get("path") ?? "");
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ entries: res.data.entries });
-        } catch (e) {
-          return serverError(e);
-        }
+        const res = projectManager.listDirectory(new URL(req.url).searchParams.get("path") ?? "");
+        return respond(res, (d) => ({ entries: d.entries }));
       },
     },
 
     // ---- Daftar model yang tersedia pada server headless Project ----
     "/api/projects/:id/models": {
-      GET: async (req: BunRequest<"/api/projects/:id/models">) => {
-        try {
-          const res = await sessionManager.listModels(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ models: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/projects/:id/models">) =>
+        respond(await sessionManager.listModels(req.params.id, agentTypeParam(req)), (models) => ({
+          models,
+        })),
     },
 
     // ---- MCP server & skill Project (panel samping halaman Project) ----
     "/api/projects/:id/mcp": {
-      GET: async (req: BunRequest<"/api/projects/:id/mcp">) => {
-        try {
-          const res = await sessionManager.listMcp(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ mcp: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/projects/:id/mcp">) =>
+        respond(await sessionManager.listMcp(req.params.id, agentTypeParam(req)), (mcp) => ({
+          mcp,
+        })),
     },
 
     /**
@@ -164,49 +121,35 @@ export function projectsRoutes(ctx: ApiRouteContext) {
      */
     "/api/projects/:id/mcp/toggle": {
       POST: async (req: BunRequest<"/api/projects/:id/mcp/toggle">) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { name, enabled } = (body.data ?? {}) as { name?: unknown; enabled?: unknown };
-          if (typeof name !== "string" || typeof enabled !== "boolean") {
-            return json({ error: "INVALID_MCP_SERVER" }, 400);
-          }
-          const agent = agentTypeParam(req);
-          const res = await sessionManager.setMcpEnabled(req.params.id, name, enabled, agent);
-          return mcpActionResponse(res, await sessionManager.listMcp(req.params.id, agent));
-        } catch (e) {
-          return serverError(e);
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { name, enabled } = b;
+        if (typeof name !== "string" || typeof enabled !== "boolean") {
+          return errorResponse("INVALID_MCP_SERVER");
         }
+        const agent = agentTypeParam(req);
+        const res = await sessionManager.setMcpEnabled(req.params.id, name, enabled, agent);
+        return mcpActionResponse(res, await sessionManager.listMcp(req.params.id, agent));
       },
     },
 
     /** Sambungkan ulang MCP server (`{ name }`); balasan seperti `toggle`. */
     "/api/projects/:id/mcp/reconnect": {
       POST: async (req: BunRequest<"/api/projects/:id/mcp/reconnect">) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { name } = (body.data ?? {}) as { name?: unknown };
-          if (typeof name !== "string") return json({ error: "INVALID_MCP_SERVER" }, 400);
-          const agent = agentTypeParam(req);
-          const res = await sessionManager.reconnectMcp(req.params.id, name, agent);
-          return mcpActionResponse(res, await sessionManager.listMcp(req.params.id, agent));
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        if (typeof b.name !== "string") return errorResponse("INVALID_MCP_SERVER");
+        const agent = agentTypeParam(req);
+        const res = await sessionManager.reconnectMcp(req.params.id, b.name, agent);
+        return mcpActionResponse(res, await sessionManager.listMcp(req.params.id, agent));
       },
     },
 
     "/api/projects/:id/skills": {
-      GET: async (req: BunRequest<"/api/projects/:id/skills">) => {
-        try {
-          const res = await sessionManager.listSkills(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ skills: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/projects/:id/skills">) =>
+        respond(await sessionManager.listSkills(req.params.id, agentTypeParam(req)), (skills) => ({
+          skills,
+        })),
     },
 
     /**
@@ -215,71 +158,46 @@ export function projectsRoutes(ctx: ApiRouteContext) {
      * di Project selesai, `refreshed: false`).
      */
     "/api/projects/:id/skills/reload": {
-      POST: async (req: BunRequest<"/api/projects/:id/skills/reload">) => {
-        try {
-          const res = await sessionManager.refreshSkills(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json(res.data);
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      POST: async (req: BunRequest<"/api/projects/:id/skills/reload">) =>
+        respond(await sessionManager.refreshSkills(req.params.id, agentTypeParam(req)), (d) => d),
     },
 
     // ---- Slash command (autocomplete `/` di composer) ----
     "/api/projects/:id/commands": {
-      GET: async (req: BunRequest<"/api/projects/:id/commands">) => {
-        try {
-          const res = await sessionManager.listCommands(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ commands: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/projects/:id/commands">) =>
+        respond(
+          await sessionManager.listCommands(req.params.id, agentTypeParam(req)),
+          (commands) => ({ commands }),
+        ),
     },
 
     // ---- Fitur khas agent (mis. permission mode Claude Code) ----
     "/api/projects/:id/capabilities": {
-      GET: async (req: BunRequest<"/api/projects/:id/capabilities">) => {
-        try {
-          const res = await sessionManager.listCapabilities(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ capabilities: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/projects/:id/capabilities">) =>
+        respond(
+          await sessionManager.listCapabilities(req.params.id, agentTypeParam(req)),
+          (capabilities) => ({ capabilities }),
+        ),
     },
 
     // ---- Agent (mode) opencode: build/plan + agent kustom user ----
     "/api/projects/:id/agents": {
-      GET: async (req: BunRequest<"/api/projects/:id/agents">) => {
-        try {
-          const res = await sessionManager.listAgents(req.params.id, agentTypeParam(req));
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ agents: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async (req: BunRequest<"/api/projects/:id/agents">) =>
+        respond(await sessionManager.listAgents(req.params.id, agentTypeParam(req)), (agents) => ({
+          agents,
+        })),
     },
 
     // ---- Session agent buatan Claude Desktop / CLI / opencode untuk direktori Project ----
     "/api/projects/:id/external-sessions": {
       /** Kandidat impor (`?agent=`, default Claude Code). */
       GET: async (req: BunRequest<"/api/projects/:id/external-sessions">) => {
-        try {
-          const agent = new URL(req.url).searchParams.get("agent");
-          const res = await sessionManager.listExternalSessions(
-            req.params.id,
-            (agent ?? "claude-code") as AgentType,
-          );
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ sessions: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const agent = new URL(req.url).searchParams.get("agent");
+        const res = await sessionManager.listExternalSessions(
+          req.params.id,
+          (agent ?? "claude-code") as AgentType,
+        );
+        return respond(res, (sessions) => ({ sessions }));
       },
       /**
        * Impor satu Session: body `{ id, agentType?, fork? }`. Session yang
@@ -287,29 +205,19 @@ export function projectsRoutes(ctx: ApiRouteContext) {
        * `fork: true` (lanjut di salinan).
        */
       POST: async (req: BunRequest<"/api/projects/:id/external-sessions">) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { id, agentType, fork } = body.data as {
-            id?: unknown;
-            agentType?: unknown;
-            fork?: unknown;
-          };
-          if (typeof id !== "string" || id.trim() === "") {
-            return json({ error: "SESSION_NOT_FOUND" }, errorStatus("SESSION_NOT_FOUND"));
-          }
-          const res = await sessionManager.importExternalSession({
-            projectId: req.params.id,
-            agentType: (typeof agentType === "string" ? agentType : "claude-code") as AgentType,
-            externalId: id.trim(),
-            fork: fork === true,
-          });
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          notifyDataChanged();
-          return json({ session: res.session }, 201);
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { id, agentType, fork } = b;
+        if (typeof id !== "string" || id.trim() === "") return errorResponse("SESSION_NOT_FOUND");
+        const res = await sessionManager.importExternalSession({
+          projectId: req.params.id,
+          agentType: (typeof agentType === "string" ? agentType : "claude-code") as AgentType,
+          externalId: id.trim(),
+          fork: fork === true,
+        });
+        if (!res.ok) return errorResponse(res.error);
+        notifyDataChanged();
+        return json({ session: res.session }, 201);
       },
     },
   };

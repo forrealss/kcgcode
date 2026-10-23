@@ -54,8 +54,7 @@ export async function getPasskeyAvailability(): Promise<PasskeyAvailability> {
   return (await res.json()) as PasskeyAvailability;
 }
 
-export async function listPasskeys(): Promise<PasskeyInfo[]> {
-  const res = await apiFetch("/api/auth/passkeys");
+export async function selectPasskeys(res: Response): Promise<PasskeyInfo[]> {
   return ((await res.json()) as { passkeys: PasskeyInfo[] }).passkeys;
 }
 

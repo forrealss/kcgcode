@@ -11,39 +11,33 @@
  * - Alamat yang tidak mendukung passkey (http selain localhost / IP) ->
  *   tombol tambah dinonaktifkan dengan penjelasan.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { errorText } from "@/lib/api";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import {
-  listPasskeys,
   type PasskeyInfo,
   passkeysSupportedHere,
   renamePasskey,
+  selectPasskeys,
 } from "@/lib/passkeys";
 import type { AuthStatus } from "@/server/services/auth";
 import { AddPasskeyDialog } from "./AddPasskeyDialog";
-import { type LoadState, PasskeysView } from "./PasskeysView";
+import { PasskeysView } from "./PasskeysView";
 import { RemovePasskeyDialog } from "./RemovePasskeyDialog";
 
 export function PasskeysGroup({ status }: { status: AuthStatus }) {
-  const [state, setState] = useState<LoadState>({ phase: "loading" });
+  const [state, reload, mutate] = useApiQuery("/api/auth/passkeys", {
+    select: selectPasskeys,
+    errorMessage: "Couldn't load passkeys.",
+  });
   const [addOpen, setAddOpen] = useState(false);
   const [removing, setRemoving] = useState<PasskeyInfo | null>(null);
   // `null` saat SSR/test; diisi setelah mount (butuh `window`).
   const [supported, setSupported] = useState<boolean | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      setState({ phase: "ready", passkeys: await listPasskeys() });
-    } catch (e) {
-      setState({ phase: "error", message: errorText(e, "Couldn't load passkeys.") });
-    }
-  }, []);
-
   useEffect(() => {
     setSupported(passkeysSupportedHere());
-    void load();
-  }, [load]);
+  }, []);
 
   return (
     <>
@@ -53,15 +47,8 @@ export function PasskeysGroup({ status }: { status: AuthStatus }) {
         onAdd={() => setAddOpen(true)}
         onRename={async (p, name) => {
           const updated = await renamePasskey(p.id, name);
-          setState((s) =>
-            s.phase === "ready"
-              ? {
-                  ...s,
-                  passkeys: s.passkeys.map((x) =>
-                    x.id === p.id ? { ...x, name: updated.name } : x,
-                  ),
-                }
-              : s,
+          mutate((passkeys) =>
+            passkeys.map((x) => (x.id === p.id ? { ...x, name: updated.name } : x)),
           );
         }}
         onRemove={setRemoving}
@@ -73,7 +60,7 @@ export function PasskeysGroup({ status }: { status: AuthStatus }) {
         onAdded={(p) => {
           setAddOpen(false);
           toast.success(`${p.name} added. You can now unlock with it.`);
-          void load();
+          reload();
         }}
       />
       <RemovePasskeyDialog
@@ -82,9 +69,7 @@ export function PasskeysGroup({ status }: { status: AuthStatus }) {
         onRemoved={(p) => {
           setRemoving(null);
           toast.success(`${p.name} removed.`);
-          setState((s) =>
-            s.phase === "ready" ? { ...s, passkeys: s.passkeys.filter((x) => x.id !== p.id) } : s,
-          );
+          mutate((passkeys) => passkeys.filter((x) => x.id !== p.id));
         }}
       />
     </>

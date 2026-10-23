@@ -12,7 +12,6 @@ import {
   RefreshCwIcon,
   Trash2Icon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,25 +22,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { cn } from "@/lib/utils";
 import type { Project } from "@/types";
 
 /** Path Project yang bisa diklik untuk disalin — ikon muncul saat hover. */
 export function CopyablePath({ path }: { path: string }) {
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(t);
-  }, [copied]);
+  const { copied, copy: copyText } = useCopyToClipboard();
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(path);
-      setCopied(true);
+    if (await copyText(path)) {
       toast.success("Path copied.");
-    } catch {
+    } else {
       // Clipboard API butuh konteks aman (HTTPS / localhost).
       toast.error("Couldn't copy. Select the path and copy it manually.");
     }

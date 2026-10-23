@@ -1,6 +1,5 @@
-import { CheckIcon, CopyIcon, ExternalLinkIcon, QrCodeIcon, Share2Icon } from "lucide-react";
-import { useState } from "react";
-import { toast } from "sonner";
+import { ExternalLinkIcon, QrCodeIcon, Share2Icon } from "lucide-react";
+import { CopyIconButton } from "@/components/common/CopyIconButton";
 import { ActionRow, ExpanderRow } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import { QrCode } from "./QrCode";
@@ -14,19 +13,6 @@ import { RowGlyph } from "./rows";
  *   pengguna sudah di HP, QR jarang dibutuhkan.
  */
 export function LiveAddress({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url);
-      setCopied(true);
-      toast.success("Link copied.");
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API butuh konteks aman (HTTPS / localhost).
-      toast.error("Couldn't copy. Select the link and copy it manually.");
-    }
-  };
-
   // Web Share API (umumnya HP): kirim link lewat WhatsApp / email / dll.
   const canShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
   const share = async () => {
@@ -53,16 +39,15 @@ export function LiveAddress({ url }: { url: string }) {
         >
           {host}
         </a>
-        <Button
-          type="button"
-          variant="ghost"
+        <CopyIconButton
+          value={url}
+          label="Copy link"
           size="icon-sm"
           className="rounded-full"
-          aria-label={copied ? "Copied" : "Copy link"}
-          onClick={() => void copy()}
-        >
-          {copied ? <CheckIcon className="text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
-        </Button>
+          checkClassName="text-emerald-600 dark:text-emerald-400"
+          successMessage="Link copied."
+          errorMessage="Couldn't copy. Select the link and copy it manually."
+        />
         <Button asChild variant="ghost" size="icon-sm" className="rounded-full">
           <a href={url} target="_blank" rel="noopener noreferrer" aria-label="Open link in new tab">
             <ExternalLinkIcon />

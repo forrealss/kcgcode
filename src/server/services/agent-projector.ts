@@ -49,7 +49,7 @@ import type { AgentProjectorOptions, ProjectorContext } from "./projector/types"
 import { TurnUsageTracker } from "./projector/usage";
 import { isPlaceholderTitle, retryMessage } from "./session-events";
 
-export { TOOL_OUTPUT_MAX_LENGTH, toolContentText } from "./projector/tool-output";
+export { toolContentText } from "./projector/tool-output";
 export type { AgentProjectorOptions } from "./projector/types";
 
 export class AgentEventProjector {

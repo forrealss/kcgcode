@@ -9,10 +9,13 @@
  *   `@path` saat satu saran dipilih.
  *
  * Hook `useFileMention` mengelola state dropdown + fetch `/files?q=`
- * dengan debounce 150 ms; server mencari via index milik opencode.
+ * dengan debounce 150 ms; server mencari via index milik opencode. Fetch
+ * default `apiFetch`: sesi habis (401) memasang lock screen.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useListNavigation } from "@/hooks/useListNavigation";
+import { apiFetch } from "@/lib/api";
 
 export interface ActiveMention {
   /** Teks query setelah `@` (tanpa simbol `@`). */
@@ -81,11 +84,6 @@ export interface UseFileMentionResult {
   pick(index: number): string | null;
   /** Navigasi keyboard; return true bila event ditangani (blok default). */
   handleKeyDown(e: { key: string; preventDefault(): void }): boolean;
-  /**
-   * Pasang callback yang dipanggil saat saran dipilih via keyboard
-   * (Enter/Tab) — menerima teks input baru hasil substitusi `@path`.
-   */
-  setOnPick(cb: (next: string) => void): void;
   /** Tutup dropdown (mis. saat blur). */
   close(): void;
 }
@@ -97,34 +95,49 @@ export interface UseFileMentionOptions {
   debounceMs?: number;
   /** Batas saran yang ditampilkan. */
   limit?: number;
+  /**
+   * Dipanggil saat saran dipilih via keyboard (Enter/Tab) — menerima teks
+   * input baru hasil substitusi `@path` (hook tidak memegang state textarea).
+   */
+  onPick?: (next: string) => void;
 }
 
 type FetchFn = (path: string) => Promise<Response>;
 
 export function useFileMention(
   opts: UseFileMentionOptions,
-  fetchFn: FetchFn = (p) => fetch(p),
+  fetchFn: FetchFn = apiFetch,
 ): UseFileMentionResult {
-  const { endpoint, debounceMs = 150, limit = 8 } = opts;
+  const { endpoint, debounceMs = 150, limit = 8, onPick } = opts;
   const [mention, setMention] = useState<ActiveMention | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [highlighted, setHighlighted] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastTextRef = useRef("");
   const lastCaretRef = useRef(0);
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
+
+  const nav = useListNavigation({
+    count: suggestions.length,
+    active: mention !== null && suggestions.length > 0,
+    onSelect: (index) => {
+      const next = pick(index);
+      // Teruskan teks baru ke pemanggil — tanpa ini hasil pilihan keyboard
+      // terbuang (bug: Enter tidak menyisipkan file).
+      if (next !== null) onPickRef.current?.(next);
+      return next !== null;
+    },
+    onClose: () => close(),
+  });
+  const { resetHighlight } = nav;
 
   const close = useCallback(() => {
     setSuggestions([]);
     setMention(null);
-    setHighlighted(0);
+    resetHighlight();
     setError(null);
-  }, []);
-
-  /** Pasang callback pilihan keyboard (dipanggil sekali dari efek pemanggil). */
-  const setOnPick = useCallback((cb: (next: string) => void) => {
-    onPickRef.current = cb;
-  }, []);
+  }, [resetHighlight]);
 
   // Fetch saran (debounced) setiap mention berubah. fetchFn/endpoint tidak
   // masuk dependency (stabil dari pemanggil; efek cukup pada perubahan token).
@@ -143,7 +156,7 @@ export function useFileMention(
             ? body.files.filter((f): f is string => typeof f === "string")
             : [];
           setSuggestions(files.slice(0, limit));
-          setHighlighted(0);
+          resetHighlight();
         })
         .catch((e) => {
           if ((e as Error).name === "AbortError") return;
@@ -184,53 +197,15 @@ export function useFileMention(
     [mention, suggestions, close],
   );
 
-  /**
-   * Ref ke callback pemanggil: hasil `pick` (teks baru) disetel ke state
-   * input lewat sini — hook tidak memegang state textarea.
-   */
-  const onPickRef = useRef<((next: string) => void) | null>(null);
-
-  const handleKeyDown = useCallback(
-    (e: { key: string; preventDefault(): void }): boolean => {
-      if (!mention || suggestions.length === 0) return false;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setHighlighted((h) => (h + 1) % suggestions.length);
-        return true;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setHighlighted((h) => (h - 1 + suggestions.length) % suggestions.length);
-        return true;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        const next = pick(highlighted);
-        // Teruskan teks baru ke pemanggil — tanpa ini hasil pilihan keyboard
-        // terbuang (bug: Enter tidak menyisipkan file).
-        if (next !== null) onPickRef.current?.(next);
-        return next !== null;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-        return true;
-      }
-      return false;
-    },
-    [mention, suggestions, highlighted, pick, close],
-  );
-
   return {
     suggestions,
-    highlighted,
+    highlighted: nav.highlighted,
     mention,
     loading,
     error,
     onInputChange,
     pick,
-    handleKeyDown,
-    setOnPick,
+    handleKeyDown: nav.handleKeyDown,
     close,
   };
 }

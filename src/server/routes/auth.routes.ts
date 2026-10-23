@@ -21,34 +21,17 @@
  */
 import type { BunRequest, Server } from "bun";
 import type { LockKind } from "../db/auth";
-import type { AuthService } from "../services/auth";
 import { clearSessionCookie, clientIp, readSessionToken, sessionCookie } from "./auth-guard";
-import { errorStatus, json, readJson, serverError } from "./helpers";
-
-/** Kode rate-limit membawa detik tunggu: `AUTH_RATE_LIMITED:<sec>`. */
-function rateLimited(code: string): number | null {
-  if (!code.startsWith("AUTH_RATE_LIMITED:")) return null;
-  const n = Number(code.slice("AUTH_RATE_LIMITED:".length));
-  return Number.isFinite(n) ? n : null;
-}
-
-function authError(code: string): Response {
-  const wait = rateLimited(code);
-  if (wait !== null) {
-    return new Response(JSON.stringify({ error: "AUTH_RATE_LIMITED", retryAfterSec: wait }), {
-      status: 429,
-      headers: { "content-type": "application/json", "retry-after": String(wait) },
-    });
-  }
-  return json({ error: code }, errorStatus(code));
-}
+import { errorResponse, json, readObject, respond } from "./helpers";
+import type { ApiRouteContext } from "./types";
 
 function withCookie(res: Response, cookie: string): Response {
   res.headers.append("set-cookie", cookie);
   return res;
 }
 
-export function authRoutes(auth: AuthService) {
+export function authRoutes(ctx: ApiRouteContext) {
+  const { auth } = ctx;
   const ctxOf = (req: Request, server: Server<unknown>) => ({
     ip: clientIp(req, server),
     userAgent: req.headers.get("user-agent"),
@@ -57,185 +40,124 @@ export function authRoutes(auth: AuthService) {
   return {
     "/api/auth/status": {
       GET: (req: Request, server: Server<unknown>) => {
-        try {
-          const st = auth.status(readSessionToken(req), clientIp(req, server));
-          // Sesi kedaluwarsa / terkunci otomatis -> bersihkan cookie basi.
-          const res = json(st);
-          if (st.protected && !st.authenticated && readSessionToken(req)) {
-            return withCookie(res, clearSessionCookie(req));
-          }
-          return res;
-        } catch (e) {
-          return serverError(e);
+        const st = auth.status(readSessionToken(req), clientIp(req, server));
+        // Sesi kedaluwarsa / terkunci otomatis -> bersihkan cookie basi.
+        const res = json(st);
+        if (st.protected && !st.authenticated && readSessionToken(req)) {
+          return withCookie(res, clearSessionCookie(req));
         }
+        return res;
       },
     },
 
     "/api/auth/login": {
       POST: async (req: Request, server: Server<unknown>) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { secret } = (body.data ?? {}) as { secret?: unknown };
-          const res = await auth.login(
-            typeof secret === "string" ? secret : "",
-            ctxOf(req, server),
-          );
-          if (!res.ok) return authError(res.error);
-          return withCookie(json({ ok: true }), sessionCookie(req, res.data.token));
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const res = await auth.login(
+          typeof b.secret === "string" ? b.secret : "",
+          ctxOf(req, server),
+        );
+        if (!res.ok) return errorResponse(res.error);
+        return withCookie(json({ ok: true }), sessionCookie(req, res.data.token));
       },
     },
 
     "/api/auth/logout": {
       POST: (req: Request) => {
-        try {
-          auth.logout(readSessionToken(req));
-          return withCookie(json({ ok: true }), clearSessionCookie(req));
-        } catch (e) {
-          return serverError(e);
-        }
+        auth.logout(readSessionToken(req));
+        return withCookie(json({ ok: true }), clearSessionCookie(req));
       },
     },
 
     "/api/auth/lock": {
       PUT: async (req: Request, server: Server<unknown>) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { kind, secret, current } = (body.data ?? {}) as {
-            kind?: unknown;
-            secret?: unknown;
-            current?: unknown;
-          };
-          if ((kind !== "pin" && kind !== "password") || typeof secret !== "string") {
-            return json({ error: "LOCK_KIND_INVALID" }, 400);
-          }
-          const res = await auth.setLock(
-            {
-              kind: kind as LockKind,
-              secret,
-              current: typeof current === "string" ? current : undefined,
-            },
-            ctxOf(req, server),
-          );
-          if (!res.ok) return authError(res.error);
-          // Perangkat yang mengatur kunci langsung login dengan sesi baru.
-          return withCookie(json({ ok: true }), sessionCookie(req, res.data.token));
-        } catch (e) {
-          return serverError(e);
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { kind, secret, current } = b;
+        if ((kind !== "pin" && kind !== "password") || typeof secret !== "string") {
+          return errorResponse("LOCK_KIND_INVALID");
         }
+        const res = await auth.setLock(
+          {
+            kind: kind as LockKind,
+            secret,
+            current: typeof current === "string" ? current : undefined,
+          },
+          ctxOf(req, server),
+        );
+        if (!res.ok) return errorResponse(res.error);
+        // Perangkat yang mengatur kunci langsung login dengan sesi baru.
+        return withCookie(json({ ok: true }), sessionCookie(req, res.data.token));
       },
       DELETE: async (req: Request, server: Server<unknown>) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { current } = (body.data ?? {}) as { current?: unknown };
-          const res = await auth.removeLock(
-            typeof current === "string" ? current : "",
-            ctxOf(req, server),
-          );
-          if (!res.ok) return authError(res.error);
-          return withCookie(json({ ok: true }), clearSessionCookie(req));
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const res = await auth.removeLock(
+          typeof b.current === "string" ? b.current : "",
+          ctxOf(req, server),
+        );
+        if (!res.ok) return errorResponse(res.error);
+        return withCookie(json({ ok: true }), clearSessionCookie(req));
       },
     },
 
     "/api/auth/profile": {
       PATCH: async (req: Request) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { nickname } = (body.data ?? {}) as { nickname?: unknown };
-          if (nickname !== null && typeof nickname !== "string") {
-            return json({ error: "NICKNAME_INVALID" }, 400);
-          }
-          const res = auth.setNickname(nickname ?? null);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ profile: res.data });
-        } catch (e) {
-          return serverError(e);
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const { nickname } = b;
+        if (nickname !== null && typeof nickname !== "string") {
+          return errorResponse("NICKNAME_INVALID");
         }
+        return respond(auth.setNickname(nickname), (profile) => ({ profile }));
       },
     },
 
     "/api/auth/avatar": {
       GET: () => {
-        try {
-          const av = auth.getAvatar();
-          if (!av) return json({ error: "AVATAR_NOT_FOUND" }, 404);
-          return new Response(new Blob([new Uint8Array(av.bytes)]), {
-            headers: {
-              "content-type": av.mime,
-              // URL memakai ?v=<versi>, jadi aman di-cache lama.
-              "cache-control": "private, max-age=31536000, immutable",
-              "x-content-type-options": "nosniff",
-              "content-security-policy": "default-src 'none'",
-            },
-          });
-        } catch (e) {
-          return serverError(e);
-        }
+        const av = auth.getAvatar();
+        if (!av) return errorResponse("AVATAR_NOT_FOUND");
+        return new Response(new Blob([new Uint8Array(av.bytes)]), {
+          headers: {
+            "content-type": av.mime,
+            // URL memakai ?v=<versi>, jadi aman di-cache lama.
+            "cache-control": "private, max-age=31536000, immutable",
+            "x-content-type-options": "nosniff",
+            "content-security-policy": "default-src 'none'",
+          },
+        });
       },
       PUT: async (req: Request) => {
+        let form: FormData;
         try {
-          let form: FormData;
-          try {
-            form = await req.formData();
-          } catch {
-            return json({ error: "EMPTY_UPLOAD" }, 400);
-          }
-          const file = form.get("file");
-          if (!(file instanceof File)) return json({ error: "EMPTY_UPLOAD" }, 400);
-          const res = auth.setAvatar(new Uint8Array(await file.arrayBuffer()), file.type || null);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ profile: res.data });
-        } catch (e) {
-          return serverError(e);
+          form = await req.formData();
+        } catch {
+          return errorResponse("EMPTY_UPLOAD");
         }
+        const file = form.get("file");
+        if (!(file instanceof File)) return errorResponse("EMPTY_UPLOAD");
+        const res = auth.setAvatar(new Uint8Array(await file.arrayBuffer()), file.type || null);
+        return respond(res, (profile) => ({ profile }));
       },
-      DELETE: () => {
-        try {
-          const res = auth.setAvatar(null, null);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ profile: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      DELETE: () => respond(auth.setAvatar(null, null), (profile) => ({ profile })),
     },
 
     "/api/auth/avatar/preset": {
       PUT: async (req: Request) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { preset } = (body.data ?? {}) as { preset?: unknown };
-          const res = auth.setAvatarPreset(typeof preset === "string" ? preset : "");
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ profile: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const res = auth.setAvatarPreset(typeof b.preset === "string" ? b.preset : "");
+        return respond(res, (profile) => ({ profile }));
       },
     },
 
     "/api/auth/settings": {
       PATCH: async (req: Request) => {
-        try {
-          const body = await readJson(req);
-          if (!body.ok) return json({ error: "INVALID_JSON" }, 400);
-          const { autoLockMinutes } = (body.data ?? {}) as { autoLockMinutes?: unknown };
-          const res = auth.setAutoLock(typeof autoLockMinutes === "number" ? autoLockMinutes : -1);
-          if (!res.ok) return json({ error: res.error }, errorStatus(res.error));
-          return json({ autoLockMinutes: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
+        const b = await readObject(req);
+        if (!b) return errorResponse("INVALID_JSON");
+        const minutes = typeof b.autoLockMinutes === "number" ? b.autoLockMinutes : -1;
+        return respond(auth.setAutoLock(minutes), (autoLockMinutes) => ({ autoLockMinutes }));
       },
     },
 
@@ -243,44 +165,26 @@ export function authRoutes(auth: AuthService) {
     // hanya sesi login yang bisa memanggilnya (dan saat itu sudah onboarded).
     "/api/auth/onboarding/complete": {
       POST: () => {
-        try {
-          auth.completeOnboarding();
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
+        auth.completeOnboarding();
+        return json({ ok: true });
       },
     },
 
     "/api/auth/devices": {
-      GET: (req: Request) => {
-        try {
-          return json({ devices: auth.listDevices(readSessionToken(req)) });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: (req: Request) => json({ devices: auth.listDevices(readSessionToken(req)) }),
     },
 
     "/api/auth/devices/revoke-others": {
       POST: (req: Request) => {
-        try {
-          auth.revokeOthers(readSessionToken(req));
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
+        auth.revokeOthers(readSessionToken(req));
+        return json({ ok: true });
       },
     },
 
     "/api/auth/devices/:id": {
       DELETE: (req: BunRequest<"/api/auth/devices/:id">) => {
-        try {
-          auth.revokeDevice(req.params.id);
-          return json({ ok: true });
-        } catch (e) {
-          return serverError(e);
-        }
+        auth.revokeDevice(req.params.id);
+        return json({ ok: true });
       },
     },
   };

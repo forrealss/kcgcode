@@ -21,6 +21,7 @@ import type {
   SessionStatus,
   TurnDiff,
 } from "./types";
+import type { ErrorCode } from "./types/errors";
 
 /** Pesan Client -> Server. */
 export type ClientMessage =
@@ -114,7 +115,10 @@ export type ServerMessage =
   | { type: "draft"; sessionId: string; draft: ComposerDraft; origin: string }
   | { type: "error"; code: string; message: string };
 
-/** Kode error umum pada pesan `error`. */
+/**
+ * Kode error umum pada pesan `error` — subset registri `types/errors.ts`
+ * (`satisfies` memastikan tiap kode terdaftar di sana).
+ */
 export const ErrorCodes = {
   SESSION_NOT_FOUND: "SESSION_NOT_FOUND",
   PROMPT_NOT_FOUND: "PROMPT_NOT_FOUND",
@@ -127,4 +131,4 @@ export const ErrorCodes = {
   SESSION_NOT_RUNNING: "SESSION_NOT_RUNNING",
   INVALID_TEXT: "INVALID_TEXT",
   ATTACHMENT_NOT_FOUND: "ATTACHMENT_NOT_FOUND",
-} as const;
+} as const satisfies Record<string, ErrorCode>;

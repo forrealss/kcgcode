@@ -28,7 +28,8 @@ import {
   TerminalIcon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
+import { LogView } from "@/components/common/LogView";
 import { Box, CardSkeleton, Row, Section } from "@/components/sessions/ContextPanel/primitives";
 import { ImageLightbox } from "@/components/sessions/ImageLightbox";
 import { Button } from "@/components/ui/button";
@@ -419,7 +420,10 @@ function OutputSection({ lines }: { lines: string[] }) {
       }
     >
       {lines.length > 0 ? (
-        <LogView lines={lines} />
+        <LogView
+          lines={lines}
+          className="max-h-[22rem] overflow-auto rounded-xl border bg-card px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-foreground/85 shadow-xs [scrollbar-width:thin]"
+        />
       ) : (
         <p className="rounded-xl border border-dashed px-2.5 py-2.5 text-[12px] text-muted-foreground">
           No output yet
@@ -459,21 +463,4 @@ function useSnapshot(projectId: string) {
     }
   }
   return { url, busy, error, take, lightbox, setLightbox };
-}
-
-function LogView({ lines }: { lines: string[] }) {
-  const ref = useRef<HTMLPreElement>(null);
-  // Ikuti baris terbaru.
-  useEffect(() => {
-    const el = ref.current;
-    if (el && lines.length > 0) el.scrollTop = el.scrollHeight;
-  }, [lines]);
-  return (
-    <pre
-      ref={ref}
-      className="max-h-[22rem] overflow-auto rounded-xl border bg-card px-2.5 py-2 font-mono text-[11px] leading-relaxed whitespace-pre-wrap break-all text-foreground/85 shadow-xs [scrollbar-width:thin]"
-    >
-      {lines.join("\n")}
-    </pre>
-  );
 }

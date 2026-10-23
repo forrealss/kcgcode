@@ -7,9 +7,12 @@
  *   ulang selama endpoint sama. Gagal -> dicoba lagi saat `/` diketik ulang.
  * - Penyaringan & penyisipan teks memakai helper murni `lib/slash-commands`.
  * - API sengaja sama dengan `useFileMention` (onInputChange, handleKeyDown,
- *   pick, setOnPick, close) agar pemasangannya di composer seragam.
+ *   pick, close, opsi `onPick`) agar pemasangannya di composer seragam.
+ * - Fetch default `apiFetch`: sesi habis (401) memasang lock screen.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useListNavigation } from "@/hooks/useListNavigation";
+import { apiFetch } from "@/lib/api";
 import {
   type ActiveSlash,
   activeSlashCommand,
@@ -36,27 +39,31 @@ export interface UseSlashCommandsResult {
   pick(index: number): string | null;
   /** Navigasi keyboard; true bila event ditangani (blok default). */
   handleKeyDown(e: { key: string; preventDefault(): void }): boolean;
-  /** Callback hasil pilihan keyboard (Enter/Tab) — teks input baru. */
-  setOnPick(cb: (next: string) => void): void;
   close(): void;
 }
 
 type FetchFn = (path: string) => Promise<Response>;
 
+export interface UseSlashCommandsOptions {
+  /** Hasil pilihan keyboard (Enter/Tab) — teks input baru. */
+  onPick?: (next: string) => void;
+  fetchFn?: FetchFn;
+}
+
 export function useSlashCommands(
   /** `GET` daftar command, mis. `/api/projects/:id/commands?agent=…`; null = nonaktif. */
   endpoint: string | null,
-  fetchFn: FetchFn = (p) => fetch(p),
+  { onPick, fetchFn = apiFetch }: UseSlashCommandsOptions = {},
 ): UseSlashCommandsResult {
   const [active, setActive] = useState<ActiveSlash | null>(null);
   const [commands, setCommands] = useState<SlashCommandInfo[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [highlighted, setHighlighted] = useState(0);
   const lastTextRef = useRef("");
   /** Query aktif terakhir — sorotan kembali ke baris pertama saat berubah. */
   const queryRef = useRef<string | null>(null);
-  const onPickRef = useRef<((next: string) => void) | null>(null);
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
 
   // Endpoint berganti (Project / agent lain) -> daftar lama tidak berlaku.
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset hanya saat endpoint berubah
@@ -98,13 +105,25 @@ export function useSlashCommands(
   // `/usr/bin…` tanpa command yang cocok tidak memunculkan dropdown kosong.
   const open = active !== null && (loading || error !== null || matches.length > 0);
 
+  const nav = useListNavigation({
+    count: matches.length,
+    active: open,
+    onSelect: (index) => {
+      const next = pick(index);
+      if (next !== null) onPickRef.current?.(next);
+      return next !== null;
+    },
+    onClose: () => close(),
+  });
+  const { resetHighlight } = nav;
+
   const close = useCallback(() => {
     queryRef.current = null;
     setActive(null);
-    setHighlighted(0);
+    resetHighlight();
     // Error dibuang agar `/` berikutnya mencoba memuat ulang.
     setError(null);
-  }, []);
+  }, [resetHighlight]);
 
   const onInputChange = useCallback(
     (text: string, caret: number) => {
@@ -116,11 +135,11 @@ export function useSlashCommands(
       }
       if (queryRef.current !== next.query) {
         queryRef.current = next.query;
-        setHighlighted(0);
+        resetHighlight();
       }
       setActive(next);
     },
-    [endpoint, close],
+    [endpoint, close, resetHighlight],
   );
 
   const pick = useCallback(
@@ -134,51 +153,16 @@ export function useSlashCommands(
     [matches, close],
   );
 
-  const setOnPick = useCallback((cb: (next: string) => void) => {
-    onPickRef.current = cb;
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (e: { key: string; preventDefault(): void }): boolean => {
-      if (!open) return false;
-      if (e.key === "Escape") {
-        e.preventDefault();
-        close();
-        return true;
-      }
-      if (matches.length === 0) return false;
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setHighlighted((h) => (h + 1) % matches.length);
-        return true;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setHighlighted((h) => (h - 1 + matches.length) % matches.length);
-        return true;
-      }
-      if (e.key === "Enter" || e.key === "Tab") {
-        e.preventDefault();
-        const next = pick(Math.min(highlighted, matches.length - 1));
-        if (next !== null) onPickRef.current?.(next);
-        return next !== null;
-      }
-      return false;
-    },
-    [open, matches, highlighted, pick, close],
-  );
-
   return {
     open,
     matches,
-    highlighted: Math.min(highlighted, Math.max(0, matches.length - 1)),
+    highlighted: nav.highlighted,
     loading,
     error,
     known,
     onInputChange,
     pick,
-    handleKeyDown,
-    setOnPick,
+    handleKeyDown: nav.handleKeyDown,
     close,
   };
 }

@@ -21,16 +21,16 @@ import { AdwDialogContent } from "@/components/ui/adw-dialog";
 import { AdwToggleGroup } from "@/components/ui/adw-toggle-group";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Dialog } from "@/components/ui/dialog";
+import { useModelList } from "@/hooks/useModelList";
 import {
   AGENT_TYPE_LABELS,
   AGENT_TYPES,
-  agentQuery,
   readPreferredAgentType,
   storePreferredAgentType,
 } from "@/lib/agent-types";
 import { apiFetch, errorText } from "@/lib/api";
 import { keyOfSessionModel } from "@/lib/model-picker";
-import type { AgentType, ModelOption, Session, SessionModel } from "@/types";
+import type { AgentType, Session, SessionModel } from "@/types";
 import { ModelSearchList } from "./ModelSearchList";
 
 export interface NewSessionDialogProps {
@@ -53,9 +53,12 @@ export function NewSessionDialog({
   const [agentType, setAgentType] = useState<AgentType>(readPreferredAgentType);
   /** Kunci model yang sedang dipakai membuat Session (spinner di barisnya). */
   const [pendingKey, setPendingKey] = useState<string | null>(null);
-  const [models, setModels] = useState<ModelOption[] | null>(null);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState<string | null>(null);
+  // Dimuat ulang tiap dialog dibuka / agent berganti (lihat hook).
+  const {
+    models,
+    loading: modelsLoading,
+    error: modelsError,
+  } = useModelList(projectId, agentType, open);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -65,32 +68,6 @@ export function NewSessionDialog({
     setAgentType(readPreferredAgentType());
     setCreateError(null);
   }, [open]);
-
-  // Daftar model selalu di-fetch ulang saat dialog dibuka / agent berganti
-  // agar perubahan config terlihat tanpa reload halaman. Respons usang
-  // (agent sudah diganti lagi) dibuang.
-  useEffect(() => {
-    if (!open) return;
-    let stale = false;
-    setModelsLoading(true);
-    setModelsError(null);
-    apiFetch(`/api/projects/${projectId}/models${agentQuery(agentType)}`)
-      .then(async (res) => {
-        const body = (await res.json()) as { models: ModelOption[] };
-        if (!stale) setModels(body.models);
-      })
-      .catch((e: unknown) => {
-        if (stale) return;
-        setModelsError(errorText(e, "Failed to load models"));
-        setModels([]);
-      })
-      .finally(() => {
-        if (!stale) setModelsLoading(false);
-      });
-    return () => {
-      stale = true;
-    };
-  }, [open, projectId, agentType]);
 
   /** Klik model = buat Session dengan agent & model ini, lalu buka. */
   const create = async (model: SessionModel | null) => {

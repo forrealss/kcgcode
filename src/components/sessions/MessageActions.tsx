@@ -6,28 +6,19 @@
  * tampil (tidak ada hover). Pola sama dengan menu "..." di `SessionRow`.
  */
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { cn } from "@/lib/utils";
 
 export function CopyMessageButton({ text, className }: { text: string; className?: string }) {
-  const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (!copied) return;
-    const t = setTimeout(() => setCopied(false), 1500);
-    return () => clearTimeout(t);
-  }, [copied]);
+  const { copied, copy: copyText } = useCopyToClipboard();
 
   if (text.trim() === "") return null;
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      // Clipboard API butuh konteks aman (HTTPS / localhost).
+    // Clipboard API butuh konteks aman (HTTPS / localhost).
+    if (!(await copyText(text))) {
       toast.error("Couldn't copy. Select the text and copy it manually.");
     }
   };

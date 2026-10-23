@@ -351,12 +351,3 @@ export function findRunningInstall(
       e.job.skillId === skillId,
   );
 }
-
-/** Hanya untuk test: kosongkan store. */
-export function __resetInstallsForTest(): void {
-  entries = [];
-  closedIds = new Set();
-  hydrated = false;
-  polling.clear();
-  emit();
-}

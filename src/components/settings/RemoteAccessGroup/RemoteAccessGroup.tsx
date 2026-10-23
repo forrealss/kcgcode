@@ -19,8 +19,8 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { type TunnelOverview, useTunnelStatus } from "@/hooks/useTunnelStatus";
 import { apiFetch, errorText } from "@/lib/api";
-import type { TunnelStatus } from "@/server/services/tunnel";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { KcgRemoteAccess } from "./KcgRemoteAccess";
 import { LhrRemoteAccess } from "./LhrRemoteAccess";
@@ -38,11 +38,7 @@ interface ProviderOverview {
   live: Provider | null;
 }
 
-function readOverview(b: {
-  provider?: Provider;
-  tunnel?: TunnelStatus;
-  lhr?: { enabled: boolean; phase: string; url: string | null };
-}): ProviderOverview {
+function readOverview(b: TunnelOverview): ProviderOverview {
   const kcgOn = !!b.tunnel && b.tunnel.enabled && b.tunnel.phase !== "stopped";
   const lhrOn = !!b.lhr && b.lhr.enabled && b.lhr.phase !== "stopped";
   const live: Provider | null = kcgOn ? "kcg" : lhrOn ? "lhr" : null;
@@ -65,10 +61,11 @@ function readOverview(b: {
  */
 export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
   const [provider, setProvider] = useState<Provider | null>(null);
-  const [live, setLive] = useState<{ provider: Provider | null; url: string | null }>({
-    provider: null,
-    url: null,
-  });
+  // Status "On" di kartu ikut berubah saat tunnel dinyalakan/dimatikan di panel
+  // (poll bersama dengan panel penyedia bawaan).
+  const tunnel = useTunnelStatus();
+  const overview = tunnel.data ? readOverview(tunnel.data) : null;
+  const live = { provider: overview?.live ?? null, url: overview?.liveUrl ?? null };
   const [switching, setSwitching] = useState(false);
   /** Pindah penyedia saat yang lain menyala -> minta konfirmasi dulu. */
   const [pendingSwitch, setPendingSwitch] = useState<Provider | null>(null);
@@ -76,26 +73,19 @@ export function RemoteAccessGroup({ protectedApp }: { protectedApp: boolean }) {
   const [lhrStop, setLhrStop] = useState<{ run: () => Promise<void>; via: boolean } | null>(null);
   const [lhrStopping, setLhrStopping] = useState(false);
 
+  const { refresh: refreshTunnel } = tunnel;
   const refresh = useCallback(async (): Promise<ProviderOverview | null> => {
-    try {
-      const o = readOverview(await (await apiFetch("/api/tunnel")).json());
-      setLive({ provider: o.live, url: o.liveUrl });
-      return o;
-    } catch {
-      return null;
-    }
-  }, []);
+    const body = await refreshTunnel();
+    return body ? readOverview(body) : null;
+  }, [refreshTunnel]);
 
   useEffect(() => {
     let cancelled = false;
     void refresh().then((o) => {
       if (!cancelled) setProvider((cur) => cur ?? o?.provider ?? "kcg");
     });
-    // Status "On" di kartu ikut berubah saat tunnel dinyalakan/dimatikan di panel.
-    const id = setInterval(() => void refresh(), 5000);
     return () => {
       cancelled = true;
-      clearInterval(id);
     };
   }, [refresh]);
 

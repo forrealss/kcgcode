@@ -68,6 +68,5 @@ export const setProcessingGlowEnabled = glow.set;
 export const useProcessingGlow = glow.use;
 
 /** Tampilkan estimasi biaya tiap balasan? Default: tidak. */
-export const showCostEnabled = showCost.get;
 export const setShowCostEnabled = showCost.set;
 export const useShowCost = showCost.use;

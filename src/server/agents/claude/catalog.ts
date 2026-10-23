@@ -165,7 +165,7 @@ export function createClaudeCatalog(deps: ClaudeCatalogDeps): ClaudeCatalog {
       modelsCache = { at: now(), data };
       return { ok: true, data };
     } catch (e) {
-      return { ok: false, error: `CC_MODELS_FAILED: ${(e as Error).message}` };
+      return { ok: false, error: `AGENT_LIST_MODELS_FAILED: ${(e as Error).message}` };
     }
   }
 
@@ -178,7 +178,7 @@ export function createClaudeCatalog(deps: ClaudeCatalogDeps): ClaudeCatalog {
       commandsCache = { at: now(), data };
       return { ok: true, data };
     } catch (e) {
-      return { ok: false, error: `CC_COMMANDS_FAILED: ${(e as Error).message}` };
+      return { ok: false, error: `AGENT_LIST_COMMANDS_FAILED: ${(e as Error).message}` };
     }
   }
 
@@ -239,7 +239,7 @@ export function createClaudeCatalog(deps: ClaudeCatalogDeps): ClaudeCatalog {
     }
     return failure === null
       ? { ok: true }
-      : { ok: false, error: `CC_MCP_FAILED: ${failure.message}` };
+      : { ok: false, error: `AGENT_MCP_FAILED: ${failure.message}` };
   }
 
   async function projectFiles(): Promise<string[]> {
@@ -262,7 +262,7 @@ export function createClaudeCatalog(deps: ClaudeCatalogDeps): ClaudeCatalog {
       try {
         return { ok: true, data: await listClaudeSkills(cwd, claudeGlobalSkillsDir(env)) };
       } catch (e) {
-        return { ok: false, error: `CC_SKILLS_FAILED: ${(e as Error).message}` };
+        return { ok: false, error: `AGENT_LIST_SKILLS_FAILED: ${(e as Error).message}` };
       }
     },
 
@@ -270,7 +270,7 @@ export function createClaudeCatalog(deps: ClaudeCatalogDeps): ClaudeCatalog {
       try {
         return { ok: true, data: rankFiles(await projectFiles(), q) };
       } catch (e) {
-        return { ok: false, error: `CC_FIND_FILES_FAILED: ${(e as Error).message}` };
+        return { ok: false, error: `AGENT_FIND_FILES_FAILED: ${(e as Error).message}` };
       }
     },
 
@@ -287,7 +287,9 @@ export function createClaudeCatalog(deps: ClaudeCatalogDeps): ClaudeCatalog {
           failure ??= (e as Error).message;
         }
       }
-      return failure === null ? { ok: true } : { ok: false, error: `CC_RELOAD_FAILED: ${failure}` };
+      return failure === null
+        ? { ok: true }
+        : { ok: false, error: `AGENT_RELOAD_FAILED: ${failure}` };
     },
 
     noteInitMcp(servers) {

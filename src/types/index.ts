@@ -9,6 +9,7 @@ export * from "./agent";
 export * from "./changes";
 export * from "./context";
 export * from "./draft";
+export * from "./errors";
 export * from "./message";
 export * from "./notification";
 export * from "./preview";

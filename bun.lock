@@ -7,16 +7,12 @@
       "dependencies": {
         "@anthropic-ai/claude-agent-sdk": "^0.3.296",
         "@opencode/client": "2.0.28",
-        "@radix-ui/react-label": "^2.1.7",
-        "@radix-ui/react-select": "^2.2.6",
-        "@radix-ui/react-slot": "^1.2.3",
         "@shadcn/react": "^0.3.0",
         "@simplewebauthn/browser": "14.0.0",
         "@simplewebauthn/server": "14.0.3",
         "bun-plugin-tailwind": "^0.1.2",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
-        "cn": "^0.2.5",
         "ink": "^7.1.1",
         "lucide-react": "^1",
         "motion": "13.4.6",
@@ -34,15 +30,12 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.7",
-        "@types/bun": "latest",
+        "@types/bun": "1.4.2",
         "@types/react": "^19",
         "@types/react-dom": "^19",
         "fast-check": "^4.9.0",
         "react-reconciler": "0.33.0",
         "tailwindcss": "^4.1.11",
-        "typescript": "^6",
-      },
-      "peerDependencies": {
         "typescript": "^6",
       },
     },
@@ -391,8 +384,6 @@
     "cli-truncate": ["cli-truncate@6.1.1", "", { "dependencies": { "slice-ansi": "^9.0.0", "string-width": "^8.2.0" } }, "sha512-06p9vyLahLa4zkGcgsGxU6iEkSOiuI4fhCH6Emhe2lPAcoUv73n72DnODsnHA+5wwXGnV0n9M9/qOQJSjYhFhw=="],
 
     "clsx": ["clsx@2.1.1", "", {}, "sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA=="],
-
-    "cn": ["cn@0.2.6", "", { "bin": { "cn": "bin/cn.mjs" } }, "sha512-+i4L0zUGgRcEnhsxueVrP7iBGxBx5iD0WOTYg1MwFEu2ZyCmH5Ov2V1cul2Ht5UchRQQgftCf4be/RxspuW6QQ=="],
 
     "code-excerpt": ["code-excerpt@4.0.0", "", { "dependencies": { "convert-to-spaces": "^2.0.1" } }, "sha512-xxodCmBen3iy2i0WtAK8FlFNrRzjUqjRsMfho58xT/wvZU1YTM3fCnRjcy1gJPMepaRlgm/0e6w8SpWHpn3/cA=="],
 

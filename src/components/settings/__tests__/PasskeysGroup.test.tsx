@@ -36,7 +36,7 @@ function view(state: Parameters<typeof PasskeysView>[0]["state"], supported: boo
 
 describe("Settings -> Passkeys", () => {
   test("kosong: ajakan menambah + tombol Add", () => {
-    const out = view({ phase: "ready", passkeys: [] }, true);
+    const out = view({ phase: "ready", data: [] }, true);
     expect(out).toContain("Passkeys");
     expect(out).toContain("No passkeys yet");
     expect(out).toContain("Add a passkey");
@@ -44,14 +44,14 @@ describe("Settings -> Passkeys", () => {
   });
 
   test("alamat tidak didukung: tombol Add nonaktif + penjelasan", () => {
-    const out = view({ phase: "ready", passkeys: [] }, false);
+    const out = view({ phase: "ready", data: [] }, false);
     expect(out).toContain("Passkeys need a secure address");
     expect(out).not.toContain("Add a passkey");
     expect(out).toMatch(/disabled=""[^>]*>.*Add<\/button>/s);
   });
 
   test("daftar: nama, badge Synced, belum pernah dipakai, aksi rename/hapus berlabel", () => {
-    const out = view({ phase: "ready", passkeys: [pk()] }, true);
+    const out = view({ phase: "ready", data: [pk()] }, true);
     expect(out).toContain("Passkey on iPhone");
     expect(out).toContain("Synced");
     expect(out).toContain("Never used");
@@ -61,7 +61,7 @@ describe("Settings -> Passkeys", () => {
 
   test("passkey alamat lain: tampil dengan label alamatnya", () => {
     const out = view(
-      { phase: "ready", passkeys: [pk({ usableHere: false, rpId: "localhost" })] },
+      { phase: "ready", data: [pk({ usableHere: false, rpId: "localhost" })] },
       true,
     );
     expect(out).toContain("For localhost");

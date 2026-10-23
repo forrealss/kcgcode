@@ -2,17 +2,15 @@
  * Unit test ringkasan Project homepage (src/lib/project-overview.ts).
  *
  * Yang diuji: penggabungan Project + Session, urutan aktivitas terbaru,
- * filter pencarian, dan label waktu relatif — semuanya logika murni
+ * dan label waktu relatif — semuanya logika murni
  * (pola yang sama dengan `routes.test.ts`).
  */
 import { describe, expect, test } from "bun:test";
 import type { Project, Session, SessionStatus } from "@/types";
 import {
   buildProjectOverviews,
-  filterProjectOverviews,
   formatRelativeTime,
   RECENT_SESSION_LIMIT,
-  totalRunningSessions,
 } from "../project-overview";
 
 function project(id: string, name: string, createdAt: number, path = `/sandbox/${name}`): Project {
@@ -107,53 +105,6 @@ describe("buildProjectOverviews", () => {
 
   test("daftar Project kosong -> hasil kosong", () => {
     expect(buildProjectOverviews([], [session("s1", "p1", "running", 1)])).toEqual([]);
-  });
-});
-
-describe("filterProjectOverviews", () => {
-  const overviews = buildProjectOverviews(
-    [
-      project("p1", "web-app", 1_000, "/sandbox/web-app"),
-      project("p2", "api-service", 2_000, "/sandbox/backend/api"),
-    ],
-    [],
-  );
-
-  test("query kosong mengembalikan semua", () => {
-    expect(filterProjectOverviews(overviews, "")).toHaveLength(2);
-    expect(filterProjectOverviews(overviews, "   ")).toHaveLength(2);
-  });
-
-  test("cocok pada nama tanpa membedakan huruf besar/kecil", () => {
-    const found = filterProjectOverviews(overviews, "WEB");
-    expect(found.map((o) => o.project.id)).toEqual(["p1"]);
-  });
-
-  test("cocok pada path", () => {
-    const found = filterProjectOverviews(overviews, "backend");
-    expect(found.map((o) => o.project.id)).toEqual(["p2"]);
-  });
-
-  test("tidak ada yang cocok -> kosong", () => {
-    expect(filterProjectOverviews(overviews, "zzz")).toEqual([]);
-  });
-});
-
-describe("totalRunningSessions", () => {
-  test("menjumlahkan Session berjalan seluruh Project", () => {
-    const overviews = buildProjectOverviews(
-      [project("p1", "alpha", 1), project("p2", "beta", 2)],
-      [
-        session("s1", "p1", "running", 10),
-        session("s2", "p1", "running", 11),
-        session("s3", "p2", "stopped", 12),
-      ],
-    );
-    expect(totalRunningSessions(overviews)).toBe(2);
-  });
-
-  test("tanpa Session -> 0", () => {
-    expect(totalRunningSessions([])).toBe(0);
   });
 });
 

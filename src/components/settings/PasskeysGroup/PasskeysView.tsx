@@ -3,13 +3,9 @@ import { FingerprintIcon, PlusIcon } from "lucide-react";
 import { PrefsGroup } from "@/components/settings/prefs";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
+import type { Load } from "@/lib/load-state";
 import type { PasskeyInfo } from "@/lib/passkeys";
 import { PasskeyRow } from "./PasskeyRow";
-
-export type LoadState =
-  | { phase: "loading" }
-  | { phase: "error"; message: string }
-  | { phase: "ready"; passkeys: PasskeyInfo[] };
 
 /** Tampilan murni grup passkey (diuji SSR). */
 export function PasskeysView({
@@ -19,7 +15,7 @@ export function PasskeysView({
   onRename,
   onRemove,
 }: {
-  state: LoadState;
+  state: Load<PasskeyInfo[]>;
   /** `null` = belum diketahui (sebelum mount). */
   supported: boolean | null;
   onAdd: () => void;
@@ -53,14 +49,14 @@ export function PasskeysView({
         <li role="alert" className="px-4 py-4 text-[13px] text-destructive">
           {state.message}
         </li>
-      ) : state.passkeys.length === 0 ? (
+      ) : state.data.length === 0 ? (
         <EmptyRow unsupported={unsupported} onAdd={onAdd} />
       ) : (
-        state.passkeys.map((p) => (
+        state.data.map((p) => (
           <PasskeyRow key={p.id} passkey={p} onRename={onRename} onRemove={onRemove} />
         ))
       )}
-      {unsupported && state.phase === "ready" && state.passkeys.length > 0 && (
+      {unsupported && state.phase === "ready" && state.data.length > 0 && (
         <li className="px-4 py-3 text-[13px] text-muted-foreground">
           This address can't use passkeys. Open KCG Code over https or on localhost to add one.
         </li>

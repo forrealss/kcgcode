@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Spinner } from "@/components/ui/spinner";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { AGENT_TYPE_LABELS } from "@/lib/agent-types";
 import { apiErrorMessage } from "@/lib/api";
 import {
@@ -251,7 +252,7 @@ function LogPanel({
   const ref = useRef<HTMLPreElement>(null);
   /** Ikuti baris terbaru selama user tidak menggulir ke atas. */
   const stick = useRef(true);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: copyText } = useCopyToClipboard();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: gulir tiap ada baris baru
   useEffect(() => {
@@ -259,15 +260,8 @@ function LogPanel({
     if (el && stick.current) el.scrollTop = el.scrollHeight;
   }, [lines.length]);
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(lines.join("\n"));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard tidak tersedia (HTTP non-localhost) — abaikan.
-    }
-  };
+  // Clipboard tidak tersedia (HTTP non-localhost) — gagal diabaikan.
+  const copy = () => copyText(lines.join("\n"));
 
   return (
     <div className="relative">

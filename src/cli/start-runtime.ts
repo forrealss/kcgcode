@@ -9,6 +9,7 @@
  */
 import { type AppConfig, saveConfigPort } from "../config";
 import spa from "../index.html";
+import { SPA_PATHS } from "../lib/routes";
 import { resolveEffectiveUploadsDir, WEB_DIST_DIR } from "../paths";
 import { createKcgServer } from "../server/app";
 import { loadPrebuiltWeb } from "../server/prebuilt-web";
@@ -28,8 +29,6 @@ import { updateNotice } from "./update-notice";
 
 /** Interval daemon menulis state + snapshot dashboard. */
 const DAEMON_STATE_MS = 2000;
-
-const SPA_PATHS = ["/", "/projects", "/projects/*", "/skills", "/settings", "/settings/*"];
 
 export interface RunServerOptions {
   args: CliArgs;

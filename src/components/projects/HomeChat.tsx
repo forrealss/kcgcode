@@ -148,15 +148,15 @@ export function HomeChat({ overviews, onNewProject }: HomeChatProps) {
    * Session baru. Daftar milik Project & agent terpilih, dimuat saat `/`
    * pertama diketik.
    */
-  const slash = useSlashCommands(
-    selected ? `/api/projects/${selected.id}/commands${agentQuery(agentType)}` : null,
-  );
   /** Terapkan teks hasil pilihan slash command + kembalikan fokus ke input. */
   const applyPicked = useCallback((next: string) => {
     setText(next);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
-  useEffect(() => slash.setOnPick(applyPicked), [slash, applyPicked]);
+  const slash = useSlashCommands(
+    selected ? `/api/projects/${selected.id}/commands${agentQuery(agentType)}` : null,
+    { onPick: applyPicked },
+  );
 
   /** Model, effort, agent & permission mode kembali ke default agent. */
   const resetSessionOptions = () => {

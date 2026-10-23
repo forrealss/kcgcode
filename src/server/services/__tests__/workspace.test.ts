@@ -181,14 +181,18 @@ describe("rute /api/workspace", () => {
     const cfg = path.join(base, `cfg-${locked ? "l" : "u"}-${Math.random()}.json`);
     writeFileSync(cfg, JSON.stringify({ sandboxRoot: root }));
     let changed = 0;
+    // `home` diinjeksi: "~" mengarah ke folder sementara, BUKAN home asli.
     const ctx = {
       projectManager: pm,
+      auth,
+      configPath: cfg,
+      protectedPaths: { dirs: [data], files: [] },
+      home,
       notifyDataChanged: () => {
         changed++;
       },
     } as unknown as ApiRouteContext;
-    // `home` diinjeksi: "~" mengarah ke folder sementara, BUKAN home asli.
-    const routes = workspaceRoutes(ctx, { auth, configPath: cfg, protectedDirs: [data], home });
+    const routes = workspaceRoutes(ctx);
     const server = { requestIP: () => ({ address: "5.5.5.5" }) } as never;
     const put = (body: unknown) =>
       routes["/api/workspace"].PUT(

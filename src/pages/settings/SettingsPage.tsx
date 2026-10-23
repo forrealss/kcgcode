@@ -42,7 +42,7 @@ import { RemoteAccessGroup } from "@/components/settings/RemoteAccessGroup";
 import { SecurityGroup } from "@/components/settings/SecurityGroup";
 import { WorkspaceGroup } from "@/components/settings/WorkspaceGroup";
 import { Spinner } from "@/components/ui/spinner";
-import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useMediaQuery, WIDE_QUERY } from "@/hooks/useMediaQuery";
 import { spaLinkClick, useRouter } from "@/hooks/useRouter";
 import { apiFetch, errorText } from "@/lib/api";
 import { refreshAuth, useAuth } from "@/lib/auth";
@@ -115,9 +115,6 @@ export const SETTINGS_ABOUT: SettingsPageInfo = {
 function pageInfo(section: SettingsSection): SettingsPageInfo {
   return SETTINGS_PANELS.find((p) => p.id === section) ?? SETTINGS_ABOUT;
 }
-
-/** Breakpoint `lg` — di atasnya navigasi & isi berdampingan. */
-const WIDE_QUERY = "(min-width: 1024px)";
 
 /** Tautan SPA (Ctrl/Cmd-klik tetap membuka tab baru). */
 function useNavLink() {
@@ -356,26 +353,5 @@ function ProfileSection({
 
       <AccountGroup />
     </>
-  );
-}
-
-/** Tautan antar sub-halaman Settings. */
-export function SectionLink({
-  section,
-  children,
-}: {
-  section: SettingsSection;
-  children: React.ReactNode;
-}) {
-  const { navigate } = useRouter();
-  const href = settingsPath(section);
-  return (
-    <a
-      href={href}
-      onClick={spaLinkClick(() => navigate(href))}
-      className="font-medium text-foreground underline underline-offset-2"
-    >
-      {children}
-    </a>
   );
 }

@@ -165,7 +165,6 @@ export function SessionComposer({
    * Autocomplete `@file`: deteksi token @query di sekitar kursor + daftar
    * saran dari server (index file milik opencode, seperti `@` di TUI-nya).
    */
-  const mention = useFileMention({ endpoint: `/api/sessions/${session.id}/files` });
   /**
    * Terapkan teks hasil pemilihan saran (keyboard maupun mouse) ke state
    * input + kembalikan fokus ke textarea.
@@ -174,15 +173,18 @@ export function SessionComposer({
     setText(next);
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
-  useEffect(() => mention.setOnPick(applyPicked), [mention, applyPicked]);
+  const mention = useFileMention({
+    endpoint: `/api/sessions/${session.id}/files`,
+    onPick: applyPicked,
+  });
   /**
    * Autocomplete slash command: `/` di awal pesan membuka daftar command
    * agent (bawaan, kustom, skill); pesan `/nama args` dijalankan agent.
    */
   const slash = useSlashCommands(
     `/api/projects/${session.projectId}/commands${agentQuery(session.agentType)}`,
+    { onPick: applyPicked },
   );
-  useEffect(() => slash.setOnPick(applyPicked), [slash, applyPicked]);
   const mentionOpen =
     mention.mention !== null && (mention.suggestions.length > 0 || mention.loading);
   // Ala Gemini: begitu input tumbuh ke 2 baris (multiline), tombol aksi &

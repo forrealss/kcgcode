@@ -8,14 +8,16 @@
  * diterbitkan di muka & disegarkan sebelum tiketnya kedaluwarsa, agar tombol
  * Open bisa berupa link biasa (window.open setelah await diblokir di HP).
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useIncrementalLog } from "@/hooks/useIncrementalLog";
+import { usePolling } from "@/hooks/usePolling";
 import { errorText } from "@/lib/api";
 import {
   type DevServerStatus,
   getPreview,
-  getPreviewLogs,
   openPreviewUrl,
   type PreviewConfig,
+  previewLogsPath,
   startPreview,
   stopPreview,
 } from "@/lib/preview-api";
@@ -51,11 +53,9 @@ export function usePreview(
   const [loaded, setLoaded] = useState(false);
   const [config, setConfig] = useState<PreviewConfig | null>(null);
   const [server, setServer] = useState<DevServerStatus | null>(null);
-  const [logs, setLogs] = useState<string[]>([]);
   const [openUrl, setOpenUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"start" | "stop" | null>(null);
-  const logFrom = useRef(0);
   const [urlNonce, setUrlNonce] = useState(0);
 
   const refresh = useCallback(async () => {
@@ -69,19 +69,7 @@ export function usePreview(
     }
   }, [projectId]);
 
-  // Ganti Project / dev server di-restart (buffer log baru) -> reset log.
-  const startedAt = server?.startedAt ?? 0;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `projectId`/`startedAt` sengaja jadi trigger reset
-  useEffect(() => {
-    logFrom.current = 0;
-    setLogs([]);
-  }, [projectId, startedAt]);
-
-  useEffect(() => {
-    void refresh();
-    const id = setInterval(() => void refresh(), sheetOpen ? FAST_MS : SLOW_MS);
-    return () => clearInterval(id);
-  }, [refresh, sheetOpen]);
+  usePolling(refresh, sheetOpen ? FAST_MS : SLOW_MS);
 
   useEffect(
     () =>
@@ -91,24 +79,14 @@ export function usePreview(
     [projectId],
   );
 
-  // Log hanya diambil selama sheet terbuka.
-  const logOffset = server?.logOffset ?? 0;
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `startedAt` memicu ambil ulang setelah reset log
-  useEffect(() => {
-    if (!sheetOpen || logOffset <= logFrom.current) return;
-    let cancelled = false;
-    void getPreviewLogs(projectId, logFrom.current).then(
-      (res) => {
-        if (cancelled) return;
-        setLogs((prev) => [...prev, ...res.lines].slice(-MAX_LOG_LINES));
-        logFrom.current = res.next;
-      },
-      () => {},
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, sheetOpen, logOffset, startedAt]);
+  // Log hanya diambil selama sheet terbuka, saat offset server bertambah.
+  // Ganti Project / dev server di-restart (buffer log baru) -> reset log.
+  const logs = useIncrementalLog(previewLogsPath(projectId), {
+    enabled: sheetOpen,
+    offset: server?.logOffset ?? 0,
+    resetKey: server?.startedAt ?? 0,
+    max: MAX_LOG_LINES,
+  });
 
   const running = server?.phase === "running";
   // biome-ignore lint/correctness/useExhaustiveDependencies: `urlNonce` memicu tiket baru setelah dipakai

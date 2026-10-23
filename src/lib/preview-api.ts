@@ -34,12 +34,9 @@ export async function stopPreview(projectId: string): Promise<void> {
   await apiFetch(`${base(projectId)}/stop`, { method: "POST" });
 }
 
-export async function getPreviewLogs(
-  projectId: string,
-  from: number,
-): Promise<{ lines: string[]; next: number }> {
-  const res = await apiFetch(`${base(projectId)}/logs?from=${from}`);
-  return res.json() as Promise<{ lines: string[]; next: number }>;
+/** Endpoint log dev server (`?from=` bertahap, lihat `useIncrementalLog`). */
+export function previewLogsPath(projectId: string): string {
+  return `${base(projectId)}/logs`;
 }
 
 /**

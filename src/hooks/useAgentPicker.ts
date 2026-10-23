@@ -7,9 +7,9 @@
  * di Sheet tidak perlu buka popover lagi di dalam popover.
  */
 import { useCallback, useRef, useState } from "react";
+import { useSessionSettingSaver } from "@/hooks/useSessionSettingSaver";
 import { agentQuery } from "@/lib/agent-types";
 import { apiFetch, errorText } from "@/lib/api";
-import { updateSessionSettings } from "@/lib/session-api";
 import type { AgentOption, AgentType } from "@/types";
 
 export interface UseAgentPickerResult {
@@ -33,8 +33,8 @@ export function useAgentPicker(
 ): UseAgentPickerResult {
   const [agents, setAgents] = useState<AgentOption[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // Error simpan & error muat daftar berbagi satu pesan.
+  const { saving, error, setError, save } = useSessionSettingSaver(sessionId);
   /**
    * Penanda fetch sedang berjalan — ref, BUKAN state `loading`. Bila `load`
    * bergantung pada `loading`, identitasnya berganti tiap fetch selesai, dan
@@ -42,7 +42,6 @@ export function useAgentPicker(
    * (spinner berkedip terus).
    */
   const inFlight = useRef(false);
-  const saveInFlight = useRef(false);
   /** Callback terbaru via ref — pemanggil sering mengoper arrow function inline. */
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
@@ -70,27 +69,13 @@ export function useAgentPicker(
         setLoading(false);
       }
     })();
-  }, [projectId, agentType]);
+  }, [projectId, agentType, setError]);
 
   const pick = useCallback(
     async (name: string | null) => {
-      if (saveInFlight.current) return;
-      saveInFlight.current = true;
-      setSaving(true);
-      setError(null);
-      try {
-        if (sessionId !== null) {
-          await updateSessionSettings(sessionId, { agent: name });
-        }
-        onChangedRef.current(name);
-      } catch (e) {
-        setError(errorText(e, "Failed to change agent"));
-      } finally {
-        saveInFlight.current = false;
-        setSaving(false);
-      }
+      await save({ agent: name }, () => onChangedRef.current(name), "Failed to change agent");
     },
-    [sessionId],
+    [save],
   );
 
   return { agents, loading, saving, error, load, pick };

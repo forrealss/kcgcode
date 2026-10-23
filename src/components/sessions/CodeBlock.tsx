@@ -12,6 +12,7 @@
  */
 import { CheckIcon, CopyIcon } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useCopyToClipboard } from "@/hooks/useCopyToClipboard";
 import { type CodeToken, highlightCode, resolveLang } from "@/lib/highlight";
 import { cn } from "@/lib/utils";
 
@@ -27,7 +28,7 @@ const DEBOUNCE_MS = 120;
 export function CodeBlock({ code, language }: CodeBlockProps) {
   const lang = resolveLang(language);
   const [tokens, setTokens] = useState<{ code: string; lines: CodeToken[][] } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const { copied, copy: copyText } = useCopyToClipboard();
 
   useEffect(() => {
     if (!lang) return;
@@ -43,15 +44,8 @@ export function CodeBlock({ code, language }: CodeBlockProps) {
     };
   }, [code, lang]);
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* Clipboard butuh konteks aman; abaikan diam-diam. */
-    }
-  };
+  // Clipboard butuh konteks aman; gagal diabaikan diam-diam.
+  const copy = () => copyText(code);
 
   // Token masih cocok dengan awal kode (streaming menambah di akhir):
   // tampilkan token + sisa teks polos. Isi berubah di tengah -> teks polos.

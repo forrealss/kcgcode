@@ -19,7 +19,7 @@ import type { BunRequest } from "bun";
 import { formatCommand, resolveLaunchConfig } from "../services/preview/launch-config";
 import { PREVIEW_AUTH_PATH } from "../services/preview/preview-server";
 import { readSessionToken } from "./auth-guard";
-import { errorStatus, json, readJson, serverError } from "./helpers";
+import { errorResponse, json, queryInt, readObject, withProject } from "./helpers";
 import type { ApiRouteContext } from "./types";
 
 type Req<P extends string> = BunRequest<P>;
@@ -63,20 +63,19 @@ export function previewOrigin(
   return { ok: true, origin: `${isHttps(req) ? "https" : "http"}://${hostname}:${previewPort}` };
 }
 
-export function previewRoutes(ctx: ApiRouteContext) {
-  const { projectManager, devServers, preview, screenshotter, snapshots } = ctx;
+/** Body JSON opsional (hanya bila content-type JSON); selain objek -> null. */
+async function optionalBody(req: Request): Promise<Record<string, unknown> | null> {
+  return req.headers.get("content-type")?.includes("json") ? await readObject(req) : null;
+}
 
-  function project(id: string) {
-    return projectManager.getProject(id);
-  }
+export function previewRoutes(ctx: ApiRouteContext) {
+  const { devServers, preview, screenshotter, snapshots } = ctx;
 
   return {
     "/api/projects/:id/preview": {
-      GET: (req: Req<"/api/projects/:id/preview">) => {
-        try {
-          const p = project(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
-          const cfg = resolveLaunchConfig(p.data.path);
+      GET: (req: Req<"/api/projects/:id/preview">) =>
+        withProject(ctx, req.params.id, (p) => {
+          const cfg = resolveLaunchConfig(p.path);
           return json({
             config: cfg
               ? {
@@ -86,70 +85,39 @@ export function previewRoutes(ctx: ApiRouteContext) {
                   port: cfg.port,
                 }
               : null,
-            server: devServers.status(p.data.id),
+            server: devServers.status(p.id),
           });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+        }),
     },
 
     "/api/projects/:id/preview/start": {
-      POST: async (req: Req<"/api/projects/:id/preview/start">) => {
-        try {
-          const p = project(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
-          const cfg = resolveLaunchConfig(p.data.path);
-          if (!cfg) return json({ error: "PREVIEW_NO_CONFIG" }, errorStatus("PREVIEW_NO_CONFIG"));
-          const res = await devServers.start(p.data.id, cfg);
-          if (!res.ok) return json({ error: res.error }, 500);
+      POST: (req: Req<"/api/projects/:id/preview/start">) =>
+        withProject(ctx, req.params.id, async (p) => {
+          const cfg = resolveLaunchConfig(p.path);
+          if (!cfg) return errorResponse("PREVIEW_NO_CONFIG");
+          const res = await devServers.start(p.id, cfg);
+          if (!res.ok) return errorResponse(res.error);
           return json({ server: res.data });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+        }),
     },
 
     "/api/projects/:id/preview/stop": {
-      POST: async (req: Req<"/api/projects/:id/preview/stop">) => {
-        try {
-          const p = project(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
-          return json({ server: await devServers.stop(p.data.id) });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      POST: (req: Req<"/api/projects/:id/preview/stop">) =>
+        withProject(ctx, req.params.id, async (p) => json({ server: await devServers.stop(p.id) })),
     },
 
     "/api/projects/:id/preview/logs": {
-      GET: (req: Req<"/api/projects/:id/preview/logs">) => {
-        try {
-          const p = project(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
-          const from = Number(new URL(req.url).searchParams.get("from") ?? "0");
-          return json(devServers.logs(p.data.id, Number.isFinite(from) && from >= 0 ? from : 0));
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: (req: Req<"/api/projects/:id/preview/logs">) =>
+        withProject(ctx, req.params.id, (p) => json(devServers.logs(p.id, queryInt(req, "from")))),
     },
 
     "/api/projects/:id/preview/snapshot": {
-      POST: async (req: Req<"/api/projects/:id/preview/snapshot">) => {
-        try {
-          const p = project(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
-          if (!screenshotter.available()) {
-            return json({ error: "PREVIEW_NO_BROWSER" }, errorStatus("PREVIEW_NO_BROWSER"));
-          }
-          const up = devServers.upstream(p.data.id);
-          if (!up)
-            return json({ error: "PREVIEW_NOT_RUNNING" }, errorStatus("PREVIEW_NOT_RUNNING"));
-          const body = req.headers.get("content-type")?.includes("json")
-            ? await readJson(req)
-            : null;
-          const opts = (body?.ok ? body.data : null) as {
+      POST: (req: Req<"/api/projects/:id/preview/snapshot">) =>
+        withProject(ctx, req.params.id, async (p) => {
+          if (!screenshotter.available()) return errorResponse("PREVIEW_NO_BROWSER");
+          const up = devServers.upstream(p.id);
+          if (!up) return errorResponse("PREVIEW_NOT_RUNNING");
+          const opts = (await optionalBody(req)) as {
             path?: unknown;
             width?: number;
             height?: number;
@@ -158,21 +126,18 @@ export function previewRoutes(ctx: ApiRouteContext) {
           const path =
             typeof opts?.path === "string" && opts.path.startsWith("/")
               ? opts.path
-              : preview.lastView(p.data.id).path;
+              : preview.lastView(p.id).path;
           const host = up.host.includes(":") ? `[${up.host}]` : up.host;
           const shot = await screenshotter.capture(`http://${host}:${up.port}${path}`, {
             width: opts?.width,
             height: opts?.height,
             dpr: opts?.dpr,
           });
-          if (!shot.ok) return json({ error: shot.error }, errorStatus(shot.error));
+          if (!shot.ok) return errorResponse(shot.error);
           return new Response(shot.data, {
             headers: { "content-type": "image/jpeg", "cache-control": "no-store" },
           });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+        }),
     },
 
     "/api/sessions/:id/preview-snapshot": {
@@ -181,27 +146,19 @@ export function previewRoutes(ctx: ApiRouteContext) {
     },
 
     "/api/projects/:id/preview/open": {
-      POST: async (req: Req<"/api/projects/:id/preview/open">) => {
-        try {
-          const p = project(req.params.id);
-          if (!p.ok) return json({ error: p.error }, errorStatus(p.error));
+      POST: (req: Req<"/api/projects/:id/preview/open">) =>
+        withProject(ctx, req.params.id, async (p) => {
           const origin = previewOrigin(req, ctx, preview.port);
-          if (!origin.ok) return json({ error: origin.error }, errorStatus(origin.error));
-          const body = req.headers.get("content-type")?.includes("json")
-            ? await readJson(req)
-            : null;
-          const raw = body?.ok ? (body.data as { sessionId?: unknown } | null)?.sessionId : null;
+          if (!origin.ok) return errorResponse(origin.error);
+          const raw = (await optionalBody(req))?.sessionId;
           const sessionId = typeof raw === "string" && /^[\w-]{1,128}$/.test(raw) ? raw : null;
           const appOrigin = `${isHttps(req) ? "https" : "http"}://${requestHost(req)}`;
           const ticket = preview.issueTicket(
-            { projectId: p.data.id, sessionId, appOrigin },
+            { projectId: p.id, sessionId, appOrigin },
             readSessionToken(req),
           );
           return json({ url: `${origin.origin}${PREVIEW_AUTH_PATH}?t=${ticket}` });
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+        }),
     },
   };
 }

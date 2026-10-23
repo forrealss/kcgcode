@@ -78,27 +78,6 @@ export function buildProjectOverviews(
 }
 
 /**
- * Filter daftar berdasarkan kata kunci (cocok pada nama atau path, tanpa
- * membedakan huruf besar/kecil). Query kosong/whitespace -> daftar utuh.
- */
-export function filterProjectOverviews(
-  overviews: readonly ProjectOverview[],
-  query: string,
-): ProjectOverview[] {
-  const needle = query.trim().toLowerCase();
-  if (needle === "") return [...overviews];
-  return overviews.filter(
-    ({ project }) =>
-      project.name.toLowerCase().includes(needle) || project.path.toLowerCase().includes(needle),
-  );
-}
-
-/** Total Session yang sedang berjalan di seluruh Project. */
-export function totalRunningSessions(overviews: readonly ProjectOverview[]): number {
-  return overviews.reduce((sum, o) => sum + o.runningCount, 0);
-}
-
-/**
  * Short relative label for activity time ("just now", "3 hours ago").
  * `now` diinjeksi agar deterministik saat diuji.
  */

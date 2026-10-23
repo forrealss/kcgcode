@@ -21,7 +21,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
-import { DEFAULT_DB_PATH, resolveEffectiveDbPath } from "./paths";
+import { resolveEffectiveDbPath } from "./paths";
 import { type AuthRepo, createAuthRepo } from "./server/db/auth";
 import { createMessageRepo, type MessageRepo } from "./server/db/messages";
 import { createProjectRepo, type ProjectRepo } from "./server/db/projects";
@@ -40,8 +40,6 @@ import type {
   SessionModel,
   SessionStatus,
 } from "./types";
-
-export { DEFAULT_DB_PATH };
 
 export interface SessionStore extends AuthRepo, TunnelRepo, PushRepo {
   // ---- Pesan terstruktur (append-only) ----

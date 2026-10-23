@@ -26,11 +26,9 @@
  */
 import { randomUUID } from "node:crypto";
 import type { TodoItem } from "../../../types";
+import { TOOL_OUTPUT_MAX_LENGTH } from "../../services/projector/tool-output";
 import { todosFromInput } from "../todos";
 import type { AgentEvent, AgentEventData } from "../types";
-
-/** Batas panjang output tool yang diteruskan (hindari blob raksasa di DB). */
-export const TOOL_OUTPUT_MAX_LENGTH = 50_000;
 
 /** Nama tool Claude Code -> nama tool yang dipakai UI. */
 const TOOL_NAMES: Record<string, string> = {

@@ -21,15 +21,6 @@ export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
   crashed: "Crashed",
 };
 
-/** Variant Badge shadcn untuk sebuah status Session. */
-export function sessionStatusVariant(
-  status: SessionStatus,
-): "default" | "secondary" | "destructive" {
-  if (status === "running") return "default";
-  if (status === "crashed") return "destructive";
-  return "secondary";
-}
-
 /** Label status koneksi WS untuk UI (mis. subtitle header chat). */
 export function wsStatusLabel(status: WsConnectionStatus): string {
   switch (status) {

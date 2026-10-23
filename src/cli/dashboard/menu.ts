@@ -1,4 +1,5 @@
 /** Menu dashboard: item, hint per item, teks konfirmasi, dan validasi port. */
+import { parsePort } from "../../config";
 import type { DashboardMode, DashboardSnapshot } from "./snapshot";
 
 /** State tampilan dinamis; semua opsional untuk render statis. */
@@ -86,8 +87,8 @@ export const CONFIRM_TEXT: Record<ConfirmAction, (n: number) => string> = {
 /** Validasi isi input port; null = valid. */
 export function portInputError(raw: string): string | null {
   if (raw === "") return "Enter a port number";
-  const n = Number(raw);
-  if (!Number.isInteger(n) || n < 1 || n > 65535) return "Port must be between 1 and 65535";
+  const n = parsePort(raw);
+  if (n === null) return "Port must be between 1 and 65535";
   if (n < 1024) return "Ports below 1024 need root — pick 1024 or higher";
   return null;
 }

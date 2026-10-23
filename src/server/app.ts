@@ -23,7 +23,7 @@
  */
 
 import { serve } from "bun";
-import { loadConfig } from "../config";
+import { DEFAULT_PORT, loadConfig, parsePort } from "../config";
 import { openSessionStore } from "../db";
 import { resolveEffectiveUploadsDir } from "../paths";
 import { autoStartSelectedTunnel, createAccess } from "./bootstrap/access";
@@ -41,16 +41,18 @@ import { createUpdateChecker } from "./services/update-check";
 export type { KcgServer, KcgServerOptions } from "./bootstrap/types";
 
 /**
- * Port HTTP default 3000 (env KCG_PORT). Nilai tak valid ditolak agar
- * `Bun.serve` tidak menerima NaN dari `Number(env)`.
+ * Port HTTP bila `opts.port` kosong (`bun dev`): `KCG_PORT` > `port` di config
+ * > 3000 — prioritas yang sama dengan CLI (`cli/port.ts`). `KCG_PORT` tak
+ * valid diabaikan agar `Bun.serve` tidak menerima NaN dari `Number(env)`.
  */
-function resolvePort(): number {
+function resolvePort(configPort: number | undefined): number {
+  const fallback = configPort ?? DEFAULT_PORT;
   const raw = process.env.KCG_PORT;
-  if (raw === undefined) return 3000;
-  const n = Number(raw);
-  if (Number.isInteger(n) && n > 0 && n <= 65535) return n;
-  console.warn(`[kcg-code] KCG_PORT tidak valid ("${raw}"); memakai 3000.`);
-  return 3000;
+  if (raw === undefined) return fallback;
+  const port = parsePort(raw);
+  if (port !== null) return port;
+  console.warn(`[kcg-code] KCG_PORT tidak valid ("${raw}"); memakai ${fallback}.`);
+  return fallback;
 }
 
 /**
@@ -62,7 +64,7 @@ export function createKcgServer(opts: KcgServerOptions = {}): KcgServer {
   const config = opts.config ?? loadConfig();
   const store = opts.store ?? openSessionStore();
   const hostname = opts.hostname ?? resolveHostname();
-  const port = opts.port ?? resolvePort();
+  const port = opts.port ?? resolvePort(config.port);
   // Direktori lampiran gambar. Absolut sejak awal agar URL `file:///…`
   // valid. Default sesuai mode runtime (dev: ./data/uploads, cli: ~/.kcgcode/...).
   const uploadsRoot = opts.uploadsRoot ?? resolveEffectiveUploadsDir();

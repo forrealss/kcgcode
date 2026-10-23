@@ -8,8 +8,8 @@
  * (Requirement 2.4).
  */
 
-import path from "node:path";
 import type { SessionStore } from "../../db";
+import { resolveTurnDiffsDir } from "../../paths";
 import type { MessagePart, Session } from "../../types";
 import { createClaudeBackend } from "../agents/claude/backend";
 import type { ClaudeExtraMcp } from "../agents/claude/client";
@@ -115,7 +115,7 @@ export function createSessionCore(opts: SessionCoreOptions): SessionCore {
   const activeTurns = new Set<string>();
   // Ringkasan perubahan per turn di samping folder lampiran (`<data>/turn-diffs`).
   const turnDiffs = createTurnDiffs({
-    dir: path.join(path.dirname(opts.uploadsRoot), "turn-diffs"),
+    dir: resolveTurnDiffsDir(opts.uploadsRoot),
     onDiff: (diff) => gateway.notifyTurnDiff(diff.sessionId, diff),
   });
   // Notifikasi agent: kartu izin/pertanyaan & turn selesai -> tab terbuka

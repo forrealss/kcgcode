@@ -7,19 +7,14 @@
  * perlu diekspos ke pengunjung yang belum membuka kunci.
  */
 import { readAppInfo } from "../services/app-info";
-import type { UpdateChecker } from "../services/update-check";
-import { json, serverError } from "./helpers";
+import { json } from "./helpers";
+import type { ApiRouteContext } from "./types";
 
-export function metaRoutes(updates?: UpdateChecker) {
+export function metaRoutes(ctx: ApiRouteContext) {
+  const { updates } = ctx;
   return {
     "/api/meta": {
-      GET: async () => {
-        try {
-          return json(await readAppInfo(updates));
-        } catch (e) {
-          return serverError(e);
-        }
-      },
+      GET: async () => json(await readAppInfo(updates)),
     },
   };
 }

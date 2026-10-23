@@ -9,9 +9,9 @@
  * mode (opencode) memakai pemilih agent biasa.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSessionSettingSaver } from "@/hooks/useSessionSettingSaver";
 import { agentQuery } from "@/lib/agent-types";
-import { apiFetch, errorText } from "@/lib/api";
-import { updateSessionSettings } from "@/lib/session-api";
+import { apiFetch } from "@/lib/api";
 import type { AgentCapabilitiesInfo, AgentType, PermissionModeOption } from "@/types";
 
 /** Cache capability per `projectId|agentType` (statis selama aplikasi hidup). */
@@ -48,9 +48,7 @@ export function usePermissionModes(
   onChanged: (mode: string | null) => void,
 ): UsePermissionModesResult {
   const [modes, setModes] = useState<PermissionModeOption[] | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const saveInFlight = useRef(false);
+  const { saving, error, save } = useSessionSettingSaver(sessionId);
   /** Callback terbaru via ref — pemanggil sering mengoper arrow function inline. */
   const onChangedRef = useRef(onChanged);
   onChangedRef.current = onChanged;
@@ -71,23 +69,13 @@ export function usePermissionModes(
 
   const pick = useCallback(
     async (mode: string | null) => {
-      if (saveInFlight.current) return;
-      saveInFlight.current = true;
-      setSaving(true);
-      setError(null);
-      try {
-        if (sessionId !== null) {
-          await updateSessionSettings(sessionId, { permissionMode: mode });
-        }
-        onChangedRef.current(mode);
-      } catch (e) {
-        setError(errorText(e, "Failed to change permission mode"));
-      } finally {
-        saveInFlight.current = false;
-        setSaving(false);
-      }
+      await save(
+        { permissionMode: mode },
+        () => onChangedRef.current(mode),
+        "Failed to change permission mode",
+      );
     },
-    [sessionId],
+    [save],
   );
 
   return { modes, saving, error, pick };

@@ -38,8 +38,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { AGENT_TYPE_LABELS, AGENT_TYPES } from "@/lib/agent-types";
-import { apiFetch, errorText } from "@/lib/api";
+import type { IdleLoad } from "@/lib/load-state";
 import {
   AUDIT_LABEL,
   AUDIT_TEXT_CLASS,
@@ -50,10 +51,7 @@ import { cn } from "@/lib/utils";
 import type { RegistrySkill, SkillAudit } from "@/server/services/skills-registry";
 import type { AgentType } from "@/types";
 
-type AuditState =
-  | { phase: "loading" }
-  | { phase: "error"; message: string }
-  | { phase: "ready"; audit: SkillAudit };
+const selectAudit = async (res: Response) => ((await res.json()) as { audit: SkillAudit }).audit;
 
 export interface InstallSkillDialogProps {
   /** Skill yang akan dipasang; `null` = dialog tertutup. */
@@ -87,7 +85,12 @@ export function InstallSkillDialog({
   onOpenChange,
   onConfirm,
 }: InstallSkillDialogProps) {
-  const [audit, setAudit] = useState<AuditState>({ phase: "loading" });
+  const [audit] = useApiQuery(
+    skill
+      ? `/api/skills/audit?${new URLSearchParams({ source: skill.source, skill: skill.skillId })}`
+      : null,
+    { select: selectAudit, errorMessage: "Failed to load the security audit." },
+  );
   const [agents, setAgents] = useState<AgentType[]>([]);
 
   // Dialog dibuka untuk skill baru -> pilih agent yang belum memuatnya.
@@ -101,30 +104,7 @@ export function InstallSkillDialog({
   const toggleAgent = (agent: AgentType, on: boolean) =>
     setAgents((prev) => AGENT_TYPES.filter((a) => (a === agent ? on : prev.includes(a))));
 
-  useEffect(() => {
-    if (!skill) return;
-    let cancelled = false;
-    setAudit({ phase: "loading" });
-    const params = new URLSearchParams({ source: skill.source, skill: skill.skillId });
-    apiFetch(`/api/skills/audit?${params}`)
-      .then((res) => res.json() as Promise<{ audit: SkillAudit }>)
-      .then(({ audit }) => {
-        if (!cancelled) setAudit({ phase: "ready", audit });
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setAudit({
-            phase: "error",
-            message: errorText(e, "Failed to load the security audit."),
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [skill]);
-
-  const flagged = audit.phase === "ready" && audit.audit.overall === "fail";
+  const flagged = audit.phase === "ready" && audit.data.overall === "fail";
 
   return (
     <AlertDialog
@@ -304,8 +284,8 @@ const AUDIT_ICON_CLASS = "size-[18px] shrink-0";
  * hasil terburuk, subjudul menyebut siapa yang menandai; rincian per
  * partner (status sebagai teks berwarna, tanpa pil) dilipat.
  */
-function AuditRow({ state }: { state: AuditState }) {
-  if (state.phase === "loading") {
+function AuditRow({ state }: { state: IdleLoad<SkillAudit> }) {
+  if (state.phase === "loading" || state.phase === "idle") {
     return (
       <ActionRow
         prefix={<Spinner className={cn(AUDIT_ICON_CLASS, "text-muted-foreground")} />}
@@ -326,7 +306,7 @@ function AuditRow({ state }: { state: AuditState }) {
     return <ActionRow prefix={question} title="Security audit" subtitle={state.message} />;
   }
 
-  const { audits, overall } = state.audit;
+  const { audits, overall } = state.data;
   if (audits === null || overall === null) {
     return (
       <ActionRow

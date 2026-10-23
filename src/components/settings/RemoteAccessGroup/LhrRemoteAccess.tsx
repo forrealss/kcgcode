@@ -8,12 +8,13 @@
  * - baris expander "Connection log".
  */
 import { ChevronDownIcon, GlobeIcon, LockIcon, TerminalSquareIcon } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useCallback, useState } from "react";
 import { toast } from "sonner";
 import { ActionRow, PrefsGroup } from "@/components/settings/prefs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
+import { usePolling } from "@/hooks/usePolling";
 import { useRouter } from "@/hooks/useRouter";
 import { apiErrorMessage, apiFetch, errorText } from "@/lib/api";
 import { settingsPath } from "@/lib/routes";
@@ -54,11 +55,7 @@ export function LhrRemoteAccess({
   }, []);
 
   const active = s !== null && BUSY.includes(s.phase);
-  useEffect(() => {
-    void load();
-    const id = setInterval(() => void load(), active ? 1500 : 5000);
-    return () => clearInterval(id);
-  }, [load, active]);
+  usePolling(load, active ? 1500 : 5000);
 
   const start = async () => {
     setBusy("start");
